@@ -29,6 +29,18 @@ var realCLIInputs = map[string]realCLIInput{
 	"safari.history":            {logical: "ios:HomeDomain/Library/Safari/History.db", file: "History.db"},
 	"android.whatsapp.msgstore": {logical: "android:/data/data/com.whatsapp/databases/msgstore.db", file: "msgstore.db"},
 	"android.whatsapp.contacts": {logical: "android:/data/data/com.whatsapp/databases/wa.db", file: "wa.db"},
+	"ios.whatsapp.chats": {
+		logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite", file: "ChatStorage.sqlite",
+		extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
+	},
+	"ios.whatsapp.calls": {
+		logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/CallHistory.sqlite", file: "CallHistory.sqlite",
+		extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
+	},
+	"ios.whatsapp.contacts": {
+		logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite", file: "ContactsV2.sqlite",
+		extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
+	},
 }
 
 // Every registered parser has a realCLIInputs entry whose logical path its primary glob matches, so a real-data set

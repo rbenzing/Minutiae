@@ -176,6 +176,15 @@ var hostileDirs = map[string]string{
 	"ios.sms": "iossms", "ios.calls": "ioscalls", "ios.addressbook": "iosaddressbook",
 	"chromium.history": "chromium", "safari.history": "safari",
 	"android.whatsapp.msgstore": "androidwhatsapp", "android.whatsapp.contacts": "androidwacontacts",
+	"ios.whatsapp.chats": "ioswhatsapp", "ios.whatsapp.calls": "ioswacalls", "ios.whatsapp.contacts": "ioswacontacts",
+}
+
+// hostileBackupFiles are the parsers whose primary glob no generic device path matches (the iOS WhatsApp databases live in an
+// app-group domain of a backup): their fixture goes into a one-file backup as (domain, relative path).
+var hostileBackupFiles = map[string][2]string{
+	"ios.whatsapp.chats":    {"AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "ChatStorage.sqlite"},
+	"ios.whatsapp.calls":    {"AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "CallHistory.sqlite"},
+	"ios.whatsapp.contacts": {"AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "ContactsV2.sqlite"},
 }
 
 // hostileLivePaths are device paths for parsers that parse only the app's live database (R7): the generic
@@ -279,7 +288,11 @@ func TestHostileAuditVolumeIsBounded(t *testing.T) {
 			t.Fatalf("parser %s has no fixture directory in hostileDirs", meta.Name)
 		}
 		fixName, fixture := largestFixture(t, filepath.Join("..", "parsers", dir))
-		remote, acqType := hostilePath(t, meta)
+		backupFile, inBackup := hostileBackupFiles[meta.Name]
+		var remote, acqType string
+		if !inBackup {
+			remote, acqType = hostilePath(t, meta)
+		}
 		maxOf[meta.Name] = &maxima{}
 		order = append(order, meta.Name)
 		for _, mut := range hostileMutations() {
@@ -288,9 +301,16 @@ func TestHostileAuditVolumeIsBounded(t *testing.T) {
 				if bytes.Equal(data, fixture) {
 					t.Fatalf("mutation %s leaves %s unchanged", mut.name, fixName)
 				}
-				c := newCase(t)
-				acquireStart(t, c, "D1", "A1", acqType)
-				putFile(t, c, "D1", "A1", remote, string(data))
+				var c *evidence.Case
+				if inBackup {
+					bc := newBackupCase(t)
+					bc.add(bspec{files: []bfile{{domain: backupFile[0], rel: backupFile[1], data: string(data)}}})
+					c = bc.c
+				} else {
+					c = newCase(t)
+					acquireStart(t, c, "D1", "A1", acqType)
+					putFile(t, c, "D1", "A1", remote, string(data))
+				}
 				h, err := artparse.New(c, hostileRegistry(t), artparse.Options{Limits: parse.DefaultLimits()})
 				if err != nil {
 					t.Fatal(err)

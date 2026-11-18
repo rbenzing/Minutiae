@@ -18,7 +18,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers"
+	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
 // The real-data command line tests (4H-R10). They run only with -tags realdata and $MINUTIAE_TEST_DATA; without
@@ -133,6 +135,96 @@ func realCLIRemote(logical string) string {
 	return rel
 }
 
+// realCLIPrimaryGlobMatches reports whether a primary glob of the parser matches the logical path as the device-file
+// namer names it (ios:MediaDomain/<remote path>); the iOS WhatsApp databases live in an app-group domain, so no glob
+// of theirs matches and their set goes through a one-file backup (4I2-P9).
+func realCLIPrimaryGlobMatches(t *testing.T, parser, logical string) bool {
+	t.Helper()
+	for _, p := range parsers.All() {
+		if p.Meta().Name != parser {
+			continue
+		}
+		for _, gl := range p.Meta().Inputs[0].Globs {
+			g, err := parse.CompileGlob(gl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g.Match("ios:MediaDomain/" + realCLIRemote(logical)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// captureAsFiles captures the files of a set as file artifacts of device D1 (an iOS set under an ios.backup acquisition, so
+// the device is an iOS device) and returns the artifact ID of the first file.
+func captureAsFiles(t *testing.T, c *evidence.Case, s realCLISet) (dbID string) {
+	t.Helper()
+	acq := "logical"
+	if s.platform == "ios" {
+		acq = "ios.backup" // device D1 is an iOS device: its file artifacts have platform ios
+	}
+	if _, err := c.Audit.Append("acquire.start", "D1", map[string]any{"acquisition_id": "A1", "type": acq}); err != nil {
+		t.Fatal(err)
+	}
+	for i, f := range s.files {
+		data, err := os.ReadFile(f.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := pcapture(t, c, "files/"+path.Base(f.src)+"."+string(rune('a'+i)), evidence.Source{Kind: "file", RemotePath: realCLIRemote(f.logical)}, string(data))
+		if i == 0 {
+			dbID = rec.ID
+		}
+	}
+	return dbID
+}
+
+// captureAsBackup captures the files of a set as one unencrypted iOS backup of device D1 in the case (the route of a
+// parser whose globs name a domain of its own): each file is a backup artifact at D1/<aa>/<fileID>, with the Manifest.db
+// listing them all, Manifest.plist (not encrypted) and Status.plist. It returns the artifact ID of the first file.
+func captureAsBackup(t *testing.T, c *evidence.Case, files []realCLIFile) (dbID string) {
+	t.Helper()
+	if _, err := c.Audit.Append("acquire.start", "D1", map[string]any{"acquisition_id": "A1", "type": "ios.backup"}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(name, remote string, data []byte) evidence.ManifestRecord {
+		t.Helper()
+		return pcapture(t, c, "backup/"+name, evidence.Source{Kind: "backup", RemotePath: remote}, string(data))
+	}
+	sb := sqlitetest.New(sqlitetest.Options{})
+	tbl := sb.CreateTable("Files", "CREATE TABLE Files (fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)")
+	type entry struct {
+		id, remote string
+		data       []byte
+	}
+	var entries []entry
+	for _, f := range files {
+		domain, rel, ok := strings.Cut(strings.TrimPrefix(f.logical, "ios:"), "/")
+		if !ok {
+			t.Fatalf("logical path %q names no domain", f.logical)
+		}
+		data, err := os.ReadFile(f.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := parsertest.BackupFileID(domain, rel)
+		tbl.Insert(int64(len(entries)+1), id, domain, rel, int64(1), nil)
+		entries = append(entries, entry{id, "D1/" + id[:2] + "/" + id, data})
+	}
+	for i, e := range entries {
+		rec := put(strconv.Itoa(i), e.remote, e.data)
+		if i == 0 {
+			dbID = rec.ID
+		}
+	}
+	put("manifest-db", "D1/Manifest.db", sb.Bytes())
+	put("manifest-plist", "D1/Manifest.plist", []byte(cliPlistNo))
+	put("status-plist", "D1/Status.plist", []byte("status"))
+	return dbID
+}
+
 type realCLIRun struct {
 	code        int
 	out, errOut string
@@ -164,23 +256,13 @@ func TestRealDataEndToEnd(t *testing.T) {
 				t.Logf("captured %s: logical path of the layout %s, remote path %s (an iOS file is named ios:MediaDomain/<remote path> by the device-file namer)", filepath.Base(f.src), f.logical, realCLIRemote(f.logical))
 			}
 			c := recordstest.NewCase(t)
-			acq := "logical"
-			if s.platform == "ios" {
-				acq = "ios.backup" // device D1 is an iOS device: its file artifacts have platform ios
-			}
-			if _, err := c.Audit.Append("acquire.start", "D1", map[string]any{"acquisition_id": "A1", "type": acq}); err != nil {
-				t.Fatal(err)
-			}
 			var dbID string
-			for i, f := range s.files {
-				data, err := os.ReadFile(f.src)
-				if err != nil {
-					t.Fatal(err)
-				}
-				rec := pcapture(t, c, "files/"+path.Base(f.src)+"."+string(rune('a'+i)), evidence.Source{Kind: "file", RemotePath: realCLIRemote(f.logical)}, string(data))
-				if i == 0 {
-					dbID = rec.ID
-				}
+			if s.platform == "ios" && !realCLIPrimaryGlobMatches(t, s.parser, s.files[0].logical) {
+				t.Logf("route: one-file unencrypted backup in its own domain (no primary glob of %s matches ios:MediaDomain/<remote path>)", s.parser)
+				dbID = captureAsBackup(t, c, s.files)
+			} else {
+				t.Logf("route: device files named ios:MediaDomain/<remote path> (or the Android path)")
+				dbID = captureAsFiles(t, c, s)
 			}
 			dir := c.Dir
 			if err := c.Close(); err != nil {

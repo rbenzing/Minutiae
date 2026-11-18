@@ -41,6 +41,18 @@ var realDataInputs = map[string]realDataInput{
 	"safari.history":            {Platform: "ios", Logical: "ios:HomeDomain/Library/Safari/History.db", File: "History.db"},
 	"android.whatsapp.msgstore": {Platform: "android", Logical: "android:/data/data/com.whatsapp/databases/msgstore.db", File: "msgstore.db"},
 	"android.whatsapp.contacts": {Platform: "android", Logical: "android:/data/data/com.whatsapp/databases/wa.db", File: "wa.db"},
+	"ios.whatsapp.chats": {
+		Platform: "ios", Logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite", File: "ChatStorage.sqlite",
+		Extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
+	},
+	"ios.whatsapp.calls": {
+		Platform: "ios", Logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/CallHistory.sqlite", File: "CallHistory.sqlite",
+		Extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
+	},
+	"ios.whatsapp.contacts": {
+		Platform: "ios", Logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite", File: "ContactsV2.sqlite",
+		Extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
+	},
 }
 
 // realDataSet is one set of the layout: the parser (or "ios-backup") and the files of the set, by role.

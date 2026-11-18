@@ -11,6 +11,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
 	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
 	"github.com/rbenzing/minutiae/internal/parsers/iossms"
+	"github.com/rbenzing/minutiae/internal/parsers/ioswacalls"
+	"github.com/rbenzing/minutiae/internal/parsers/ioswacontacts"
+	"github.com/rbenzing/minutiae/internal/parsers/ioswhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/safari"
 	"github.com/rbenzing/minutiae/internal/recordtypes/call"
 	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
@@ -32,6 +35,9 @@ var claimsOf = map[string][]string{
 	"ios.calls":                 {"ZCALLRECORD", "call"},
 	"ios.addressbook":           {"ABPerson"},
 	"ios.sms":                   {"message"},
+	"ios.whatsapp.chats":        {"ZWAMESSAGE"},
+	"ios.whatsapp.calls":        {"ZWACDCALLEVENT"},
+	"ios.whatsapp.contacts":     {"ZWAADDRESSBOOKCONTACT"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -85,7 +91,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 	}
 }
 
-// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the seven
+// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the ten
 // parsers that export ClaimableTables, Meta().Claims equals it in order, on the db role. The three Android
 // parsers are held by claimsOf alone.
 func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
@@ -97,6 +103,9 @@ func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
 		"ios.sms":                   iossms.ClaimableTables,
 		"android.whatsapp.msgstore": androidwhatsapp.ClaimableTables,
 		"android.whatsapp.contacts": androidwacontacts.ClaimableTables,
+		"ios.whatsapp.chats":        ioswhatsapp.ClaimableTables,
+		"ios.whatsapp.calls":        ioswacalls.ClaimableTables,
+		"ios.whatsapp.contacts":     ioswacontacts.ClaimableTables,
 	}
 	for name, fn := range claimable {
 		var found parse.Parser
@@ -294,8 +303,8 @@ func TestWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 		{"android.whatsapp.contacts", []string{"contact"}},
 	}
 	all := All()
-	if n := len(all); n < 2 || all[n-2].Meta().Name != want[0].name || all[n-1].Meta().Name != want[1].name {
-		t.Fatalf("the registry must end with %s then %s", want[0].name, want[1].name)
+	if n := len(all); n < 5 || all[n-5].Meta().Name != want[0].name || all[n-4].Meta().Name != want[1].name {
+		t.Fatalf("the registry must hold %s then %s directly before the iOS WhatsApp parsers", want[0].name, want[1].name)
 	}
 	for _, w := range want {
 		idx := slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == w.name })
@@ -316,6 +325,46 @@ func TestWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 		}
 		if !slices.Equal(types, w.types) {
 			t.Errorf("%s: emits %v, want exactly %v", w.name, types, w.types)
+		}
+	}
+}
+
+// TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes pins what plan 4I2 promises about the three iOS WhatsApp
+// parsers: the roles they read (the database, its WAL and journal, and the optional container metadata plist), the one
+// type each emits and their place at the end of the registry (chats, calls, contacts: ruling 4I2-R1).
+func TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
+	want := []struct{ name, typ string }{
+		{"ios.whatsapp.chats", "message"},
+		{"ios.whatsapp.calls", "call"},
+		{"ios.whatsapp.contacts", "contact"},
+	}
+	all := All()
+	if len(all) < len(want) {
+		t.Fatalf("the registry holds %d parsers", len(all))
+	}
+	tail := all[len(all)-len(want):]
+	for i, w := range want {
+		m := tail[i].Meta()
+		if m.Name != w.name {
+			t.Fatalf("registry position %d from the end is %s, want %s", len(want)-i, m.Name, w.name)
+		}
+		var roles, types []string
+		required := map[string]bool{}
+		for _, in := range m.Inputs {
+			roles = append(roles, in.Role)
+			required[in.Role] = in.Required
+		}
+		for _, e := range m.Emits {
+			types = append(types, e.Type)
+		}
+		if !slices.Equal(roles, []string{"db", "wal", "journal", "container_meta"}) {
+			t.Errorf("%s: roles %v, want db/wal/journal/container_meta", w.name, roles)
+		}
+		if !required["db"] || required["wal"] || required["journal"] || required["container_meta"] {
+			t.Errorf("%s: only db is required, got %v", w.name, required)
+		}
+		if !slices.Equal(types, []string{w.typ}) {
+			t.Errorf("%s: emits %v, want exactly [%s]", w.name, types, w.typ)
 		}
 	}
 }
