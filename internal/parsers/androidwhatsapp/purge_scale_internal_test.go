@@ -64,7 +64,7 @@ func oldEval(js *jobSet, k rowKey) purgeResult {
 func asOld(r purgeResult, all []int64) purgeResult { r.Jobs, r.Total = all, 0; return r }
 
 func TestEvalAggregatesGiveTheVerdictsOfTheFullWalk(t *testing.T) {
-	rng := rand.New(rand.NewSource(4))
+	rng := rand.New(rand.NewSource(4)) //nolint:gosec // a seeded generator for reproducible job layouts
 	bound := func() *int64 {
 		if rng.Intn(4) == 0 {
 			return nil
