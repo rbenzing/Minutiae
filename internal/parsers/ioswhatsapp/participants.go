@@ -64,13 +64,13 @@ func readJID(row parse.Row, col int, raw, unknown map[string]any, field string) 
 		return jidRef{State: stateEmpty}
 	}
 	cl := common.CleanText(b, maxText)
+	if len(cl.Text) > maxAddr || cl.Truncated {
+		return jidRef{State: stateTooLong} // never cut, and no text is kept: it would be copied into every message of the chat
+	}
 	if len(cl.Flags) > 0 {
 		markText(raw, field)
 		raw[field] = cl.Text
 		return jidRef{Text: cl.Text, State: stateAltered}
-	}
-	if len(cl.Text) > maxAddr {
-		return jidRef{State: stateTooLong}
 	}
 	j := jidRef{Text: cl.Text}
 	if p, err := wajid.Parse(cl.Text); err == nil {

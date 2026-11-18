@@ -11,11 +11,12 @@ import (
 
 const tableMediaItem = "ZWAMEDIAITEM"
 
-// mediaKey is ZWAMESSAGE.ZMEDIAITEM as a join key: typed, never a bare cell (PF7). Set is false for NULL, 0 and a cell
-// that cannot be read (the reading has stated that in unknown_columns).
+// mediaKey is ZWAMESSAGE.ZMEDIAITEM as a join key: typed, never a bare cell (PF7). Set is false for NULL and 0; Bad is a cell that
+// is neither (the reading has stated that in unknown_columns).
 type mediaKey struct {
 	PK  int64
 	Set bool
+	Bad bool // the cell is not NULL and not a usable INTEGER: the forward direction is unknown, never "unset"
 }
 
 // mediaJoin is the outcome of the media join.
@@ -31,6 +32,9 @@ const (
 // outcome no media field is taken. A join that cannot be decided (a missing or guarded table, a lossy index) is
 // mediaUndecided, never mediaNone.
 func joinMedia(m parse.MapContext, msgPK int64, forward mediaKey) (parse.Row, mediaJoin, error) {
+	if forward.Bad {
+		return nil, mediaUndecided, nil // the directions cannot be compared: neither "none" nor the one row that names it
+	}
 	rows, st, err := matchInt(m, tableMediaItem, "ZMESSAGE", msgPK)
 	if err != nil {
 		return nil, mediaUndecided, err
@@ -61,8 +65,10 @@ func joinMedia(m parse.MapContext, msgPK int64, forward mediaKey) (parse.Row, me
 
 // mediaKeyOf reads the ZMEDIAITEM cell of a message row.
 func mediaKeyOf(r cellReader) mediaKey {
-	v, ok := r.int("ZMEDIAITEM")
-	return mediaKey{PK: v, Set: ok && v != 0}
+	col := r.cols.At("ZMEDIAITEM")
+	v, k := rowrun.IntCell(r.row, col)
+	rowrun.Flag(r.unknown, r.row, r.prefix+"ZMEDIAITEM", col, k)
+	return mediaKey{PK: v, Set: k == rowrun.CellValue && v != 0, Bad: k == rowrun.CellOther || k == rowrun.CellUnknown}
 }
 
 // mediaColumns are the ZWAMEDIAITEM columns the mapping reads.
@@ -96,6 +102,8 @@ func readMediaFields(ir cellReader, typ int64, titleIsBody bool) {
 	}
 	if v, ok := ir.number("ZMEDIAURLDATE"); ok {
 		raw["ZMEDIAURLDATE"] = v.Raw()
+	} else {
+		ir.nanStatus("ZMEDIAURLDATE")
 	}
 	if !titleIsBody {
 		if b, ok := ir.text("ZTITLE"); ok && len(b) > 0 {

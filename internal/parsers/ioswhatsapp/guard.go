@@ -110,13 +110,27 @@ const joinAlias = "Z_PK"
 // that fails is guarded and stated: one counted warning and one note per table; the job stays complete. The primary
 // table whose key is not the alias is the typed unsupported-schema error.
 func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter) (*joinGuard, error) {
-	if t, err := db.Table(ctx, tableMessage, nil, nil); err == nil {
+	g := &joinGuard{}
+	t, err := db.Table(ctx, tableMessage, nil, nil)
+	switch {
+	case err == nil:
 		if i := t.Col(joinAlias); i < 0 || !t.Cols()[i].RowidAlias {
 			return nil, &sqlitedb.UnsupportedSchemaError{Table: tableMessage, Reason: "column " + joinAlias + " is not the rowid alias"}
 		}
+	case errors.Is(err, sqlitedb.ErrNoSuchTable):
+		// preflight has decided what an absent identifying table means
+	case dataDamage(err):
+		// the key of every join is the message's Z_PK: with the table unreadable, no alias is proven, so no join is trusted
+		for _, jt := range joinTables {
+			g.add(jt.Table, "the message table could not be read whole: "+tableMessage)
+		}
+	default:
+		return nil, err // a budget, context or I/O fact is the job's failure, never a state
 	}
-	g := &joinGuard{}
 	for _, jt := range joinTables {
+		if _, bad := g.reason(jt.Table); bad {
+			continue
+		}
 		t, err := db.Table(ctx, jt.Table, []string{jt.Need}, nil)
 		var us *sqlitedb.UnsupportedSchemaError
 		switch {
@@ -130,6 +144,9 @@ func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter) (*
 				reason = "the table lacks column(s) " + strings.Join(us.Missing, ", ")
 			}
 			g.add(jt.Table, reason)
+			continue
+		case dataDamage(err):
+			g.add(jt.Table, "the table could not be read whole")
 			continue
 		case err != nil:
 			return nil, err

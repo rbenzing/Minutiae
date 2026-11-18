@@ -18,7 +18,7 @@ func chatFixture(t *testing.T, variant string) map[int64]records.Record {
 	h := parsertest.NewHarness(t)
 	b := bundleOf(h, fx, variant)
 	p := ioswhatsapp.Parser{}
-	res := runLenient(t, h, p, b.Input(h, p, false))
+	res := runLenient(t, h, p, b.Input(h, p, false), "wal-frames-not-applied", "whatsapp-ios-join-undecided")
 	if res.Err != nil {
 		t.Fatalf("%s: %v", variant, res.Err)
 	}
@@ -180,9 +180,9 @@ func TestIOSWhatsAppChatsCocoaDateFormsAreReadNotGuessed(t *testing.T) {
 	})
 	got, _ := runChat(t, db, nil)
 	type want struct{ status, ieee string }
-	// NaN is NULL to the engine (and to the reader): no time and nothing to state; +Inf is stated as its IEEE bits; -1, 0 and
+	// NaN is NULL to the engine and to the reader, which keeps its serial: stated invalid, no value to show (M1); +Inf is stated as its IEEE bits; -1, 0 and
 	// MaxInt64 are the sentinels of decode/ts; a TEXT cell is a type mismatch
-	for i, w := range []want{{"", ""}, {"invalid", "7ff0000000000000"}, {"sentinel", ""}, {"sentinel", ""}, {"sentinel", ""}, {"", ""}} {
+	for i, w := range []want{{"invalid", ""}, {"invalid", "7ff0000000000000"}, {"sentinel", ""}, {"sentinel", ""}, {"sentinel", ""}, {"", ""}} {
 		r := got[int64(i+1)]
 		raw := rawOf(r)
 		if r.Time != nil {
@@ -276,7 +276,7 @@ func TestIOSWhatsAppChatsMediaJoinRules(t *testing.T) {
 		mi.put(5, map[string]any{"ZMESSAGE": int64(5), "ZTITLE": "t5a"})
 		mi.put(6, map[string]any{"ZMESSAGE": int64(5), "ZTITLE": "t5b"})
 	})
-	recs, _ := runChat(t, db, nil)
+	recs, _ := runChat(t, db, nil, "whatsapp-ios-join-undecided")
 	for n, c := range map[int64]struct {
 		body      string
 		undecided bool

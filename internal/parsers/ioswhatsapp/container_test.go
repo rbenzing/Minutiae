@@ -73,7 +73,7 @@ func notesOf(t *testing.T, v string, meta []byte) map[string]string {
 		b = withMeta(t, h, b, meta)
 	}
 	p := ioswhatsapp.Parser{}
-	res := runLenient(t, h, p, b.Input(h, p, false))
+	res := runLenient(t, h, p, b.Input(h, p, false), "wal-frames-not-applied", "whatsapp-ios-join-undecided")
 	if res.Err != nil {
 		t.Fatalf("%s: %v", v, res.Err)
 	}
@@ -145,7 +145,7 @@ func TestIOSWhatsAppChatsAppLabelFromStructureOnly(t *testing.T) { // 4I2-R5, sp
 			b = f.BundleIOS(h, c.rel, c.logical)
 		}
 		p := ioswhatsapp.Parser{}
-		res := runLenient(t, h, p, b.Input(h, p, false))
+		res := runLenient(t, h, p, b.Input(h, p, false), "wal-frames-not-applied", "whatsapp-ios-join-undecided")
 		if res.Err != nil {
 			t.Fatalf("%s: %v", place, res.Err)
 		}

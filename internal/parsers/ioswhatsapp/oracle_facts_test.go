@@ -109,7 +109,7 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 		}
 	}
 	_, has46 := c.by[46]
-	want(len(c.by) == 46 && !has46, "ios-chatstorage has %d records, want 46 (messages 1-44 and 47 in the file, 45 in a committed WAL frame, 46 in an uncommitted one: no record)", len(c.by))
+	want(len(c.by) == 53 && !has46, "ios-chatstorage has %d records, want 53 (messages 1-44 and 47 to 54 in the file, 45 in a committed WAL frame, 46 in an uncommitted one: no record)", len(c.by))
 	want(fx.Expect.Notes["entity.WAMessage"] == "9" && fx.Expect.Notes["entity.WAChatSession"] == "4", "entity notes %v", fx.Expect.Notes)
 
 	// iOS ZMESSAGETYPE 2 = video, 3 = audio, the reverse of Android (spec 7.1, research 7.2)
@@ -188,8 +188,25 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 	m47 := c.rec(47)
 	want(m47.addr("from") == "15550000002@s.whatsapp.net" && m47.rawAbsent("address_conflict") && m47.raw["ZFROMJID"] == "15550000099@s.whatsapp.net" &&
 		m47.raw["chat_class"] == "group" && m47.thread()["group"] == false, "message 47: %v", m47.Payload)
+	// an incoming row whose chat names no person has unknown participants, the stored ZFROMJID raw (amendment 4I2-A1); an
+	// incoming type-0 status row is unattributed whatever ZFROMJID says
+	for _, n := range []int64{48, 49, 50, 51} {
+		want(c.rec(n).unknownParticipants() && c.rec(n).addr("from") == "", "message %d: %v", n, c.rec(n).Payload)
+	}
+	// a stored ZFROMJID that differs is a conflict on a private chat of another class (49, 50), never on a list chat (type 2) or a status row
+	want(c.rec(48).rawAbsent("address_conflict") && c.rec(51).rawAbsent("address_conflict") && c.rec(49).rawIs("address_conflict", "[ZFROMJID]") && c.rec(50).rawIs("address_conflict", "[ZFROMJID]"), "address_conflict of 48 to 51")
+	want(c.rec(48).raw["chat_class"] == "broadcast" && c.rec(49).raw["chat_class"] == "other" && c.rec(50).raw["chat_class"] == "unparseable" && c.rec(51).raw["chat_class"] == "status" &&
+		c.rec(51).raw["ZFROMJID"] == "15550000001@s.whatsapp.net", "messages 48 to 51 raw")
+	// a 1 MiB JID with a NUL is too-long, never altered, and its text is kept nowhere (not in raw, on any message of the chat)
+	want(c.rec(52).raw["chat_state"] == "too-long" && c.rec(52).rawAbsent("chat_jid") && c.rec(52).rawAbsent("text_flags") && c.rec(52).unknownParticipants(), "message 52: %v", c.rec(52).raw)
+	want(c.rec(53).raw["sender_state"] == "too-long" && c.rec(53).rawAbsent("member_jid_text") && c.rec(53).rawAbsent("text_flags") && c.rec(53).unknownParticipants(), "message 53: %v", c.rec(53).raw)
+	// a forward media key that is no INTEGER is undecided and stated, though a media row names the message
+	m54 := c.rec(54)
+	uc, _ := m54.raw["unknown_columns"].(map[string]any)
+	want(reflect.DeepEqual(m54.raw["join_undecided"], []any{"ZWAMEDIAITEM"}) && uc["ZWAMESSAGE.ZMEDIAITEM"] == "type-mismatch" && m54.text() == "" && m54.rawAbsent("ZTITLE") && m54.rawAbsent("body_column"), "message 54: %v", m54.raw)
 	// a text over the cap is cut and flagged, never rejected
 	m38 := c.rec(38)
+	want(reflect.DeepEqual(m38.Payload["body_flags"], []any{"truncated"}) && m38.Payload["body_truncated"] == true && fmt.Sprint(m38.Payload["body_total_bytes"]) == "307200", "message 38 payload %v", m38.Payload)
 	want(len(m38.text()) == 256<<10 && reflect.DeepEqual(m38.raw["text_flags"], []any{"body"}) && m38.Summary == nil, "message 38 body %d bytes, flags %v", len(m38.text()), m38.raw["text_flags"])
 	// a receipt blob is never decoded: its length and SHA-256 (spec 8)
 	m44 := c.rec(44)
@@ -226,7 +243,7 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 	want(fx.Expect.Notes["unmapped_tables"] == "ZWAPROFILEPUSHNAME,ZWAGROUPMEMBERSCHANGE,ZWAGROUPINFO" && fx.Expect.Notes["container"] == "backup_domain", "notes %v", fx.Expect.Notes)
 	ws := fx.Expect.Warnings
 	want(len(ws) == 2 && ws[0].Contains == "wal-frames-not-applied" && ws[1].Locator == "sqlite:table=ZWAMEDIAITEM" &&
-		ws[1].Contains == "whatsapp-ios-join-undecided: ZWAMEDIAITEM: 1 records", "warnings %+v", ws)
+		ws[1].Contains == "whatsapp-ios-join-undecided: ZWAMEDIAITEM: 2 records", "warnings %+v", ws)
 	want(len(fx.Expect.ExtraFiles) == 2 && fx.Expect.ExtraFiles[0].Domain == domainConsumer && fx.Expect.ExtraFiles[0].RelativePath == "Message/Media/15550000001@s.whatsapp.net/a/b/IMG-0004.jpg" &&
 		fx.Expect.ExtraFiles[1].Device == "IOS2", "extra files %+v", fx.Expect.ExtraFiles)
 }

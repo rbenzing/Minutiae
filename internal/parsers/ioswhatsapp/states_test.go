@@ -105,7 +105,6 @@ func runChat(t *testing.T, db, wal []byte, allowed ...string) (map[int64]records
 	h := parsertest.NewHarness(t)
 	b := parsertest.Fixture{Name: "inline", Files: files}.BundleIOSBackup(h, domainConsumer, dbName)
 	p := ioswhatsapp.Parser{}
-	allowed = append(allowed, "whatsapp-ios-join-undecided")
 	res := runLenient(t, h, p, b.Input(h, p, false), allowed...)
 	if res.Err != nil {
 		t.Fatalf("Parse: %v", res.Err)
@@ -240,7 +239,7 @@ func TestIOSWhatsAppChatsStateVocabularyIsPinned(t *testing.T) {
 		mi.put(3, map[string]any{"ZMESSAGE": cases["two media rows"]})
 		mi.put(4, map[string]any{"ZMESSAGE": cases["two media rows"]})
 	})
-	recs, _ := runChat(t, db, nil)
+	recs, _ := runChat(t, db, nil, "whatsapp-ios-join-undecided")
 	type want struct {
 		key, val string
 	}
@@ -277,6 +276,17 @@ func TestIOSWhatsAppChatsStateVocabularyIsPinned(t *testing.T) {
 	for i, w := range []string{"absent", "no-ZWAGROUPMEMBER-row", "no-member-jid", "no-member-jid", "altered", "too-long", "not-a-person", "not-a-person", "not-a-person", "undecided"} {
 		check("sender "+w+" "+strconv.Itoa(i), want{"sender_state", w})
 	}
+	// who an incoming 1:1 message is from (amendment 4I2-A1): a person's class is the chat JID; a list, another server and a
+	// JID that does not parse name no author
+	for name, from := range map[string]string{
+		"class user": p1, "class lid": "100000000000001@lid", "class newsletter": "120363111111111111@newsletter",
+		"class broadcast": "", "class other": "", "class unparseable": "",
+	} {
+		r := recs[cases[name]]
+		if fromOf(r, "from") != from || unknownParticipants(r) != (from == "") {
+			t.Errorf("%s: from %q participants_unknown %v, want from %q", name, fromOf(r, "from"), unknownParticipants(r), from)
+		}
+	}
 	// address_conflict
 	if got := rawOf(recs[cases["conflict in"]])["address_conflict"]; !reflect.DeepEqual(got, []any{"ZFROMJID"}) {
 		t.Errorf("conflict in: %v", got)
@@ -306,7 +316,7 @@ func TestIOSWhatsAppChatsStateVocabularyOfAGuardedTable(t *testing.T) {
 		tb["ZWAMESSAGE"].put(1, msgRow(map[string]any{"ZCHATSESSION": int64(1), "ZGROUPMEMBER": int64(1)}))
 		tb["ZWAGROUPMEMBER"].t.Insert(1, int64(1), int64(1), p2)
 	})
-	recs, res := runChat(t, db, wal, "wal-frames-not-applied", "table ZWAGROUPMEMBER")
+	recs, res := runChat(t, db, wal, "wal-frames-not-applied", "whatsapp-ios-join-undecided")
 	raw := rawOf(recs[1])
 	if !reflect.DeepEqual(raw["join_undecided"], []any{"ZWAGROUPMEMBER"}) || raw["sender_state"] != "undecided" || !unknownParticipants(recs[1]) {
 		t.Errorf("guarded member table: raw %v participants_unknown %v", raw, unknownParticipants(recs[1]))

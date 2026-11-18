@@ -250,6 +250,8 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, names []string) ([]re
 	}
 	if n, ok := r.number("ZSENTDATE"); ok {
 		raw["ZSENTDATE"] = n.Raw() // meaning not established (research conflict 8): raw only, never a time
+	} else {
+		r.nanStatus("ZSENTDATE")
 	}
 	for _, n := range []string{"ZFROMJID", "ZTOJID", "ZPUSHNAME"} {
 		if b, ok := r.text(n); ok {
@@ -291,6 +293,8 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, names []string) ([]re
 		if in.Valid() {
 			rec.Time = &records.Time{T: in.T}
 		}
+	} else {
+		r.nanStatus("ZMESSAGEDATE")
 	}
 
 	// the chat and who the message is from or to

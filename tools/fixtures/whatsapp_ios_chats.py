@@ -63,6 +63,7 @@ GRP3 = X.jid("120363000000000003", "g.us")
 STATUS = "status@broadcast"
 BCAST = "1234@broadcast"
 NUL_JID = C.Raw(b"1555\x00" + b"0000007@s.whatsapp.net")
+BIG_JID = C.Raw(b"\x00" + b"7" * (1 << 20) + b"@s.whatsapp.net")  # 1 MiB with a NUL: over the cap, cut by cleaning: too-long, never altered
 VCARD = "BEGIN:VCARD\r\nFN:Ann\r\nEND:VCARD\r\n"
 MAX_TEXT = X.MAX_TEXT
 MAX_ADDR = W.MAX_ADDR
@@ -107,12 +108,16 @@ def sessions(ent):
         (6, dict(ZCONTACTJID=GRP2, ZSESSIONTYPE=None)),
         (7, dict(ZCONTACTJID=NUL_JID, ZSESSIONTYPE=0)),
         (8, dict(ZCONTACTJID=GRP3, ZSESSIONTYPE=0)),  # a group JID on a type-0 session: a group for the sender, never an address_conflict
+        (9, dict(ZCONTACTJID="x@weird.example", ZSESSIONTYPE=0)),  # another server: no person is its author (4I2-A1)
+        (10, dict(ZCONTACTJID="nonsense", ZSESSIONTYPE=0)),  # no server: unparseable
+        (11, dict(ZCONTACTJID=STATUS, ZSESSIONTYPE=0)),  # a status JID on a type-0 session
+        (12, dict(ZCONTACTJID=BIG_JID, ZSESSIONTYPE=0)),  # a hostile JID: too-long, no text kept
     ]
     return [dict(Z_PK=pk, Z_ENT=ent, Z_OPT=1, **kw) for pk, kw in rows]
 
 
 def group_members(ent):
-    rows = [(1, 2, P2), (2, 2, None), (3, 6, P4), (4, 2, GRP)]
+    rows = [(1, 2, P2), (2, 2, None), (3, 6, P4), (4, 2, GRP), (5, 2, BIG_JID)]
     return [dict(Z_PK=pk, Z_ENT=ent, Z_OPT=1, ZCHATSESSION=s, ZMEMBERJID=j) for pk, s, j in rows]
 
 
@@ -181,6 +186,13 @@ def core_messages(wal_row=True):
         msg(43, 1, 0, 15),
         msg(44, 1, 0, 0, ZMESSAGEINFO=1),
         msg(47, 8, 0, 0, ZGROUPMEMBER=1, ZFROMJID=P99),
+        msg(48, 4, 0, 0, ZFROMJID=BCAST),  # incoming in a broadcast-list chat: unknown participants
+        msg(49, 9, 0, 0, ZFROMJID=P1),
+        msg(50, 10, 0, 0, ZFROMJID=P1),
+        msg(51, 11, 0, 0, ZFROMJID=P1),  # an incoming type-0 status row whose ZFROMJID differs: unattributed, no address_conflict
+        msg(52, 12, 0, 0),
+        msg(53, 2, 0, 0, ZGROUPMEMBER=5, ZFROMJID=GRP),
+        msg(54, 1, 0, 1, ZMEDIAITEM="x"),  # a forward key that is no INTEGER: undecided, though an item names the message
     ]
     if wal_row:
         m.append(msg(45, 1, 0, 0))
@@ -213,6 +225,7 @@ def media_items():
         # the media rows of the messages the freelist variant deletes: the rows stay, so a recovered message meets its join
         (11, 150, dict(ZMEDIALOCALPATH="Media/15550000001@s.whatsapp.net/a/b/IMG-0150.jpg", ZVCARDSTRING="image/jpeg", ZFILESIZE=555)),
         (12, 151, dict(ZVCARDNAME="gone1")),
+        (13, 54, dict(ZTITLE="t54", ZMEDIALOCALPATH="Media/15550000001@s.whatsapp.net/a/b/IMG-0054.jpg", ZVCARDSTRING="image/jpeg", ZFILESIZE=54)),
     ]
 
 
@@ -258,14 +271,15 @@ def app_label(place, domain):
 
 
 def address(b, raw, field):
-    """A JID cell (bytes): (state, text). altered: cleaning changed it (never parsed, the cleaned text in raw under field);
-    too-long: over the contract's limit (never cut)."""
+    """A JID cell (bytes): (state, text). too-long (checked first): over the contract's limit or cut by cleaning (never cut,
+    no text kept: it would be copied into every message of the chat); altered: cleaning changed it (never parsed, the cleaned
+    text in raw under field)."""
     cl = W.text_of(b)
+    if len(cl.text.encode("utf-8")) > MAX_ADDR or cl.truncated:
+        return "too-long", None
     if cl.flags:
         C.mark(raw, field)
         return "altered", cl.text
-    if len(cl.text.encode("utf-8")) > MAX_ADDR:
-        return "too-long", None
     return None, cl.text
 
 
@@ -360,6 +374,9 @@ def media_join(ctx, r, c, raw):
     found = [it for it in ctx["items"] if it.get("ZMESSAGE") == pk]
     b = c.int("ZMEDIAITEM")
     b_set = b is not None and b != 0
+    if c.row.get("ZMEDIAITEM") is not None and not X.is_int(c.row.get("ZMEDIAITEM")):
+        undecided(raw, "ZWAMEDIAITEM")  # a stored value that is no INTEGER: the forward direction is unknown, never unset
+        return "undecided", None
     if len(found) >= 2:
         undecided(raw, "ZWAMEDIAITEM")
         return "undecided", None
@@ -553,11 +570,11 @@ def expect_message(r, ctx):
         else:
             unknown_p = True
             raw["sender_state"] = sender["state"]
-    elif direction == "in" and chat["str"]:
-        participants = [{"role": "from", "address": chat["str"]}]
+    elif direction == "in" and chat["str"] and chat["cls"] in ("user", "lid", "newsletter"):
+        participants = [{"role": "from", "address": chat["str"]}]  # amendment 4I2-A1: only a class that names a person
     else:
         unknown_p = True
-    if chat["type"] == 0 and not is_group and chat["str"] and direction in ("in", "out"):
+    if chat["type"] == 0 and not is_group and not is_status and chat["str"] and direction in ("in", "out"):
         key = "ZFROMJID" if direction == "in" else "ZTOJID"
         b = c.row.get(key)
         if X.is_text(b) and not W.text_of(b).flags and W.text_of(b).text != chat["str"]:
@@ -592,13 +609,22 @@ def expect_message(r, ctx):
         b = X.Cells(item, raw, unknown, "ZWAMEDIAITEM.").text("ZVCARDNAME")
         if b is not None:
             raw["ZVCARDNAME"] = X.cleaned(raw, "ZVCARDNAME", b)
-    body = None
+    body, body_fields = None, {}
     if txt:
         cl = W.text_of(txt)
         if cl.text:
             body = cl.text
             if cl.flags:
                 C.mark(raw, "body")
+                body_fields["body_flags"] = list(cl.flags)  # amendment 4I2-A2: the fields Android writes
+                if cl.truncated:
+                    body_fields["body_truncated"], body_fields["body_total_bytes"] = True, cl.total
+                if cl.b64 is not None:
+                    body_fields["body_raw_b64"] = cl.b64
+                if cl.sha is not None:
+                    body_fields["body_raw_sha256"] = cl.sha
+                if cl.b64 is not None or cl.sha is not None:
+                    body_fields["body_raw_len"] = cl.rawlen
     if revoke:
         if txt:
             raw["revoked_row_text"] = X.cleaned(raw, "revoked_row_text", txt)
@@ -636,6 +662,7 @@ def expect_message(r, ctx):
         payload["guid"] = guid
     if body is not None:
         payload["text_source"] = text_source
+        payload.update(body_fields)
     if revoke:
         payload["deleted"] = {"source": "ZMESSAGETYPE"}
     counter = participants[0]["address"] if participants else (chat["str"] or "unknown")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/cellx"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -172,24 +173,37 @@ func undecidedJoin(raw map[string]any, table string) {
 	raw["join_undecided"] = cur
 }
 
-// setBody puts a cleaned body into the message and states what cleaning did (spec C4, C6). An altered text is listed in
-// raw.text_flags (the committed oracle, message 38). The raw bytes of a text that held invalid UTF-8 or NUL, and the flags,
-// go to the payload as on Android; a pure cut at maxText is stated in raw.text_flags only (see the report, deviation 1).
+// setBody puts a cleaned body into the message and states what cleaning did (spec C4, C6, amendment 4I2-A2): the same
+// fields as Android: the flags, on a cut `body_truncated` and `body_total_bytes`, and the original bytes (base64, or their
+// length and SHA-256) of a text that held NUL or invalid UTF-8. An altered body is also listed in raw.text_flags.
 func setBody(msg *message.Message, raw map[string]any, c common.Cleaned) {
 	if len(c.Flags) == 0 {
 		return
 	}
 	markText(raw, "body")
-	if c.RawB64 == "" && c.RawSHA256 == "" {
-		return
-	}
 	msg.BodyFlags = c.Flags
-	msg.BodyRawB64, msg.BodyRawSHA256 = c.RawB64, c.RawSHA256
-	n := int64(c.RawLen)
-	msg.BodyRawLen = &n
 	if c.Truncated {
 		t, total := true, int64(c.TotalBytes)
 		msg.BodyTruncated, msg.BodyTotalBytes = &t, &total
+	}
+	msg.BodyRawB64, msg.BodyRawSHA256 = c.RawB64, c.RawSHA256
+	if c.RawB64 != "" || c.RawSHA256 != "" {
+		n := int64(c.RawLen)
+		msg.BodyRawLen = &n
+	}
+}
+
+// nanCell says a cell is a stored REAL NaN: the reader (as the engine) reads it as NULL but keeps the serial type 7, so
+// it is detectable here and is never read as absent (unknown is never absent).
+func nanCell(row parse.Row, col int) bool {
+	r, ok := row.(sqlitedb.Row)
+	return ok && col >= 0 && r.State(col) == sqlitedb.StateNull && r.Value(col).Serial == 7
+}
+
+// nanStatus states a date column that holds a NaN as raw.<name>_status = "invalid" (no time, no stored value to show).
+func (r cellReader) nanStatus(name string) {
+	if nanCell(r.row, r.cols.At(name)) {
+		r.raw[name+"_status"] = "invalid"
 	}
 }
 
