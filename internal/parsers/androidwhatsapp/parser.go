@@ -27,11 +27,12 @@ var _ parse.RowMapper = Parser{}
 
 // Meta describes the parser. The primary globs end in a database or backup name, never in a bare "*", so a -wal,
 // -journal or -shm file is never a primary (4I-R21); it reaches the job only as the companion of its primary.
-// There are no claims until the typed recovery of plan 4I task 14.
+// The claims are the tables of ClaimableTables (plan 4I task 14).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android WhatsApp messages and calls (msgstore.db)",
 		Platforms: []string{parse.PlatformAndroid},
+		Claims:    claimsOf(ClaimableTables()),
 		Emits: []parse.Emit{
 			{Type: message.Type, PayloadVersion: message.PayloadVersion},
 			{Type: call.Type, PayloadVersion: call.PayloadVersion},
@@ -49,6 +50,20 @@ func (Parser) Meta() parse.Meta {
 			{Role: "journal", Companions: []string{"-journal"}},
 		},
 	}
+}
+
+// ClaimableTables are the tables whose mapping is total (spec 6.9): every row gives one record or one counted warning,
+// so typed recovery (plan 4G) can map the rows of messages and calls that were deleted or superseded. message_add_on is
+// mapped but not claimed. A modern-only store claims nothing of messages (R9): a dropped legacy table is not a live
+// table, so its freed pages stay with the generic run.
+func ClaimableTables() []string { return []string{"message", "messages", "call_log"} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
 }
 
 // Mappings are the per-table mappings, in the order Parse runs them: the legacy table first, then the modern one (R1).

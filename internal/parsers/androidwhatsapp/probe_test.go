@@ -1,6 +1,7 @@
 package androidwhatsapp_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,8 +35,8 @@ func TestMetaIsValid(t *testing.T) {
 	if m.Name != "android.whatsapp.msgstore" || m.Version != androidwhatsapp.Version || len(m.Emits) != 2 {
 		t.Errorf("meta %+v", m)
 	}
-	if len(m.Claims) != 0 {
-		t.Errorf("claims %v: the typed recovery claims come with plan 4I task 14", m.Claims)
+	if want := []parse.TableClaim{{Role: "db", Table: "message"}, {Role: "db", Table: "messages"}, {Role: "db", Table: "call_log"}}; !slices.Equal(m.Claims, want) {
+		t.Errorf("claims %v, want %v (typed recovery, plan 4I task 14)", m.Claims, want)
 	}
 	roles := map[string]bool{}
 	for _, in := range m.Inputs {

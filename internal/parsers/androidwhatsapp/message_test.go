@@ -15,6 +15,7 @@ import (
 var parsedVariants = []string{
 	"android-legacy-2.11", "android-transition-legacydata", "android-transition-moderndata", "android-transition-both",
 	"android-transition-walonly", "android-transition-empty", "android-modern-2021", "android-modern-2026", "android-modern-business",
+	"android-modern-migrated",
 }
 
 // recordsOf parses a variant and returns its records by "<table>/<rowid>".

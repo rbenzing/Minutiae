@@ -26,7 +26,7 @@ var variants = []string{
 	"android-legacy-2.11", "android-transition-legacydata", "android-transition-moderndata", "android-transition-both",
 	"android-transition-walonly", "android-transition-empty", "android-modern-2021", "android-modern-2026",
 	"android-modern-business", "android-neither", "android-crypt14", "android-crypt15", "android-backup-notsqlite",
-	"android-backup-plain", "android-other-location",
+	"android-backup-plain", "android-other-location", "android-modern-migrated",
 }
 
 // remoteFor is where the variant's database sits on the device.

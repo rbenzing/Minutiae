@@ -19,7 +19,7 @@ import struct
 import telephony_common as C
 
 FAMILY = "whatsapp-android"
-SCENARIOS = {}  # no typed recovery oracle yet (plan 4I task 14)
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle, plan 4I task 14)
 SCHEMAS = C.os.path.join(C.HERE, "schemas", "whatsapp-android")
 MAX_TEXT = 256 << 10
 
@@ -1881,10 +1881,28 @@ def transition_fill(legacy_facts, modern_facts, sentinel=True, jobs=(), calls=()
 
 
 def v_trans_legacy(work):
-    path = build_db(work, "transition-2021.sql", transition_fill(core(False) + legacy_extras(), [],
-                                                                        jobs=[dict(id=1, chat=GRP, msg=9, starred=None, cats=None, singular=None)],
-                                                                        calls=modern_calls([1, 2, 3, 4, 5, 6, 7])))
-    return finish(path, REMOTE, "android-transition-legacydata", "transition-2021.sql", "transition")
+    """The legacy rows, plus 10 legacy rows (ids 100 to 109) and a legacy sentinel (id 150) that a committed WAL deletes: the
+    database file still holds them, so they are history under the WAL (the typed recovery scenario of plan 4I task 14). A
+    freelist cannot attribute a legacy row: messages_quotes has the same columns, so the fit is ambiguous. The page that holds
+    the rows is the table's own, so the schema says whose they are."""
+    jobs = [dict(id=1, chat=GRP, msg=9, starred=None, cats=None, singular=None)]
+
+    def fill(con):
+        transition_fill(core(False) + legacy_extras(), [], jobs=jobs, calls=modern_calls([1, 2, 3, 4, 5, 6, 7]))(con)
+        for m in bulk_messages(100, 10):
+            C.insert(con, "messages", legacy_row(m))
+        C.insert(con, "messages", dict(sentinel_row(), _id=150, key_id="K150"))
+    path = build_db(work, "transition-2021.sql", fill, journal_wal=True)
+    con = C.connect(path)
+    scen = new_scenario("android-transition-legacydata", con)
+    scen.write("messages", scen.snap(con, "messages"))
+    scen.want("messages", scen.snap(con, "messages", "_id between 100 and 109 or _id = 150"))
+    con.close()
+    C.kill_child(path, ["pragma wal_autocheckpoint = 0", "delete from messages where _id between 100 and 109 or _id = 150"])
+    files, exp = finish(path, REMOTE, "android-transition-legacydata", "transition-2021.sql", "transition")
+    for rec in exp["records"]:
+        rec["source_path"] = ""  # a WAL companion: the source path follows the role of the file that holds the cell
+    return files, exp
 
 
 def v_trans_modern(work):
@@ -1953,14 +1971,27 @@ def v_modern_2021(work):
     return finish(path, REMOTE, "android-modern-2021", "transition-2021.sql", "modern")
 
 
-def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=(), calls=(), files=()):
+def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=(), calls=(), files=(), scenario=False):
     files_extra = files
     facts = core(True)
     if extras:
         facts[1]["srv"] = T0 + 2500  # row 3 carries a receipt_server_timestamp (modern: the unit is not established)
     early, late = (facts[:-4], facts[-4:]) if wal else (facts, [])
     early = early + list(extras)
+    if scenario:
+        # plan 4I task 14: messages 90 and 91 and call 90 are in the database file; the WAL deletes them, so the file still
+        # holds three versions that are history (the typed recovery scenario) and the live rows are unchanged
+        early = early + bulk_messages(90, 2)
+        calls = list(calls) + bulk_calls(90, 1)
     path = build_db(work, "modern-2026.sql", modern_fill(early, addons=addons, jobs=jobs, calls=calls), journal_wal=wal)
+    if scenario:
+        con = C.connect(path)
+        scen = new_scenario(variant, con)
+        scen.write("message", scen.snap(con, "message"))
+        scen.write("call_log", scen.snap(con, "call_log"))
+        scen.want("message", scen.snap(con, "message", "_id in (90, 91)"))
+        scen.want("call_log", scen.snap(con, "call_log", "_id = 90"))
+        con.close()
     if wal:
         js = Jids()
         alloc(js, early, addons, calls)
@@ -1972,6 +2003,8 @@ def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=
         for c in js.chats[nc:]:
             stmts.append(insert_stmt("chat", c))
         stmts += [insert_stmt("message", r) for r in rows]
+        if scenario:
+            stmts += ["delete from message where _id in (90, 91)", "delete from call_log where _id = 90"]
         C.kill_child(path, stmts)
     files, exp = finish(path, remote, variant, "modern-2026.sql", "modern", extras=files_extra)
     if wal:
@@ -1982,7 +2015,7 @@ def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=
 
 def v_modern_2026(work):
     return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras(), addons=modern_addons(),
-                          jobs=modern_jobs(), calls=modern_calls(), files=EXTRA_FILES)
+                          jobs=modern_jobs(), calls=modern_calls(), files=EXTRA_FILES, scenario=True)
 
 
 def v_modern_business(work):
@@ -2032,6 +2065,102 @@ def v_other_location(work):
     return unparsed(work, "android-other-location")
 
 
+
+# ----------------------------------------------------------------------------------------- typed recovery (plan 4I task 14)
+#
+# The typed recovery pass maps the history rows of message, messages and call_log with the SAME mappings the live parse
+# uses (4I-R4a: a nil job set, so a recovered row states no pending purge). The joins read the LIVE side tables. The
+# oracle is computed from the committed files by an independent page walker (telephony_common.recover_oracle) and the
+# scenario's own record of what it wrote.
+
+CLAIMED = ("message", "messages", "call_log")
+
+
+def bulk_messages(first, n, chat=C1):
+    """n plain modern text facts with ids first.. (the rows a scenario writes and later deletes)."""
+    out = []
+    for i in range(first, first + n):
+        out.append(dict(id=i, chat=chat, me=i % 2, text="bulk message number %d with some text to fill the page" % i,
+                        ts=T0 + 500000 + i * 1000, recv=T0 + 500100 + i * 1000, status=0, type=0, key="B%03d" % i))
+    return out
+
+
+def bulk_calls(first, n):
+    return [dict(id=i, jid=C1, me=i % 2, key="BC%03d" % i, ts=T0 + 900000 + i * 1000, video=0, dur=10 + i % 50, result=5,
+                 bytes=None, group=0, parts=[]) for i in range(first, first + n)]
+
+
+def legacy_create_statement():
+    """The CREATE TABLE messages statement of the legacy DDL snapshot (one line)."""
+    with open(C.os.path.join(SCHEMAS, "legacy-2.11.sql"), encoding="utf-8") as f:
+        for line in f:
+            if line.upper().startswith("CREATE TABLE MESSAGES "):
+                return line.strip()
+    raise RuntimeError("no CREATE TABLE messages in legacy-2.11.sql")
+
+
+def new_scenario(variant, con):
+    """The scenario of a variant: it learns the columns of every claimed table the store has (the oracle reads them all)."""
+    scen = SCENARIOS[variant] = C.Scenario(CLAIMED)
+    for t in CLAIMED:
+        if con.execute("select count(*) from sqlite_master where type = 'table' and name = ?", (t,)).fetchone()[0]:
+            scen.snap(con, t, "0")
+    return scen
+
+
+def recover_env(files, remote):
+    """The live view of the files with no job set: a recovered row states no pending purge (4I-R4a)."""
+    view = C.engine_view(files, TABLES)
+    ctx = context(view)
+    ctx["extras"], ctx["remote"] = [], remote
+    ctx["jobs"] = job_set({}, ctx)
+    return ctx
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    remote = SCENARIO_REMOTE[variant]
+
+    def one(table, d, env, file):
+        if table == "messages" and d.get("key_remote_jid") == b"-1":
+            return None  # the legacy sentinel is not a message: a counted unmapped row
+        rec = expect_call(d, env, remote) if table == "call_log" else expect_message(table, d, env, remote)
+        rec["source_path"], rec["file"] = "", file  # a recovered record: the source path follows the role of the file
+        return rec
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: recover_env(f, remote), one, nobody="sentinel")
+
+
+SCENARIO_REMOTE = {"android-modern-2026": REMOTE_USER10, "android-transition-legacydata": REMOTE, "android-modern-migrated": REMOTE}
+
+
+def v_migrated(work):
+    """A modern store of a user who migrated from the legacy app: modern-2026 DDL, on 1024-byte pages. A messages table was
+    created, filled with 20 rows and dropped (secure_delete off), so its pages are on the freelist; 60 message rows and 30
+    call_log rows are deleted too. Typed recovery claims message and call_log rows only: the dropped legacy table is no
+    live table, so its pages stay with the generic run (R9)."""
+    path = work + "/m.db"
+    con = C.connect(path, page_size=1024)
+    con.executescript(C.load_ddl("modern-2026.sql", SCHEMAS)[0])
+    with C.batch(con):
+        modern_fill(core(True) + bulk_messages(100, 60), calls=modern_calls([1, 2, 3, 4, 5, 6, 7]) + bulk_calls(100, 30))(con)
+    scen = new_scenario("android-modern-migrated", con)
+    scen.write("message", scen.snap(con, "message"))
+    scen.write("call_log", scen.snap(con, "call_log"))
+    con.execute(legacy_create_statement())
+    with C.batch(con):
+        for r in [sentinel_row()] + [legacy_row(m) for m in core(False)] + [legacy_row(m) for m in legacy_hostile()[:3]]:
+            C.insert(con, "messages", r)
+    scen.write("messages", scen.snap(con, "messages"))
+    con.execute("drop table messages")
+    scen.want("message", scen.snap(con, "message", "_id between 100 and 159"), label="message")
+    scen.want("call_log", scen.snap(con, "call_log", "_id between 100 and 129"), label="call_log")
+    con.execute("delete from message where _id between 100 and 159")
+    con.execute("delete from call_log where _id between 100 and 129")
+    con.close()
+    return finish(path, REMOTE, "android-modern-migrated", "modern-2026.sql", "modern")
+
+
 VARIANTS = {
     "android-legacy-2.11": v_legacy,
     "android-transition-legacydata": v_trans_legacy,
@@ -2048,4 +2177,5 @@ VARIANTS = {
     "android-backup-notsqlite": v_backup_notsqlite,
     "android-backup-plain": v_backup_plain,
     "android-other-location": v_other_location,
+    "android-modern-migrated": v_migrated,
 }

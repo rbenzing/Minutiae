@@ -3201,7 +3201,7 @@ column and a zero time) and, in modern stores only, ids 18 (a channel) and 19 (a
 | Variant (`internal/parsers/androidwhatsapp/testdata/`) | DDL snapshot | Bundled at | Holds |
 |---|---|---|---|
 | `android-legacy-2.11` | `legacy-2.11.sql` | `/data/data/com.whatsapp/databases/msgstore.db` | the sentinel row and the core in `messages`, plus rows 21 to 25 |
-| `android-transition-legacydata` | `transition-2021.sql` | same | the core and rows 45 and 46 (a quote, `edit_version` 7, a revoke) in `messages`; `message` empty |
+| `android-transition-legacydata` | `transition-2021.sql` | same, with `-wal` | the core and rows 45 and 46 (a quote, `edit_version` 7, a revoke) in `messages`; `message` empty; rows 100 to 109 and a legacy sentinel 150 are in the database file only and a committed WAL deletes them (the typed recovery scenario of `messages`) |
 | `android-transition-moderndata` | `transition-2021.sql` | same | `messages` holds only the sentinel; the core in `message` |
 | `android-transition-both` | `transition-2021.sql` | same | the core in both tables, dual-written rows sharing `_id` and `key_id` |
 | `android-transition-walonly` | `transition-2021.sql` | same, with `-wal` | the core in `messages`; the first `message` row only in a committed WAL frame; one more row in frames written without a commit |
@@ -3209,11 +3209,17 @@ column and a zero time) and, in modern stores only, ids 18 (a channel) and 19 (a
 | `android-modern-2021` | `transition-2021.sql` minus the legacy tables | same | the modern core; `message_revoked` without `admin_jid_row_id` and `revoke_timestamp`; no `jid_map` |
 | `android-modern-2026` | `modern-2026.sql` | `/data/user/10/com.whatsapp/databases/msgstore.db`, with `-wal` | the modern core and rows 30 to 44 (revokes, a quote, an edit, system rows, a call notice, locations, LIDs, extras); rows 16 to 19 only in a committed WAL transaction |
 | `android-modern-business` | `modern-2026.sql` | `/data/data/com.whatsapp.w4b/databases/msgstore.db` | the modern core |
+| `android-modern-migrated` | `modern-2026.sql`, 1024-byte pages | `/data/data/com.whatsapp/databases/msgstore.db` | the modern core; a legacy `messages` table created, filled with 20 rows (a sentinel included) and dropped; `message` rows 100 to 159 and `call_log` rows 100 to 129 deleted: their pages are on the freelist (typed recovery: `message` and `call_log` rows only, R9) |
 | `android-neither` | none | the live path | one table `foo(x)` |
 | `android-crypt14`, `android-crypt15` | none | `/sdcard/WhatsApp/Databases/msgstore.db.crypt14`; `/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-2026-11-01.1.db.crypt15` | 64 KiB of a SHA-256 counter stream (synthetic: no header of a real format is claimed) |
 | `android-backup-notsqlite` | none | `/sdcard/WhatsApp Business/Databases/msgstore.db.crypt14` | 4 KiB of repeated ASCII text |
 | `android-backup-plain` | `modern-2026.sql` | `/sdcard/WhatsApp/Databases/msgstore.db` | a plain database at a backup path (never parsed as live) |
 | `android-other-location` | `modern-2026.sql` | `/storage/emulated/0/Android/data/com.whatsapp/databases/msgstore.db` | a plain database outside the app's live `databases/` directory |
+
+Typed recovery (plan 4I task 14): `android-modern-2026` (messages 90 and 91 and call 90, deleted in the WAL), `android-transition-legacydata` and
+`android-modern-migrated` have a `<variant>.recover.expect.json`, written with `--recover-oracle` from the committed files by an independent
+page walker. A freelist cannot attribute a legacy `messages` row (`messages_quotes` has the same columns), so the legacy scenario is a
+WAL scenario, whose pages the schema owns.
 
 Message records of a variant with a WAL state no source path (the harness derives it from the role of the cell). The
 oracle states, from the spec's rules, every record of `messages` and `message` (the one builder of plan 4I task 6): the
