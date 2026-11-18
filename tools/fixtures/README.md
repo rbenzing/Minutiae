@@ -3179,8 +3179,9 @@ families are the expected records.
 `tools/fixtures/whatsapp_gen.py` is a family module of `telephony_gen.py` (`--family whatsapp-android`). It needs Python 3
 with its bundled `sqlite3` only (no Docker) and is not part of `gen.sh all`. The databases are written by the engine; the WAL
 variants by a child process that dies without closing (`telephony_common.kill_child`). The oracle restates the spec's mapping
-rules (spec 6.4, 7) over the stored values read back from the engine on a copy of the finished files, and shares no code with
-the Go parser. The module also holds the helpers `jid`, `ms` and `vcard` that the `wa.db` generator imports (plan 4I task 12).
+rules (spec 6.4, 7) over the stored values read back from the engine on a copy of the finished files. It is an implementation in
+another language that shares no Go code with the parser, written from the spec; it restates the purge and attachment logic, so
+it is a second reading of the spec, checked against literal spec facts in `oracle_facts_test.go`, not an independent truth. The module also holds the helpers `jid`, `ms` and `vcard` that the `wa.db` generator imports (plan 4I task 12).
 
 ```
 py -3 tools/fixtures/telephony_gen.py --family whatsapp-android --out internal/parsers/androidwhatsapp/testdata \

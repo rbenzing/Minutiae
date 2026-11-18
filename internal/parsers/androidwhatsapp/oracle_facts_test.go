@@ -243,3 +243,64 @@ func TestOracleSourcePathsFollowTheBundlePath(t *testing.T) {
 		}
 	}
 }
+
+// The scenario oracle is an implementation of the spec's purge and attachment rules in another language, not a source of
+// truth: these facts are written out literally from the spec (6.3 as amended by G1, 4I-R4; 6.7, R5, R5a, R6) and checked
+// against what the oracle states for android-modern-2026, so a rule the oracle and the parser both got wrong the same way
+// fails here. Branches the fixtures hold no row for are covered by literal tests of the parser alone: the undecided
+// incomplete set (past the cap, a damaged table, an unusable job) by TestWhatsAppDeletedChatJobCapIsIncomplete and
+// TestWhatsAppUnusableJobMakesOtherRowsUndecided, and the attachment path that cannot be expressed (a glob character, a
+// path cleaning changed) by TestWhatsAppMediaPathWithGlobMetacharacterIsUndecided and
+// TestWhatsAppMediaPathThatCleaningChangedIsNeverLooked.
+func TestScenarioOracleStatesThePurgeAndAttachmentBranches(t *testing.T) {
+	byRow, _ := factsOf(t, "android-modern-2026")
+	// cleared by a job of its own chat (the smallest covering job is named; a starred row is judged by the starred bound)
+	for id, job := range map[int64]float64{60: 1, 61: 1, 62: 1, 65: 3, 66: 3, 71: 7} {
+		r := byRow["message/"+strconv.FormatInt(id, 10)]
+		del, _ := r.Payload["deleted"].(map[string]any)
+		if !r.Deleted || del["source"] != "deleted_chat_job" || fmt.Sprint(del["job"]) != fmt.Sprint(job) {
+			t.Errorf("message %d: deleted %v %v, want cleared by job %v", id, r.Deleted, del, job)
+		}
+	}
+	// above the bound (64), and starred with a NULL starred bound (63): live, no purge state
+	for _, id := range []int64{63, 64} {
+		r := byRow["message/"+strconv.FormatInt(id, 10)]
+		raw := rawOf(t, r)
+		if r.Deleted || raw["pending_purge"] != nil || raw["pending_purge_jobs"] != nil {
+			t.Errorf("message %d: deleted %v raw %v, want live", id, r.Deleted, raw)
+		}
+	}
+	// a list or a TEXT bound cannot be evaluated: undecided with the smallest job involved, never cleared
+	for id, w := range map[int64]struct {
+		job    float64
+		reason string
+	}{67: {4, "categories-or-singular-list-not-interpreted"}, 69: {5, "categories-or-singular-list-not-interpreted"}, 70: {6, "job-bound-not-integer"}} {
+		r := byRow["message/"+strconv.FormatInt(id, 10)]
+		raw := rawOf(t, r)
+		if r.Deleted || raw["pending_purge"] != "undecided" || fmt.Sprint(raw["pending_purge_job"]) != fmt.Sprint(w.job) || raw["pending_purge_reason"] != w.reason {
+			t.Errorf("message %d: deleted %v raw %v, want undecided by job %v (%s)", id, r.Deleted, raw, w.job, w.reason)
+		}
+	}
+
+	// attachments: exactly one same-source, same-user file is a link; each other outcome is counted and never a link
+	const img = "/storage/emulated/10/WhatsApp/Media/WhatsApp Images/IMG-A.jpg"
+	for id, w := range map[int64]struct {
+		link  any
+		count string
+	}{
+		80: {"@id:" + img, "attachments_resolved"}, 81: {nil, "attachments_ambiguous"}, 82: {nil, "attachments_other_source"},
+		83: {nil, "attachments_unresolved"}, 84: {nil, "attachments_other_user"}, 87: {nil, "attachments_unresolved"},
+	} {
+		r := byRow["message/"+strconv.FormatInt(id, 10)]
+		atts, _ := r.Payload["attachments"].([]any)
+		if len(atts) != 1 {
+			t.Errorf("message %d: %d attachments", id, len(atts))
+			continue
+		}
+		a, _ := atts[0].(map[string]any)
+		raw := rawOf(t, r)
+		if a["artifact_id"] != w.link || fmt.Sprint(raw[w.count]) != "1" {
+			t.Errorf("message %d: artifact_id %v raw %v, want link %v and %s 1", id, a["artifact_id"], raw, w.link, w.count)
+		}
+	}
+}
