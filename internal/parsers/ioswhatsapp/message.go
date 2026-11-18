@@ -342,6 +342,13 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, names []string) ([]re
 		}
 		if j == mediaRow {
 			text, textSource = readMediaRow(mediaReader(m, item, raw, unknown), typ.Value, text, textSource)
+			if fileType(typ.Value) {
+				if a, ok := attachmentOf(m, mediaReader(m, item, raw, unknown)); ok {
+					msg.Attachments = append(msg.Attachments, a)
+				}
+			}
+		} else if j == mediaNone && fileType(typ.Value) {
+			raw["media_state"] = stateNoMediaRow
 		}
 	}
 
