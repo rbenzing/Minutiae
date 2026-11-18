@@ -41,6 +41,11 @@ func readModel(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, names .
 		return model{}, err
 	}
 	defer db.Release()
+	return readModelDB(ctx, db, names...)
+}
+
+// readModelDB is readModel on a database the caller opened (and releases).
+func readModelDB(ctx context.Context, db *sqlitedb.DB, names ...string) (model, error) {
 	t, err := db.Table(ctx, zPrimaryKey, []string{"Z_ENT", "Z_NAME"}, nil)
 	switch {
 	case errors.Is(err, sqlitedb.ErrNoSuchTable):
@@ -52,10 +57,11 @@ func readModel(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, names .
 	}
 	cEnt, cName, cSuper := t.Col("Z_ENT"), t.Col("Z_NAME"), t.Col("Z_SUPER")
 	type found struct {
-		n     int
-		ent   int64
-		entOK bool
-		super int64
+		n          int
+		ent        int64
+		entOK      bool
+		entUnknown bool
+		super      int64
 	}
 	seen := make(map[string]*found, len(names))
 	for _, n := range names {
@@ -70,7 +76,7 @@ func readModel(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, names .
 		}
 		name, k := rowrun.TextCell(row, cName)
 		if k == rowrun.CellUnknown {
-			unreadName = true // the row could have been a wanted entity: "does not name" would be a guess
+			unreadName = true // the row could have been a wanted entity: no count of the others is decided
 			return nil
 		}
 		if k != rowrun.CellValue {
@@ -81,9 +87,8 @@ func readModel(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, names .
 			return nil
 		}
 		if fd.n++; fd.n == 1 {
-			if v, kind := rowrun.IntCell(row, cEnt); kind == rowrun.CellValue {
-				fd.ent, fd.entOK = v, true
-			}
+			v, kind := rowrun.IntCell(row, cEnt)
+			fd.ent, fd.entOK, fd.entUnknown = v, kind == rowrun.CellValue, kind == rowrun.CellUnknown
 			if v, kind := rowrun.IntCell(row, cSuper); kind == rowrun.CellValue {
 				fd.super = v
 			}
@@ -99,16 +104,32 @@ func readModel(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, names .
 	if overCap {
 		return model{}, &modelError{"Z_PRIMARYKEY has more than 4096 rows"}
 	}
+	// A page or cell the reader skipped is a loss, not an absence: rows of the model may be missing (unknown is never absent).
+	ix, err := t.Index(ctx, "Z_NAME", maxModelRows+1)
+	var uc *sqlitedb.UnsupportedCollationError
+	switch {
+	case errors.Is(err, sqlitedb.ErrIndexLimit):
+		return model{}, &modelError{"Z_PRIMARYKEY has more than 4096 rows"}
+	case errors.As(err, &uc) || err != nil && dataDamage(err):
+		return model{}, &modelError{reasonWhole}
+	case err != nil:
+		return model{}, err
+	}
+	lossy := ix.Lossy()
+	ix.Release()
+	if lossy || unreadName {
+		return model{}, &modelError{reasonWhole}
+	}
 	out := model{ByName: make(map[string]entity, len(names))}
 	for _, n := range names {
 		fd := seen[n]
 		switch {
-		case fd.n == 0 && unreadName:
-			return model{}, &modelError{reasonWhole}
 		case fd.n == 0:
 			return model{}, &modelError{"Z_PRIMARYKEY does not name the entity " + n}
 		case fd.n > 1:
 			return model{}, &modelError{"Z_PRIMARYKEY names the entity " + n + " more than once"}
+		case fd.entUnknown:
+			return model{}, &modelError{reasonWhole}
 		case !fd.entOK:
 			return model{}, &modelError{"Z_PRIMARYKEY entity " + n + " has no integer Z_ENT"}
 		}

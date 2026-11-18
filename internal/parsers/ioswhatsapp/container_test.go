@@ -1,6 +1,7 @@
 package ioswhatsapp_test
 
 import (
+	"errors"
 	"io"
 	"path"
 	"strings"
@@ -72,7 +73,7 @@ func notesOf(t *testing.T, v string, meta []byte) map[string]string {
 		b = withMeta(t, h, b, meta)
 	}
 	p := ioswhatsapp.Parser{}
-	res := h.RunLenient(p, b.Input(h, p, false))
+	res := runLenient(t, h, p, b.Input(h, p, false))
 	if res.Err != nil {
 		t.Fatalf("%s: %v", v, res.Err)
 	}
@@ -144,10 +145,35 @@ func TestIOSWhatsAppChatsAppLabelFromStructureOnly(t *testing.T) { // 4I2-R5, sp
 			b = f.BundleIOS(h, c.rel, c.logical)
 		}
 		p := ioswhatsapp.Parser{}
-		res := h.RunLenient(p, b.Input(h, p, false))
+		res := runLenient(t, h, p, b.Input(h, p, false))
 		if res.Err != nil {
 			t.Fatalf("%s: %v", place, res.Err)
 		}
 		wantNotes(t, "WhatsAppSMB in the data, "+place, res.Notes, c.want)
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) ReadAt([]byte, int64) (int, error) { return 0, errors.New("device read failed") }
+
+// An I/O failure while reading the container metadata is a failed job, never a label (review M2).
+func TestIOSWhatsAppChatsContainerMetaReadFailureFailsTheJob(t *testing.T) {
+	for name, r := range map[string]io.ReaderAt{"read error": failingReader{}, "no reader": nil} {
+		h := parsertest.NewHarness(t)
+		const v = "ios-chatstorage-extract"
+		b := withMeta(t, h, bundleOf(h, parsertest.LoadFixture(t, "testdata", v), v), xmlID(idConsumer))
+		p := ioswhatsapp.Parser{}
+		in := b.Input(h, p, false)
+		a := in.Artifacts["container_meta"]
+		a.R = r
+		in.Artifacts["container_meta"] = a
+		res := runLenient(t, h, p, in)
+		if res.Err == nil || len(res.Records) != 0 {
+			t.Errorf("%s: err %v", name, res.Err)
+		}
+		if res.Notes["app"] != "" || res.Notes["app_state"] != "" {
+			t.Errorf("%s: an app label was written: %v", name, res.Notes)
+		}
 	}
 }

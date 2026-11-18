@@ -1,6 +1,7 @@
 package ioswhatsapp_test
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -243,7 +244,7 @@ func TestIOSWhatsAppChatsModelMustNameTheEntities(t *testing.T) { // 4I2-R3, PF9
 	h := parsertest.NewHarness(t)
 	b := parsertest.Fixture{Name: "othermodel", Files: files}.BundleIOSBackup(h, domainConsumer, dbName)
 	p := ioswhatsapp.Parser{}
-	res := h.RunLenient(p, b.Input(h, p, false))
+	res := runLenient(t, h, p, b.Input(h, p, false))
 	if !errors.Is(res.Err, ioswhatsapp.ErrUnsupportedModel) || len(res.Records) != 0 {
 		t.Fatalf("Parse: err %v, %d records", res.Err, len(res.Records))
 	}
@@ -258,7 +259,7 @@ func TestIOSWhatsAppChatsEntityNumbersComeFromTheModel(t *testing.T) { // 4I2-R3
 		fx := parsertest.LoadFixture(t, "testdata", v)
 		b := bundleOf(h, fx, v)
 		p := ioswhatsapp.Parser{}
-		res := h.RunLenient(p, b.Input(h, p, false))
+		res := runLenient(t, h, p, b.Input(h, p, false))
 		if res.Err != nil {
 			t.Fatalf("%s: %v", v, res.Err)
 		}
@@ -289,7 +290,7 @@ func TestParseRefusesWhatNoGlobMatches(t *testing.T) {
 	h := parsertest.NewHarness(t)
 	b := parsertest.Fixture{Name: "x", Files: map[string][]byte{"db": parsertest.LoadFixture(t, "testdata", "ios-chatstorage").Files["db"]}}.BundleIOS(h, "/private/var/mobile/Library/ChatStorage.sqlite", "ios:HomeDomain/Library/ChatStorage.sqlite")
 	p := ioswhatsapp.Parser{}
-	if res := h.RunLenient(p, b.Input(h, p, false)); !errors.Is(res.Err, ioswhatsapp.ErrNotWhatsAppPath) {
+	if res := runLenient(t, h, p, b.Input(h, p, false)); !errors.Is(res.Err, ioswhatsapp.ErrNotWhatsAppPath) {
 		t.Errorf("err %v", res.Err)
 	}
 	got, err := p.Probe(t.Context(), b.Input(h, p, true))
@@ -300,7 +301,96 @@ func TestParseRefusesWhatNoGlobMatches(t *testing.T) {
 	h2 := parsertest.NewHarness(t)
 	files := map[string][]byte{"db": parsertest.LoadFixture(t, "testdata", "ios-chatstorage-otherapp").Files["db"], "wal": {}}
 	b2 := parsertest.Fixture{Name: "x", Files: files}.BundleIOSBackup(h2, domainConsumer, dbName)
-	if res := h2.RunLenient(p, b2.Input(h2, p, false)); !errors.Is(res.Err, ioswhatsapp.ErrNoWhatsAppTables) {
+	if res := runLenient(t, h2, p, b2.Input(h2, p, false)); !errors.Is(res.Err, ioswhatsapp.ErrNoWhatsAppTables) {
 		t.Errorf("domain without the identifying table: %v", res.Err)
 	}
+}
+
+// zpkStore is a Go-built store whose Z_PRIMARYKEY holds the given names in key order, padded between them so that the rows
+// span several leaf pages. corrupt, when set, is the name whose LAST occurrence's leaf page gets an invalid page type.
+func zpkStore(names []string, corrupt string) []byte {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	m := b.CreateTable("ZWAMESSAGE", "CREATE TABLE ZWAMESSAGE (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZISFROMME INTEGER, ZMESSAGEDATE TIMESTAMP, ZMESSAGETYPE INTEGER)")
+	c := b.CreateTable("ZWACHATSESSION", "CREATE TABLE ZWACHATSESSION (Z_PK INTEGER PRIMARY KEY, ZCONTACTJID VARCHAR)")
+	m.Insert(1, nil, int64(1), int64(0), int64(600000001), int64(0))
+	c.Insert(1, nil, "15550000001@s.whatsapp.net")
+	z := b.CreateTable("Z_PRIMARYKEY", "CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER)")
+	for i, n := range names {
+		z.Insert(int64(i+1), nil, n, int64(0), int64(0))
+	}
+	data := b.Bytes()
+	if corrupt != "" {
+		off := bytes.LastIndex(data, []byte(corrupt))
+		data[off/4096*4096] = 0 // the page type byte of the leaf that holds the row
+	}
+	return data
+}
+
+func pad(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = strings.Repeat("P", 2000) + string(rune('a'+i))
+	}
+	return out
+}
+
+// A damaged Z_PRIMARYKEY leaf is a loss, not an absence and not a count: unknown is never absent (review I1).
+func TestIOSWhatsAppChatsModelOnADamagedPageIsUnreadable(t *testing.T) {
+	const reason = "Z_PRIMARYKEY could not be read whole"
+	missing := zpkStore(append(pad(20), "WAMessage", "WAChatSession"), "WAMessage") // both entities on the lost last leaf
+	dup := zpkStore(append(append([]string{"WAMessage", "WAChatSession"}, pad(20)...), "WAMessage"), "WAMessage")
+	whole := zpkStore(append(append([]string{"WAMessage", "WAChatSession"}, pad(20)...), "Other"), "")
+	if got := probeDomain(t, map[string][]byte{"db": whole}); got.Status != parse.Applicable {
+		t.Fatalf("control: %+v", got)
+	}
+	for name, db := range map[string][]byte{"missing": missing, "duplicate": dup} {
+		if got := probeDomain(t, map[string][]byte{"db": db}); got.Status != parse.UnsupportedSchema || got.Reason != reason {
+			t.Errorf("%s: Probe %+v, want unsupported-schema %q", name, got, reason)
+		}
+		h := parsertest.NewHarness(t)
+		b := parsertest.Fixture{Name: name, Files: map[string][]byte{"db": db}}.BundleIOSBackup(h, domainConsumer, dbName)
+		p := ioswhatsapp.Parser{}
+		res := runLenient(t, h, p, b.Input(h, p, false), "")
+		if !errors.Is(res.Err, ioswhatsapp.ErrUnsupportedModel) || !strings.Contains(res.Err.Error(), reason) || len(res.Records) != 0 {
+			t.Errorf("%s: Parse err %v", name, res.Err)
+		}
+		if len(res.Violations) != 0 {
+			t.Errorf("%s: violations %v", name, res.Violations)
+		}
+		if res.Notes["entity.WAMessage"] != "" {
+			t.Errorf("%s: an entity note was written: %v", name, res.Notes)
+		}
+		// the page damage is evidence: it is forwarded although the job fails (review M3)
+		found := false
+		for _, w := range res.Warnings {
+			found = found || strings.HasPrefix(w.Locator, "sqlite:file=db;page=")
+		}
+		if !found {
+			t.Errorf("%s: no page warning was forwarded: %v", name, res.Warnings)
+		}
+	}
+}
+
+// runLenient is Harness.RunLenient plus the checks a lenient run would otherwise skip (review M5): no contract violation,
+// and every warning is one of the expected kinds (by default only the WAL frames the engine does not apply, which the
+// fixtures with a -wal legitimately raise).
+func runLenient(t *testing.T, h *parsertest.Harness, p ioswhatsapp.Parser, in *parse.Input, allowed ...string) parsertest.Result {
+	t.Helper()
+	if len(allowed) == 0 {
+		allowed = []string{"wal-frames-not-applied"}
+	}
+	res := h.RunLenient(p, in)
+	if len(res.Violations) != 0 {
+		t.Errorf("contract violations: %v", res.Violations)
+	}
+	for _, w := range res.Warnings {
+		ok := false
+		for _, a := range allowed {
+			ok = ok || strings.Contains(w.Reason, a)
+		}
+		if !ok {
+			t.Errorf("unexpected warning %s: %s", w.Locator, w.Reason)
+		}
+	}
+	return res
 }

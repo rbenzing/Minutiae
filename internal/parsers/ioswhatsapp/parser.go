@@ -136,32 +136,86 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	if p.Place == placeOther {
 		return fmt.Errorf("%w: %s", ErrNotWhatsAppPath, in.Primary.Logical)
 	}
-	l := labelOf(in, p)
+	for _, role := range []string{"db", "wal", "journal"} { // what rowrun.Run writes, kept when a check below fails first
+		a := in.Primary
+		if role != "db" {
+			var ok bool
+			if a, ok = in.Artifacts[role]; !ok {
+				continue
+			}
+		}
+		if a.Incomplete {
+			out.Note("incomplete."+role, "true")
+		}
+	}
+	l, err := labelOf(in, p)
+	if err != nil {
+		return err
+	}
 	l.note(out, p)
+	if err := preflight(ctx, in, out, p); err != nil {
+		return err
+	}
+	_, err = rowrun.Run(ctx, in, out, nil)
+	return err
+}
+
+// maxPreflightWarnings caps the reader warnings preflight forwards (rowrun's own cap).
+const maxPreflightWarnings = 1000
+
+// preflight opens the database once, decides whether ZWAMESSAGE is present and, when it is, reads the Core Data model
+// and notes the entity numbers. When it returns an error it first forwards the reader's warnings: the damage that
+// made the model unreadable is evidence, and rowrun.Run, which forwards them on the success path, never runs.
+func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlace) (err error) {
 	files, err := filesOf(in)
 	if err != nil {
 		return err
 	}
-	present, err := hasTable(ctx, files, in.Budget, tableMessage)
+	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
 		return err
 	}
-	switch {
-	case present:
-		m, err := readModel(ctx, files, in.Budget, entMessage, entChat)
-		var me *modelError
-		if errors.As(err, &me) {
-			return fmt.Errorf("%w: %s", ErrUnsupportedModel, me.Reason)
-		} else if err != nil {
-			return err
+	defer db.Release()
+	defer func() {
+		if err == nil {
+			return
 		}
-		out.Note("entity."+entMessage, strconv.FormatInt(m.ByName[entMessage].Ent, 10))
-		out.Note("entity."+entChat, strconv.FormatInt(m.ByName[entChat].Ent, 10))
-	case p.Place == placeDomain:
-		return ErrNoWhatsAppTables
+		dropped := 0
+		for i, w := range db.Warnings() {
+			if i >= maxPreflightWarnings {
+				dropped++
+				continue
+			}
+			loc := fmt.Sprintf("sqlite:file=%s;page=%d;offset=%d", w.File, w.Page, w.Offset)
+			if werr := out.Warn(ctx, loc, w.Code+": "+w.Msg); werr != nil {
+				return
+			}
+		}
+		if dropped > 0 {
+			out.Note("warnings_dropped", strconv.Itoa(dropped))
+		}
+	}()
+	_, terr := db.Table(ctx, tableMessage, nil, nil)
+	switch {
+	case errors.Is(terr, sqlitedb.ErrNoSuchTable):
+		if p.Place == placeDomain {
+			return ErrNoWhatsAppTables
+		}
+		return nil
+	case terr != nil && !dataDamage(terr):
+		return terr
 	}
-	_, err = rowrun.Run(ctx, in, out, nil)
-	return err
+	// present (a table that exists but cannot be read counts as present: the mapping that reads it reports why)
+	m, err := readModelDB(ctx, db, entMessage, entChat)
+	var me *modelError
+	if errors.As(err, &me) {
+		return fmt.Errorf("%w: %s", ErrUnsupportedModel, me.Reason)
+	} else if err != nil {
+		return err
+	}
+	out.Note("entity."+entMessage, strconv.FormatInt(m.ByName[entMessage].Ent, 10))
+	out.Note("entity."+entChat, strconv.FormatInt(m.ByName[entChat].Ent, 10))
+	return nil
 }
 
 // filesOf is the database and its companions as the host hands them (restated from the other WhatsApp parsers).
@@ -182,22 +236,4 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 		}
 	}
 	return f, nil
-}
-
-// hasTable says whether the schema holds a table called name. A table that exists but cannot be read counts as present:
-// the mapping that reads it reports why.
-func hasTable(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, name string) (bool, error) {
-	db, err := sqlitedb.Open(ctx, f, b)
-	if err != nil {
-		return false, err
-	}
-	defer db.Release()
-	_, err = db.Table(ctx, name, nil, nil)
-	switch {
-	case errors.Is(err, sqlitedb.ErrNoSuchTable):
-		return false, nil
-	case err != nil && !dataDamage(err):
-		return false, err
-	}
-	return true, nil
 }

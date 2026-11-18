@@ -2,6 +2,7 @@ package ioswhatsapp
 
 import (
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/rbenzing/minutiae/internal/decode/plist"
@@ -27,18 +28,21 @@ const (
 type appLabel struct{ App, Basis, State, Identifier, MetaError string }
 
 // labelOf labels the database at place p. At a domain the label is the domain's and the metadata is never read; at an
-// app group the container_meta artifact is read, at most maxContainerMeta bytes of it.
-func labelOf(in *parse.Input, p dbPlace) appLabel {
+// app group the container_meta artifact is read, at most maxContainerMeta bytes of it. A read that fails is an error
+// (an I/O fact is no label), never an unknown app.
+func labelOf(in *parse.Input, p dbPlace) (appLabel, error) {
 	if p.Place == placeDomain {
-		return appLabel{App: p.App, Basis: "backup_domain"}
+		return appLabel{App: p.App, Basis: "backup_domain"}, nil
 	}
-	unknown := func(state, kind string) appLabel { return appLabel{App: "unknown", State: state, MetaError: kind} }
+	unknown := func(state, kind string) (appLabel, error) {
+		return appLabel{App: "unknown", State: state, MetaError: kind}, nil
+	}
 	a, ok := in.Artifacts["container_meta"]
 	if !ok {
 		return unknown("no-container-metadata", "")
 	}
 	if a.R == nil {
-		return unknown("metadata-unreadable", "read-failed")
+		return appLabel{}, errors.New(Name + ": the container_meta artifact has no reader")
 	}
 	if a.Size > maxContainerMeta {
 		return unknown("metadata-unreadable", "too-large")
@@ -46,7 +50,7 @@ func labelOf(in *parse.Input, p dbPlace) appLabel {
 	// the host's size is what the manifest recorded: read one byte more, so a longer file is still too large
 	buf, err := io.ReadAll(io.NewSectionReader(a.R, 0, maxContainerMeta+1))
 	if err != nil {
-		return unknown("metadata-unreadable", "read-failed")
+		return appLabel{}, fmt.Errorf("%s: reading the container metadata: %w", Name, err) // an I/O fact, never a label
 	}
 	if len(buf) > maxContainerMeta {
 		return unknown("metadata-unreadable", "too-large")
@@ -67,13 +71,13 @@ func labelOf(in *parse.Input, p dbPlace) appLabel {
 	}
 	switch id {
 	case metaIDConsumer:
-		return appLabel{App: "whatsapp", Basis: "container_metadata"}
+		return appLabel{App: "whatsapp", Basis: "container_metadata"}, nil
 	case metaIDBusiness:
-		return appLabel{App: "whatsapp_business", Basis: "container_metadata"}
+		return appLabel{App: "whatsapp_business", Basis: "container_metadata"}, nil
 	}
-	l := unknown("metadata-other-identifier", "")
+	l, _ := unknown("metadata-other-identifier", "")
 	l.Identifier = common.CleanText([]byte(id), maxIdentifier).Text
-	return l
+	return l, nil
 }
 
 // note writes the label as job notes (before rowrun.Run: the first write of a key wins).

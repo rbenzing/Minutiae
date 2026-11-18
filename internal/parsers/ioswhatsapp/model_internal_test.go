@@ -18,8 +18,10 @@ func modelOf(t *testing.T, db []byte, names ...string) (model, error) {
 	return readModel(t.Context(), sqlitedb.Files{DB: bytes.NewReader(db), DBSize: int64(len(db))}, b, names...)
 }
 
-func zpk(ddl string, fill func(z *sqlitetest.Table)) []byte {
-	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+func zpk(ddl string, fill func(z *sqlitetest.Table)) []byte { return zpkEnc(1, ddl, fill) }
+
+func zpkEnc(enc int, ddl string, fill func(z *sqlitetest.Table)) []byte {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, Encoding: enc})
 	z := b.CreateTable("Z_PRIMARYKEY", ddl)
 	fill(z)
 	return b.Bytes()
@@ -108,4 +110,24 @@ func TestReadModelBounds(t *testing.T) { // 4I2-R3
 func isModelError(err error) bool {
 	var me *modelError
 	return errors.As(err, &me)
+}
+
+// Unknown is never absent (review M1): a cell the reader cannot vouch for decides nothing, whatever the counts.
+func TestReadModelUnreadableCellsAreNeverDecided(t *testing.T) {
+	const reason = "Z_PRIMARYKEY could not be read whole"
+	// another row's name is unreadable: "exactly once" is undecidable, so the model is not accepted
+	name := zpkEnc(2, zpkDDL, func(z *sqlitetest.Table) {
+		z.Insert(1, nil, "WAMessage", int64(0), int64(0))
+		z.Insert(2, nil, "WAChatSession", int64(0), int64(0))
+		z.InsertRaw(3, []uint64{0, 19, 0, 0}, []byte{0x41, 0x00, 0x42}) // odd-length UTF-16: undecodable, so unknown
+	})
+	_, err := modelOf(t, name, "WAMessage", "WAChatSession")
+	wantReason(t, "unreadable name beside two found once", err, reason)
+	// the wanted entity's own Z_ENT is unreadable: not "has no integer Z_ENT"
+	ent := zpk("CREATE TABLE Z_PRIMARYKEY (Z_NAME VARCHAR, Z_ENT INTEGER DEFAULT (1+1))", func(z *sqlitetest.Table) {
+		z.InsertRaw(1, []uint64{31}, []byte("WAMessage")) // the record ends before Z_ENT, whose default is an expression
+	})
+	_, err = modelOf(t, ent, "WAMessage")
+	wantReason(t, "unreadable Z_ENT", err, reason)
+	// a NULL or TEXT Z_ENT is still a decided "no integer" (TestReadModelBounds)
 }
