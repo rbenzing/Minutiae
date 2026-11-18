@@ -43,7 +43,12 @@ type tables map[string]*sqlitetest.Table
 
 // buildDB builds a modern store from baseDDL with the given overrides (an empty override drops the table).
 func buildDB(over map[string]string, fill func(tb tables)) (db, wal []byte) {
-	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	return buildDBPageSize(4096, over, fill)
+}
+
+// buildDBPageSize is buildDB with the given page size.
+func buildDBPageSize(pageSize int, over map[string]string, fill func(tb tables)) (db, wal []byte) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: pageSize})
 	tb := tables{}
 	for _, name := range baseOrder {
 		ddl := baseDDL[name]

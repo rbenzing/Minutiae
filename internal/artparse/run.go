@@ -670,7 +670,7 @@ func (r *run) parseFailure(g Guarded, em *emitter) (reason string, cause error) 
 func failureReason(err error) string {
 	switch {
 	case errors.Is(err, parse.ErrBudget):
-		return "memory budget exceeded"
+		return "memory budget exceeded (raise --mem-budget)"
 	case errors.Is(err, parse.ErrRecordCap):
 		return "record cap reached"
 	case errors.Is(err, parse.ErrRejectedCap):

@@ -132,18 +132,19 @@ func parseBytes(t *testing.T, db []byte) parsed {
 func TestWAContactsHostileRowsAreStatedNotInvented(t *testing.T) {
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
 	tbl := b.CreateTable("wa_contacts", "create table wa_contacts(_id integer primary key, jid text, display_name text, number text, wa_name text)")
-	tbl.Insert(1, nil, "15550000001@s.whatsapp.net", int64(42), nil, nil)              // a name cell of another class and nothing else
-	tbl.Insert(2, nil, int64(7), "Ann", nil, nil)                                      // a JID that is not text
-	tbl.Insert(3, nil, strings.Repeat("1", 2000)+"@s.whatsapp.net", "Ann", nil, nil)   // a JID over 1024 bytes
-	tbl.Insert(4, nil, "1555\x00@s.whatsapp.net", "Ann", nil, nil)                     // a NUL in the JID
-	tbl.Insert(5, nil, "15550000005:7@s.whatsapp.net", "Eve", "+1555", nil)            // a device suffix: a user, kept as stored
-	tbl.Insert(6, nil, "15550000006@s.whatsapp.net", nil, nil, []byte("pushname\xff")) // a BLOB wa_name and nothing else
+	tbl.Insert(1, nil, "15550000001@s.whatsapp.net", int64(42), nil, nil)                // a name cell of another class and nothing else
+	tbl.Insert(2, nil, int64(7), "Ann", nil, nil)                                        // a JID that is not text
+	tbl.Insert(3, nil, strings.Repeat("1", 2000)+"@s.whatsapp.net", "Ann", nil, nil)     // a JID over 1024 bytes
+	tbl.Insert(4, nil, "1555\x00@s.whatsapp.net", "Ann", nil, nil)                       // a NUL in the JID
+	tbl.Insert(5, nil, "15550000005:7@s.whatsapp.net", "Eve", "+1555", nil)              // a device suffix: a user, kept as stored
+	tbl.Insert(6, nil, "15550000006@s.whatsapp.net", nil, nil, []byte("pushname\xff"))   // a BLOB wa_name and nothing else
+	tbl.Insert(7, nil, strings.Repeat("1", 2000)+"\x00@s.whatsapp.net", "Ann", nil, nil) // over 1024 bytes and unparseable: the length is checked first
 	got := parseBytes(t, b.Bytes())
 	if got.res.Err != nil || got.res.Refused != 0 || len(got.res.Violations) != 0 {
 		t.Fatalf("err %v refused %d violations %v", got.res.Err, got.res.Refused, got.res.Violations)
 	}
 	for id, want := range map[int64]string{
-		1: "no readable name or number", 2: "no readable JID", 3: "JID over 1024 bytes", 4: "(unparseable)", 6: "no readable name or number",
+		1: "no readable name or number", 2: "no readable JID", 3: "JID over 1024 bytes", 4: "(unparseable)", 7: "JID over 1024 bytes", 6: "no readable name or number",
 	} {
 		if !strings.Contains(got.warnings[id], want) || got.records[id] {
 			t.Errorf("row %d: warning %q record %v, want a warning containing %q", id, got.warnings[id], got.records[id], want)

@@ -30,7 +30,7 @@ func (p fuzzParser) Parse(ctx context.Context, in *parse.Input, out parse.Emitte
 
 // maxSeedBytes is the largest file a fuzz seed may hold (T59): a big seed slows every
 // execution, so the fuzzer explores nothing.
-const maxSeedBytes = 64 << 10
+const maxSeedBytes = 16 << 10
 
 type fuzzSeed struct {
 	name             string
@@ -51,7 +51,7 @@ func legacySeed() []byte {
 }
 
 func modernSeed(withLegacy bool) []byte {
-	db, _ := buildDB(nil, func(tb tables) {
+	db, _ := buildDBPageSize(512, nil, func(tb tables) {
 		jidRow(tb, 1, "15550000001", "s.whatsapp.net", "15550000001@s.whatsapp.net")
 		jidRow(tb, 2, "120363000000000001", "g.us", "120363000000000001@g.us")
 		tb["chat"].Insert(1, nil, int64(1), nil)

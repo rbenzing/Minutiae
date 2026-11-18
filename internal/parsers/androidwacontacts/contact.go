@@ -194,14 +194,15 @@ func mapContact(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	if jk != rowrun.CellValue {
 		return nil, rowrun.Unmappable(reasonNoJID)
 	}
+	if len(jb) > maxJID { // before the parse: a JID that is too long and also unparseable is stated as too long
+		return nil, rowrun.Unmappable(reasonJIDTooLong)
+	}
 	j, perr := wajid.Parse(string(jb))
 	switch {
 	case perr != nil:
 		return nil, rowrun.Unmappable(reasonNotPersonFmt, unparseable)
 	case j.Class != wajid.ClassUser && j.Class != wajid.ClassLID:
 		return nil, rowrun.Unmappable(reasonNotPersonFmt, string(j.Class))
-	case len(jb) > maxJID:
-		return nil, rowrun.Unmappable(reasonJIDTooLong)
 	}
 	jidText := string(jb) // valid UTF-8 without NUL: wajid.Parse refused anything else
 

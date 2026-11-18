@@ -11,7 +11,7 @@ import (
 
 // maxSeedBytes is the largest file a fuzz seed may hold (T59): a big seed slows every
 // execution, so the fuzzer explores nothing.
-const maxSeedBytes = 64 << 10
+const maxSeedBytes = 16 << 10
 
 type fuzzSeed struct {
 	name             string
@@ -27,41 +27,58 @@ func minimalSeed() []byte {
 	return b.Bytes()
 }
 
-// seedTooBig are the variants whose files exceed the seed limit: wa-current holds a 300 KiB status, so the other
-// variants stand for it (the same table with the same columns).
-var seedTooBig = map[string]bool{"wa-current": true}
+// fullSeed is a hand-built wa.db of 512-byte pages with the full constructed column set, a user, a LID, a group and a
+// nameless row, and a WAL holding one more row.
+func fullSeed() (db, wal []byte) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 512})
+	t := b.CreateTable("wa_contacts", "CREATE TABLE wa_contacts (_id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT NOT NULL, is_whatsapp_user INTEGER, status TEXT, status_timestamp INTEGER, "+
+		"number TEXT, raw_contact_id INTEGER, display_name TEXT, phone_type INTEGER, phone_label TEXT, unseen_msg_count INTEGER, photo_ts INTEGER, thumb_ts INTEGER, "+
+		"photo_id_timestamp INTEGER, given_name TEXT, family_name TEXT, wa_name TEXT, sort_name TEXT, nickname TEXT, company TEXT, title TEXT, offset INTEGER)")
+	t.Insert(1, nil, "15550000001@s.whatsapp.net", int64(1), "busy", int64(1700000000000), "+15550000001", int64(7), "Ann Lee", int64(2), nil, int64(0), nil, nil, nil, "Ann", "Lee", "Annie", "Lee Ann", nil, "Co", nil, nil)
+	t.Insert(2, nil, "99887766554433@lid", int64(1), nil, nil, nil, nil, "Bo", nil, nil, nil, nil, nil, nil, nil, nil, "Bo", nil, nil, nil, nil, nil)
+	t.Insert(3, nil, "120363000000000001@g.us", int64(0), nil, nil, nil, nil, "Family", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	t.Insert(4, nil, "15550000004@s.whatsapp.net", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return b.Bytes(), b.NewWAL(false, 1, 2, 0).Bytes()
+}
 
-// fuzzSeeds are the committed fixtures that fit the limit and the minimal database.
+// fuzzSeeds are the hand-built databases and the committed fixtures that fit the limit (the others have 4 KiB pages
+// and the same table with the same columns, which the hand-built seeds stand for).
 func fuzzSeeds(t testing.TB) []fuzzSeed {
 	t.Helper()
-	seeds := []fuzzSeed{{name: "minimal", db: minimalSeed()}}
+	fdb, fwal := fullSeed()
+	seeds := []fuzzSeed{{name: "minimal", db: minimalSeed()}, {name: "full", db: fdb, wal: fwal}}
 	for _, v := range variants {
-		if seedTooBig[v] {
+		fx := parsertest.LoadFixture(t, "testdata", v)
+		if seedTooBig(fx) {
 			continue
 		}
-		fx := parsertest.LoadFixture(t, "testdata", v)
 		seeds = append(seeds, fuzzSeed{name: v, db: fx.Files["db"], wal: fx.Files["wal"], journal: fx.Files["journal"]})
 	}
 	return seeds
 }
 
-func TestFuzzSeedsAreSmall(t *testing.T) {
-	seeds := fuzzSeeds(t)
-	if len(seeds) != len(variants)-len(seedTooBig)+1 {
-		t.Errorf("%d seeds for %d variants (%d too big) and the minimal database", len(seeds), len(variants), len(seedTooBig))
-	}
-	for v := range seedTooBig {
-		fx := parsertest.LoadFixture(t, "testdata", v)
-		if len(fx.Files["db"]) <= maxSeedBytes && len(fx.Files["wal"]) <= maxSeedBytes {
-			t.Errorf("%s fits the seed limit: it is not too big", v)
+func seedTooBig(fx parsertest.Fixture) bool {
+	for _, data := range fx.Files {
+		if len(data) > maxSeedBytes {
+			return true
 		}
 	}
-	for _, s := range seeds {
+	return false
+}
+
+func TestFuzzSeedsAreSmall(t *testing.T) {
+	for _, s := range fuzzSeeds(t) {
 		for role, data := range map[string][]byte{"db": s.db, "wal": s.wal, "journal": s.journal} {
 			if len(data) > maxSeedBytes {
 				t.Errorf("seed %s %s is %d bytes, over %d", s.name, role, len(data), maxSeedBytes)
 			}
 		}
+	}
+	if db, _ := fullSeed(); len(db) > 8<<10 {
+		t.Errorf("the hand-built wa.db seed is %d bytes: it should be a few KiB", len(db))
+	}
+	if res := parseBytes(t, minimalSeed()); res.res.Err != nil || len(res.res.Records) == 0 {
+		t.Errorf("the minimal seed: err %v, %d records", res.res.Err, len(res.res.Records))
 	}
 }
 

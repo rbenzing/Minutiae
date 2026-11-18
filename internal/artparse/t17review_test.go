@@ -244,7 +244,7 @@ func TestResourceLimitReasonsAreExact(t *testing.T) {
 		parsertest.Spammer{Name: "spam", Version: "1.0.0", N: 5},
 		parsertest.Invalid{Name: "inv", Version: "1.0.0", Mode: parsertest.InvalidNulInSummary, N: 10})
 	sum := f.run(h, artparse.Selection{})
-	for name, want := range map[string]string{"hog": "memory budget exceeded", "spam": "record cap reached", "inv": "too many rejected records"} {
+	for name, want := range map[string]string{"hog": "memory budget exceeded (raise --mem-budget)", "spam": "record cap reached", "inv": "too many rejected records"} {
 		if j := jobOf(t, sum, name); j.Reason != want || j.Outcome != artparse.OutcomeIncomplete {
 			t.Errorf("%s: reason %q outcome %q, want %q", name, j.Reason, j.Outcome, want)
 		}
