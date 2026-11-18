@@ -73,11 +73,13 @@ type jobSet struct {
 	Unusable, Dangling int64
 	ChatUndecided      bool // the chat table is guarded: no job is applied or called dangling (4I review I2)
 	Complete           bool
-	Why                string    // why the set is incomplete ("" when complete)
-	Undecided          []jobWarn // jobs that can make rows undecided, at most maxJobWarnings kept
-	UndecidedDropped   int64     // the jobs past that cap
-	minID              int64     // the smallest job id read, 0 when none
-	solec              soleCache // the answer of R5a, computed on first use (one parse maps rows one at a time)
+	Why                string             // why the set is incomplete ("" when complete)
+	Undecided          []jobWarn          // jobs that can make rows undecided, at most maxJobWarnings kept
+	UndecidedDropped   int64              // the jobs past that cap
+	minID              int64              // the smallest job id read, 0 when none
+	solec              soleCache          // the answer of R5a, computed on first use (one parse maps rows one at a time)
+	aggs               map[int64]*chatAgg // per chat, built on the first row of the chat (one parse maps rows one at a time)
+	work               int64              // the jobs the evaluation visited: a test's bound on the cost of a row
 }
 
 // soleCache holds the answer of soleLive for one parse.
@@ -115,11 +117,12 @@ const (
 	purgeUndecided
 )
 
-// purgeResult is the outcome for one row: Cleared lists every job that covers it, Undecided names the smallest job
-// involved (0 for none) and why.
+// purgeResult is the outcome for one row: Cleared lists the jobs that cover it in rowid order, at most maxPurgeJobs of
+// them (Total is then the full count, else 0), Undecided names the smallest job involved (0 for none) and why.
 type purgeResult struct {
 	Verdict purgeVerdict
 	Jobs    []int64
+	Total   int
 	Job     int64
 	Reason  string
 }
@@ -159,39 +162,111 @@ func (js *jobSet) eval(k rowKey) purgeResult {
 	if !k.ChatKnown {
 		return purgeResult{} // a row with no chat is not in any job's chat
 	}
-	jobs := js.ByChat[k.Chat]
+	a := js.agg(k.Chat)
 	if k.StarredOK && k.OrderOK {
-		var ids []int64
-		for _, j := range jobs {
-			if j.covers(k) {
-				ids = append(ids, j.ID)
+		if ids, total := js.clearing(a, k); total > 0 {
+			r := purgeResult{Verdict: purgeCleared, Jobs: ids, Job: ids[0]}
+			if total > len(ids) {
+				r.Total = total
 			}
-		}
-		if len(ids) > 0 {
-			return purgeResult{Verdict: purgeCleared, Jobs: ids, Job: ids[0]}
+			return r
 		}
 	}
-	for _, j := range jobs {
-		if j.Lists {
-			return purgeResult{Verdict: purgeUndecided, Job: j.ID, Reason: reasonJobLists}
-		}
-	}
-	for _, j := range jobs {
-		if !j.BoundOK {
-			return purgeResult{Verdict: purgeUndecided, Job: j.ID, Reason: reasonJobBound}
-		}
-	}
-	if len(jobs) > 0 && (!k.StarredOK || !k.OrderOK) {
-		return purgeResult{Verdict: purgeUndecided, Job: jobs[0].ID, Reason: reasonRowKey}
-	}
-	if js.incomplete() {
+	switch {
+	case a.lists:
+		return purgeResult{Verdict: purgeUndecided, Job: a.listsID, Reason: reasonJobLists}
+	case a.bad:
+		return purgeResult{Verdict: purgeUndecided, Job: a.badID, Reason: reasonJobBound}
+	case a.n > 0 && (!k.StarredOK || !k.OrderOK):
+		return purgeResult{Verdict: purgeUndecided, Job: a.firstID, Reason: reasonRowKey}
+	case js.incomplete():
 		r := purgeResult{Verdict: purgeUndecided, Reason: reasonJobSet}
-		if len(jobs) > 0 {
-			r.Job = jobs[0].ID
+		if a.n > 0 {
+			r.Job = a.firstID
 		}
 		return r
 	}
 	return purgeResult{}
+}
+
+// bounded is a usable bound of a job with the job's id.
+type bounded struct{ v, id int64 }
+
+// chatAgg is what the evaluation needs of the jobs of one chat, computed once: the first job holding a list and the first
+// whose bound is unusable, the first job, and the usable bounds sorted ascending (one array per bound kind), so that the
+// jobs covering a row are counted by a binary search and read from the end of the array.
+type chatAgg struct {
+	jobs           []jobBound
+	n              int
+	firstID        int64
+	lists, bad     bool
+	listsID, badID int64
+	msg, star      []bounded
+}
+
+func (js *jobSet) agg(chat int64) *chatAgg {
+	if a := js.aggs[chat]; a != nil {
+		return a
+	}
+	jobs := js.ByChat[chat]
+	a := &chatAgg{jobs: jobs, n: len(jobs)}
+	for i, j := range jobs {
+		if i == 0 {
+			a.firstID = j.ID
+		}
+		if j.Lists && !a.lists {
+			a.lists, a.listsID = true, j.ID
+		}
+		if !j.BoundOK && !a.bad {
+			a.bad, a.badID = true, j.ID
+		}
+		if j.Msg != nil {
+			a.msg = append(a.msg, bounded{*j.Msg, j.ID})
+		}
+		if j.Starred != nil {
+			a.star = append(a.star, bounded{*j.Starred, j.ID})
+		}
+	}
+	js.work += int64(len(jobs))
+	for _, s := range [][]bounded{a.msg, a.star} {
+		sort.Slice(s, func(i, j int) bool { return s[i].v < s[j].v })
+	}
+	if js.aggs == nil {
+		js.aggs = map[int64]*chatAgg{}
+	}
+	js.aggs[chat] = a
+	return a
+}
+
+// clearing lists the jobs of the chat that cover the row, in rowid order and at most maxPurgeJobs of them, and counts all
+// of them. A row that no job covers visits no job.
+func (js *jobSet) clearing(a *chatAgg, k rowKey) (ids []int64, total int) {
+	bs := a.msg
+	if k.Starred == 1 {
+		bs = a.star
+	}
+	from := sort.Search(len(bs), func(i int) bool { return bs[i].v >= k.Order })
+	total = len(bs) - from
+	switch {
+	case total == 0:
+		return nil, 0
+	case total <= maxPurgeJobs: // few: read them from the sorted array, then put them in rowid order
+		for _, b := range bs[from:] {
+			ids = append(ids, b.id)
+		}
+		js.work += int64(total)
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		return ids, total
+	}
+	for _, j := range a.jobs { // many: the first maxPurgeJobs in rowid order
+		js.work++
+		if j.covers(k) {
+			if ids = append(ids, j.ID); len(ids) == maxPurgeJobs {
+				break
+			}
+		}
+	}
+	return ids, total
 }
 
 // dataDamage says an error is the database's damage, which makes the job set incomplete, not the job fail.
@@ -520,9 +595,8 @@ func applyPurge(msg *message.Message, rec *records.Record, f *msgFacts) {
 	switch f.Purge.Verdict {
 	case purgeCleared:
 		jobs := f.Purge.Jobs
-		if len(jobs) > maxPurgeJobs {
-			raw["pending_purge_jobs_total"], raw["pending_purge_jobs_truncated"] = int64(len(jobs)), true
-			jobs = jobs[:maxPurgeJobs]
+		if f.Purge.Total > len(jobs) {
+			raw["pending_purge_jobs_total"], raw["pending_purge_jobs_truncated"] = int64(f.Purge.Total), true
 		}
 		list := make([]any, len(jobs))
 		for i, j := range jobs {
