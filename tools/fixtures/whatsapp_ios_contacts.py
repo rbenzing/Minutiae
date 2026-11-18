@@ -28,7 +28,8 @@ What the oracle states:
   - ZABOUTTEXT is in the Body only (cut at the text cap with its name in raw.text_flags); ZABOUTTIMESTAMP is raw, never a time.
 
 Variants (the placement of each is in internal/parsers/ioswacontacts/fixtures_test.go placeOf):
-  ios-contactsv2           consumer domain, with -wal: rows 1-13 and 15 in the main file, row 14 in a committed WAL frame
+  ios-contactsv2           consumer domain, with -wal: rows 1-13, 15 and 17 in the main file, row 14 in a committed WAL frame, row 16 in an uncommitted one
+  ios-contactsv2-nofullname  consumer domain, no ZFULLNAME column, rows 1, 3, 4 (PF16(b))
   ios-contactsv2-nolid     consumer domain, no ZLID column (S7 saw it absent on some images), rows 1-3
   ios-contactsv2-extract   an app group of a full-file-system extraction, rows 1-3
   ios-contactsv2-otherapp  a same-named database of another app: one table ZCONTACT(Z_PK)
@@ -61,11 +62,12 @@ EXT_REMOTE = EXT_DIR + "/" + REL
 
 MODEL = [("WAAddressBookContact", 1, 0)]
 E_CONTACT = 1
-MAX_ADDR = W.MAX_ADDR
+MAX_ADDR = W.MAX_ADDR  # 1024 bytes: the message contract's maxAddr (whatsapp_gen.MAX_ADDR) and Android wa.db's maxJID; the contact contract has no JID limit of its own, so the parser restates this one
 PERSON = {"user", "lid"}
 TABLES = [TABLE, "Z_PRIMARYKEY"]
 
 # the warning texts of the plan's vocabulary ("State vocabularies", ios.whatsapp.contacts), byte-exact
+W_NO_ID = "ZWAADDRESSBOOKCONTACT row has no name, number or JID"  # PF16(c)
 W_JID_ONLY = "ZWAADDRESSBOOKCONTACT row has no name or number (JID only)"
 W_NO_FULL = "ZWAADDRESSBOOKCONTACT row has no full name or number"
 W_DAMAGED = "ZWAADDRESSBOOKCONTACT row has no readable name or number (a name column is damaged or not text)"
@@ -77,7 +79,7 @@ def w_not_person(cls):
 
 U = lambda n: X.jid("1555000%04d" % n, "s.whatsapp.net")  # noqa: E731  (fictional 555 numbers)
 LONG_ABOUT = ("The quick brown fox jumps over the lazy dog. " * 7000)[:300 << 10]
-BIG_JID = "7" * 2000 + "@s.whatsapp.net"  # over the contract's 1024-byte limit and not cut by cleaning: too-long, no text kept
+BIG_JID = "7" * 2000 + "@s.whatsapp.net"  # over the 1024-byte JID limit (MAX_ADDR) and not cut by cleaning: too-long, no text kept
 
 
 # ----------------------------------------------------------------------------------------- the scenario
@@ -109,6 +111,8 @@ def contacts():
         row(13, ZFULLNAME=C.Blob(b"\xff\x01Ida"), ZWHATSAPPID=U(13)),
         row(14, ZFULLNAME="Ivy", ZHIGHLIGHTEDNAME="Ivy H", ZWHATSAPPID=BIG_JID),
         row(15, ZFULLNAME="Jon", ZHIGHLIGHTEDNAME="Jon H", ZWHATSAPPID=C.Blob(b"15550000015@s.whatsapp.net")),
+        row(16, ZFULLNAME="Kay", ZABOUTTEXT="@@BIG@@"),  # left in an uncommitted WAL frame: no record (the reader's warning)
+        row(17, ZIDENTIFIER="X17"),  # a NULL JID and no naming text (PF16(c))
     ]
 
 
@@ -186,10 +190,15 @@ def classify(r):
     if has_text(r.get("ZFULLNAME")) or has_text(r.get("ZPHONENUMBER")):
         return "record", None
     names = ("ZFULLNAME", "ZPHONENUMBER", "ZGIVENNAME", "ZHIGHLIGHTEDNAME")
-    if any(r.get(n) is not None and not W.is_text(r.get(n)) for n in names):
-        return "warn", W_DAMAGED  # unknown is not absent: a name cell that is not text says nothing of the row's names
+    # unknown is not absent: a name cell that is not text, or a name or number column the table lacks (PF16(b)), says nothing
+    # of the row's names
+    if any(n not in r or (r[n] is not None and not W.is_text(r[n])) for n in names):
+        return "warn", W_DAMAGED
     if has_text(r.get("ZGIVENNAME")) or has_text(r.get("ZHIGHLIGHTEDNAME")):
         return "warn", W_NO_FULL
+    if state == "absent":  # PF16(c): NULL (or empty) JID and no name, number or other naming text
+        assert not any(has_text(r.get(n)) for n in names), "W_NO_ID is for a row with no naming text"
+        return "warn", W_NO_ID
     return "warn", W_JID_ONLY
 
 
@@ -285,8 +294,8 @@ def expect_contact(r, ctx, file="any"):
 
 def oracle(files, variant, place, domain):
     """The <variant>.expect.json of a variant whose parse succeeds: every row is one record or one counted warning, in rowid
-    order (the row warnings come as the rows are read; none of these variants holds an uncommitted WAL frame, so no reader
-    warning is stated)."""
+    order, then the reader's warning when the WAL holds frames after its last commit (PF13a: the warnings of the mappings,
+    then those rowrun.Run forwards from the reader)."""
     view = C.engine_view(files, TABLES)
     app, basis, state = app_label(place, domain)
     ctx = {"app": app, "app_basis": basis, "app_state": state}
@@ -297,6 +306,8 @@ def oracle(files, variant, place, domain):
             exp["records"].append(expect_contact(r, ctx))
         else:
             exp["warnings"].append({"table": TABLE, "rowid": r["rowid"], "contains": why})
+    if "wal" in files and X.uncommitted_frames(files["wal"], 4096) > 0:
+        exp["warnings"].append({"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
     notes = exp["notes"]
     notes["container"] = "backup_domain" if place == "backup" else "app_group"
     notes["app"] = app
@@ -304,6 +315,9 @@ def oracle(files, variant, place, domain):
         notes["app_basis"] = basis
     if state:
         notes["app_state"] = state
+    rows = view.get(TABLE, [])
+    if rows and "ZLID" not in rows[0]:
+        notes["ZLID"] = "absent"  # PF16(a): the store has no ZLID column
     return exp
 
 
@@ -314,7 +328,7 @@ def unparsed(variant):
 
 # ----------------------------------------------------------------------------------------- building
 
-def build_db(work, rows, page_size=4096, wal=False, lid=True):
+def build_db(work, rows, page_size=4096, wal=False, lid=True, drop=()):
     """A ContactsV2 database: rows inserted in order; the Z_PRIMARYKEY row of MODEL, the Z_METADATA row and Z_MAX last
     (X.set_z_max). lid=False builds the table without ZLID (S7: absent on some images)."""
     path = work + "/m.db"
@@ -323,6 +337,10 @@ def build_db(work, rows, page_size=4096, wal=False, lid=True):
     if not lid:
         stripped = ddl.replace(" ZLID VARCHAR,", "")
         assert stripped != ddl, "the DDL snapshot has no ZLID column to drop"
+        ddl = stripped
+    for col in drop:
+        stripped = ddl.replace(" %s VARCHAR," % col, "")
+        assert stripped != ddl, "the DDL snapshot has no %s column to drop" % col
         ddl = stripped
     con.executescript(ddl)
     with C.batch(con):
@@ -346,14 +364,17 @@ def finish(path):
 
 
 def v_contactsv2(work):
-    """The scenario: rows 1-13 and 15 in the main file, row 14 (the over-long JID) in a committed WAL frame. The engine sees all
-    15 rows; Z_MAX is the real maximum (15) before and after."""
+    """The scenario: rows 1-13, 15 and 17 in the main file, row 14 (the over-long JID) in a committed WAL frame and row 16 (a large
+    row that spilled from a tiny page cache before the kill) in uncommitted ones: the engine sees rows 1-15 and 17, and the reader
+    warns that frames were not applied (stated after the row warnings, PF13a)."""
     rows = contacts()
-    path = build_db(work, [r for r in rows if r["Z_PK"] != 14], wal=True)
-    row14 = pick(rows, {14})[0]
-    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0", "begin", X.insert_stmt(TABLE, row14), "commit"])
+    path = build_db(work, [r for r in rows if r["Z_PK"] not in (14, 16)], wal=True)
+    row14, row16 = pick(rows, {14})[0], pick(rows, {16})[0]
+    big = X.insert_stmt(TABLE, row16).replace("'@@BIG@@'", "replace(hex(zeroblob(100000)), '0', 'x')")
+    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0", "begin", X.insert_stmt(TABLE, row14), "commit",
+                             "pragma cache_size = 5", "pragma cache_spill = 1", "begin", big])
     files = finish(path)
-    assert "wal" in files and X.uncommitted_frames(files["wal"], 4096) == 0, "the WAL must hold committed frames only"
+    assert "wal" in files and X.uncommitted_frames(files["wal"], 4096) > 0, "the WAL holds no frame after its last commit"
     return files, oracle(files, "ios-contactsv2", "backup", DOMAIN_WA)
 
 
@@ -361,6 +382,15 @@ def v_nolid(work):
     path = build_db(work, pick(contacts(), {1, 2, 3}), lid=False)
     files = finish(path)
     return files, oracle(files, "ios-contactsv2-nolid", "backup", DOMAIN_WA)
+
+
+def v_nofullname(work):
+    """A store whose table lacks ZFULLNAME (PF16(b)): a name column the table lacks is unreadable, never absent. Row 1 has a
+    phone and stays a record; rows 3 and 4 (a name or a JID that the missing column hid) are the damaged warning, never
+    "JID only"."""
+    path = build_db(work, pick(contacts(), {1, 3, 4}), drop=("ZFULLNAME",))
+    files = finish(path)
+    return files, oracle(files, "ios-contactsv2-nofullname", "backup", DOMAIN_WA)
 
 
 def v_extract(work):
@@ -465,14 +495,17 @@ def recover_expect(variant, files):
         rec = expect_contact(d, env, file)
         if rec is not None:
             rec["source_path"] = ""  # a recovered record: the source path follows the role of the file
+        else:
+            assert classify(d) == ("warn", w_not_person("group")), "the deleted scenario's only unmapped rows are group rows"
         return rec
 
-    return C.recover_oracle(variant, files, SCENARIOS[variant], recover_env, one, nobody="ZWAADDRESSBOOKCONTACT row")
+    return C.recover_oracle(variant, files, SCENARIOS[variant], recover_env, one, nobody=w_not_person("group"))
 
 
 VARIANTS = {
     "ios-contactsv2": v_contactsv2,
     "ios-contactsv2-nolid": v_nolid,
+    "ios-contactsv2-nofullname": v_nofullname,
     "ios-contactsv2-extract": v_extract,
     "ios-contactsv2-otherapp": v_otherapp,
     "ios-contactsv2-deleted": v_deleted,

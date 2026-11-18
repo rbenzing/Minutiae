@@ -21,7 +21,7 @@ const (
 )
 
 var variants = []string{
-	"ios-contactsv2", "ios-contactsv2-nolid", "ios-contactsv2-extract", "ios-contactsv2-otherapp", "ios-contactsv2-deleted",
+	"ios-contactsv2", "ios-contactsv2-nolid", "ios-contactsv2-nofullname", "ios-contactsv2-extract", "ios-contactsv2-otherapp", "ios-contactsv2-deleted",
 }
 
 // placeOf is where a variant sits: a backup variant is bundled with BundleIOSBackup(h, domain, rel) and has an empty
@@ -70,7 +70,7 @@ func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
 	}
 	var m []string
 	for _, p := range all {
-		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles come with the claims (plan 4I2 task 8)
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles come with the claims (plan 4I2 task 10)
 			m = append(m, p)
 		}
 	}

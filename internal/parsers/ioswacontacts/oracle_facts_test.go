@@ -104,12 +104,12 @@ func TestIOSWhatsAppContactsOracleStatesTheSpecRules(t *testing.T) {
 			t.Errorf(format, args...)
 		}
 	}
-	// the mapping is total (4I2-R10): 15 rows are 10 records and 5 counted warnings, none is dropped
+	// the mapping is total (4I2-R10): 16 rows are 10 records and 6 counted warnings, none is dropped (row 16 is in an uncommitted frame: no row)
 	var recIDs []int64
 	for id := range c.by {
 		recIDs = append(recIDs, id)
 	}
-	want(len(c.by) == 10 && len(fx.Expect.Warnings) == 5, "%d records %v and %d warnings %+v, want 10 and 5", len(c.by), recIDs, len(fx.Expect.Warnings), fx.Expect.Warnings)
+	want(len(c.by) == 10 && len(fx.Expect.Warnings) == 7, "%d records %v and %d warnings %+v, want 10 and 7 (six rows and the reader's)", len(c.by), recIDs, len(fx.Expect.Warnings), fx.Expect.Warnings)
 	for _, id := range []int64{1, 2, 3, 7, 8, 9, 10, 11, 14, 15} {
 		want(c.has(id), "row %d is no record", id)
 	}
@@ -139,7 +139,7 @@ func TestIOSWhatsAppContactsOracleStatesTheSpecRules(t *testing.T) {
 	want(warningOf(t, fx, 6) == "ZWAADDRESSBOOKCONTACT row has no full name or number", "warning 6: %q", warningOf(t, fx, 6))
 	want(warningOf(t, fx, 12) == "ZWAADDRESSBOOKCONTACT row is not a person (unparseable)", "warning 12: %q", warningOf(t, fx, 12))
 	want(warningOf(t, fx, 13) == "ZWAADDRESSBOOKCONTACT row has no readable name or number (a name column is damaged or not text)", "warning 13: %q", warningOf(t, fx, 13))
-	for _, id := range []int64{4, 5, 6, 12, 13} {
+	for _, id := range []int64{4, 5, 6, 12, 13, 17} {
 		want(!c.has(id), "row %d is a record", id)
 	}
 
@@ -183,13 +183,17 @@ func TestIOSWhatsAppContactsOracleStatesTheSpecRules(t *testing.T) {
 		}
 	}
 
-	// notes and warnings: the reader holds no uncommitted frame, so the warnings are the five rows, in rowid order
+	// notes and warnings (PF13a): the row warnings in rowid order come first, then the reader's (row 16's frames were never committed)
 	want(fx.Expect.Notes["container"] == "backup_domain" && fx.Expect.Notes["app"] == "whatsapp" && fx.Expect.Notes["app_basis"] == "backup_domain" && len(fx.Expect.Notes) == 3, "notes %v", fx.Expect.Notes)
 	var order []int64
 	for _, w := range fx.Expect.Warnings {
 		order = append(order, w.Rowid)
 	}
-	want(fmt.Sprint(order) == "[4 5 6 12 13]", "warning order %v", order)
+	want(fmt.Sprint(order) == "[4 5 6 12 13 17 0]", "warning order %v", order)
+	last := fx.Expect.Warnings[len(fx.Expect.Warnings)-1]
+	want(last.Table == "" && strings.Contains(last.Contains, "wal-frames-not-applied"), "last warning %+v, want the reader's", last)
+	want(warningOf(t, fx, 17) == "ZWAADDRESSBOOKCONTACT row has no name, number or JID", "warning 17: %q", warningOf(t, fx, 17))
+	want(!c.has(16), "row 16 (uncommitted) is a record")
 	want(len(fx.Files) == 2, "files %d, want the database and its -wal", len(fx.Files))
 }
 
@@ -197,6 +201,9 @@ func TestIOSWhatsAppContactsOracleStatesTheSpecRules(t *testing.T) {
 // images); an extraction names no app (4I2-R5); another app's database is refused.
 func TestIOSWhatsAppContactsOracleStatesTheVariants(t *testing.T) {
 	c, fx := recsOf(t, "ios-contactsv2-nolid")
+	if fx.Expect.Notes["ZLID"] != "absent" || len(fx.Expect.Notes) != 4 {
+		t.Errorf("nolid notes %v, want the note ZLID=absent (PF16a)", fx.Expect.Notes)
+	}
 	if len(c.by) != 3 || len(fx.Expect.Warnings) != 0 {
 		t.Errorf("nolid: %d records, warnings %v, want rows 1-3", len(c.by), fx.Expect.Warnings)
 	}
@@ -207,6 +214,13 @@ func TestIOSWhatsAppContactsOracleStatesTheVariants(t *testing.T) {
 	}
 	if r := c.rec(1); r.display() != "Ann Lee" || fmt.Sprint(r.ims()) != "[15550000001@s.whatsapp.net|whatsapp]" {
 		t.Errorf("nolid row 1: %v", r.Payload)
+	}
+
+	// a name column the table lacks is unreadable, never absent (PF16b): rows 3 and 4 are the damaged warning, not "JID only"
+	c, fx = recsOf(t, "ios-contactsv2-nofullname")
+	damaged := "ZWAADDRESSBOOKCONTACT row has no readable name or number (a name column is damaged or not text)"
+	if len(c.by) != 1 || !c.has(1) || warningOf(t, fx, 3) != damaged || warningOf(t, fx, 4) != damaged || len(fx.Expect.Warnings) != 2 || c.rec(1).display() != nil {
+		t.Errorf("nofullname: records %v warnings %+v", c.by, fx.Expect.Warnings)
 	}
 
 	c, fx = recsOf(t, "ios-contactsv2-extract")
@@ -286,7 +300,7 @@ func TestIOSWhatsAppContactsDeletedOracleStatesTheHistory(t *testing.T) {
 			t.Errorf("row %d recovered = %v, want %v", n, rows[n], want)
 		}
 	}
-	if len(exp.Unmapped) != 1 || exp.Unmapped[0].Rowid != 93 || !strings.Contains(exp.Unmapped[0].Contains, "ZWAADDRESSBOOKCONTACT row") {
+	if len(exp.Unmapped) != 1 || exp.Unmapped[0].Rowid != 93 || exp.Unmapped[0].Contains != "ZWAADDRESSBOOKCONTACT row is not a person (group)" {
 		t.Errorf("unmapped %+v, want the group row 93", exp.Unmapped)
 	}
 	if !files["db"] || !files["wal"] {

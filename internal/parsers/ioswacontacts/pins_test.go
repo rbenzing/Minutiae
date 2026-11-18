@@ -5,11 +5,12 @@ package ioswacontacts_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
-	"ios-contactsv2-deleted.db":  "d00618f24f23bdd754e5064d8eede8504dfb02c8281e4546152c54ca96399757",
-	"ios-contactsv2-deleted.wal": "ce8196460a9bfb59847210b6f5f91577dcd90884a9c8f21f5956e3e6eb609ea1",
-	"ios-contactsv2-extract.db":  "52116667c37648baf0e4b0a068bd1778a70645b02ca06409a66dc2c9e8e3eeb9",
-	"ios-contactsv2-nolid.db":    "552928bb7880ad7bba8642bf46eed3b7751dbb42b01e26c6d865c80a3f0fabda",
-	"ios-contactsv2-otherapp.db": "2058309ccbf1fb46e6d133a471e52bb02a5416dc2f9a88bb903a5564e05ab350",
-	"ios-contactsv2.db":          "10d14d522812cff7afef3bc8a540528139d0210a4eeac9277972880339ec6a30",
-	"ios-contactsv2.wal":         "645563af6ce3f58dbb6a63396e65adc5fe1faad336f456c8e8e8570ca5252d7a",
+	"ios-contactsv2-deleted.db":    "d00618f24f23bdd754e5064d8eede8504dfb02c8281e4546152c54ca96399757",
+	"ios-contactsv2-deleted.wal":   "695821f9b1e4e77f616f83ee5116801b16d8c043a2ec472331da2b49f9b201fe",
+	"ios-contactsv2-extract.db":    "52116667c37648baf0e4b0a068bd1778a70645b02ca06409a66dc2c9e8e3eeb9",
+	"ios-contactsv2-nofullname.db": "c31e57742b803f30318ea5ecf322823c27f008123759e504e9274b740d9d1f57",
+	"ios-contactsv2-nolid.db":      "552928bb7880ad7bba8642bf46eed3b7751dbb42b01e26c6d865c80a3f0fabda",
+	"ios-contactsv2-otherapp.db":   "2058309ccbf1fb46e6d133a471e52bb02a5416dc2f9a88bb903a5564e05ab350",
+	"ios-contactsv2.db":            "0e894b7b844e4d0d7679192e01f3ee2835cff100111ba7536113c74ce07b3a13",
+	"ios-contactsv2.wal":           "c21ddd7cc2be8ead03f7009dd8a75f9ce8bfcf8eb787d9ea0a603940115d5082",
 }
