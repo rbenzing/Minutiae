@@ -18,6 +18,7 @@ read_instant, here over Cocoa seconds), the helpers that leave deleted rows and 
 Python 3 with its bundled sqlite3 only; no Docker.
 """
 import plistlib
+import re
 
 import ios_common as I
 import telephony_common as C
@@ -54,10 +55,21 @@ def unix_of(cocoa_s):
 
 
 def primary_key_rows(entities):
-    """The Z_PRIMARYKEY rows of a Core Data store from (name, ent, super) triples. Z_MAX is the entity's highest
-    primary key and is set by the caller's rows, so it starts at 0 here (a caller that inserts rows updates it)."""
+    """The Z_PRIMARYKEY rows of a Core Data store from (name, ent, super) triples. Z_MAX starts at 0: a generator calls
+    set_z_max(con) last, once its rows are in, so that Z_MAX is the real maximum and never a caller's guess."""
     return [("Z_PRIMARYKEY", {"Z_ENT": ent, "Z_NAME": name, "Z_SUPER": sup, "Z_MAX": 0})
             for name, ent, sup in entities]
+
+
+def set_z_max(con):
+    """Sets Z_PRIMARYKEY.Z_MAX of every entity to the highest Z_PK of its table (the Core Data convention: the entity
+    `WAMessage` is the table `ZWAMESSAGE`), 0 when the table is empty or the store has none. Call it last."""
+    for ent, name in con.execute("select Z_ENT, Z_NAME from Z_PRIMARYKEY").fetchall():
+        table = "Z" + name.upper()
+        assert re.fullmatch(r"\w+", table), table
+        exists = con.execute("select count(*) from sqlite_master where type = 'table' and name = ?", (table,)).fetchone()[0]
+        top = con.execute("select max(Z_PK) from %s" % table).fetchone()[0] if exists else None
+        con.execute("update Z_PRIMARYKEY set Z_MAX = ? where Z_ENT = ?", (top or 0, ent))
 
 
 def metadata_row(uuid="00000000-0000-4000-8000-000000000002"):
@@ -105,6 +117,7 @@ def read_instant(c, name):
 def delete_rows(con, table, pks):
     """Deletes the rows with the given Z_PK in one transaction. secure_delete is OFF (C.connect), so the cell bytes
     stay in the free space: the rows a recovery reads back (the -deleted variants, PF2)."""
+    assert re.fullmatch(r"\w+", table), table
     with C.batch(con):
         for pk in pks:
             con.execute("delete from %s where Z_PK = ?" % table, (pk,))

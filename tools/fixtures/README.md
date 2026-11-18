@@ -3256,3 +3256,39 @@ py -3 tools/fixtures/telephony_gen.py --family whatsapp-wadb --check
 A WAL companion disables the freelist read, so the freelist scenario is its own lone variant; `wa-current` holds the
 superseded-version scenario (`wa-current.recover.expect.json`, `wa-deleted.recover.expect.json`). The oracle states one
 record per person row (spec 6.6) and one warning per JID-only, nameless or non-person row (R2).
+
+## WhatsApp iOS fixtures (plan 4I2)
+
+`tools/fixtures/whatsapp_ios_chats.py` is the family `whatsapp-ios-chats` of `telephony_gen.py` (it builds on the shared module
+`whatsapp_ios_common.py`, which also serves the call-history and contacts generators of plan 4I2). It needs Python 3 with its
+bundled `sqlite3` only (no Docker) and is not part of `gen.sh all`. The databases are written by the engine; the WAL variant by a
+child process that dies without closing. The DDL snapshots in `schemas/whatsapp-ios/` are constructed from memory (one
+`from-memory` verdict per table in `CROSSCHECK.md`, `TestWhatsAppIOSDDLSnapshotsCiteTheirSource`): a fixture proves what the
+parser does with the column set the sources report, not what an installed app writes. The oracle is a second reading of the spec
+by the author of the Go design, written without the Go code; it is not independent of the design, which `oracle_facts_test.go`
+(literal facts written from the spec) checks it against. Z_PRIMARYKEY's `Z_MAX` is the real maximum `Z_PK` of each entity
+(`whatsapp_ios_common.set_z_max`).
+
+```
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-chats --out internal/parsers/ioswhatsapp/testdata \
+    --pins-go internal/parsers/ioswhatsapp/pins_test.go --pins-package ioswhatsapp_test
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-chats --out internal/parsers/ioswhatsapp/testdata --recover-oracle
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-chats --check
+```
+
+| Variant (`internal/parsers/ioswhatsapp/testdata/`) | Bundled at | `Z_PRIMARYKEY` | Holds |
+|---|---|---|---|
+| `ios-chatstorage` | backup domain `AppDomainGroup-group.net.whatsapp.WhatsApp.shared`, with `-wal` | WAChatSession 4, WAGroupInfo 5, WAGroupMember 6, WAMediaItem 8, WAMessage 9, WAMessageInfo 11 | the CORE-iOS scenario: messages 1 to 44 (text, every mapped type, groups, status, broadcast, revokes, unmapped types, odd times, media joins, hostile paths, a chat JID with a NUL, a 300 KiB text, a receipt blob), 45 in a committed WAL frame, 46 in an uncommitted one; two extra files (`IMG-0004.jpg` of the same device, `STK-0043.webp` of another) |
+| `ios-chatstorage-business` | backup domain `...WhatsAppSMB.shared` | as above | session 1, messages 1 to 3 |
+| `ios-chatstorage-extract` | an app group of an extraction (`BundleIOS`, no extras) | as above | session 1, messages 1 to 3 |
+| `ios-chatstorage-renumbered` | consumer domain | WAMessage 2, WAChatSession 3, the others 4 to 7 | session 1, messages 1 to 3 |
+| `ios-chatstorage-nomodel` | consumer domain | the table is absent | session 1, messages 1 to 3 (the parser refuses it) |
+| `ios-chatstorage-othermodel` | consumer domain | only `CallRecord` 2 | session 1, messages 1 to 3 (the parser refuses it) |
+| `ios-chatstorage-otherapp` | an app group of an extraction | none | one table `ZMESSAGE(Z_PK, ZTEXT)` (another app's database of the same name) |
+| `ios-chatstorage-nooptional` | consumer domain | as above | messages 1 to 4, 10 and 44 without the optional tables `ZWAGROUPMEMBER`, `ZWAMESSAGEINFO` and `ZWAMEDIAITEM`: their absence is an undecided join (plan 4I2 PF3), never "no row" |
+
+Messages of the oracle: one record per `ZWAMESSAGE` row, with the raw columns as stored, the labels, the chat and sender states,
+the media join (the exactly-one same-source rule at `<container>/Message/<path>`) and its counters, and the app label from the
+backup domain (an extraction names no app: `unknown`, `no-container-metadata`). Notes: `container`, `app`, `app_basis` or
+`app_state`, `entity.WAMessage`, `entity.WAChatSession`. The warnings and the notes that depend on the mapping's column list are
+stated by the task that writes the parser.

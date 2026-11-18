@@ -18,7 +18,8 @@ func whatsappIOSSchemaDir(t *testing.T) string {
 
 // TestWhatsAppIOSDDLSnapshotsCiteTheirSource pins ruling 4I2-R13: the three iOS WhatsApp Core Data
 // snapshots name their sources by ID only (never a URL), state exactly one verdict, and have one
-// CROSSCHECK.md row `| <file> | <table> | from-memory |` per CREATE TABLE.
+// CROSSCHECK.md row `| <file> | <table> | from-memory |` per CREATE TABLE and no row naming a table the file lacks, say
+// that the column types are not checked against a public definition, and define Z_PRIMARYKEY.
 func TestWhatsAppIOSDDLSnapshotsCiteTheirSource(t *testing.T) {
 	dir := whatsappIOSSchemaDir(t)
 	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
@@ -38,12 +39,20 @@ func TestWhatsAppIOSDDLSnapshotsCiteTheirSource(t *testing.T) {
 	verdict := regexp.MustCompile(`(?m)^-- verdict from memory$`)
 	anyVerdict := regexp.MustCompile(`(?m)^-- verdict `)
 	create := regexp.MustCompile(`(?m)^CREATE TABLE (\w+) `)
+	comment := regexp.MustCompile(`(?m)^-- ?`)
+	space := regexp.MustCompile(`\s+`)
+	rowOf := regexp.MustCompile(`(?m)^\| (\w+\.sql) \| (\w+) \| from-memory \|`)
+	defined := map[string]map[string]bool{}
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
 		src, base := string(raw), filepath.Base(f)
+		// the sentence may wrap across comment lines
+		if !strings.Contains(space.ReplaceAllString(comment.ReplaceAllString(src, ""), " "), "not checked against a public definition") {
+			t.Errorf("%s does not say that its column types are not checked against a public definition", base)
+		}
 		if !source.MatchString(src) {
 			t.Errorf("%s has no '-- source S<n>' line", base)
 		}
@@ -59,11 +68,24 @@ func TestWhatsAppIOSDDLSnapshotsCiteTheirSource(t *testing.T) {
 		if len(tables) == 0 {
 			t.Errorf("%s has no CREATE TABLE", base)
 		}
+		defined[base] = map[string]bool{}
+		for _, m := range tables {
+			defined[base][m[1]] = true
+		}
+		if !defined[base]["Z_PRIMARYKEY"] {
+			t.Errorf("%s does not define Z_PRIMARYKEY", base)
+		}
 		for _, m := range tables {
 			row := regexp.MustCompile(`(?m)^\| ` + regexp.QuoteMeta(base) + ` \| ` + regexp.QuoteMeta(m[1]) + ` \| from-memory \|`)
 			if !row.Match(report) {
 				t.Errorf("CROSSCHECK.md has no '| %s | %s | from-memory |' row", base, m[1])
 			}
+		}
+	}
+	// the reverse direction: a verdict row names a CREATE TABLE of its own file
+	for _, m := range rowOf.FindAllStringSubmatch(string(report), -1) {
+		if !defined[m[1]][m[2]] {
+			t.Errorf("CROSSCHECK.md row '%s | %s' names no CREATE TABLE of that file", m[1], m[2])
 		}
 	}
 }

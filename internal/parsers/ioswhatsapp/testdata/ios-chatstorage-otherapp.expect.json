@@ -1,0 +1,1 @@
+{"ddl":"","extra_files":[],"family":"whatsapp-ios-chats","generator":{"files":{"db":"83be7af517af6c637eef8b90517e3f6e7b9c95321884e8ae6ac6312777a5bab1"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"ios-chatstorage-otherapp","warnings":[]}

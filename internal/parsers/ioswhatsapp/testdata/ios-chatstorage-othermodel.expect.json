@@ -1,0 +1,1 @@
+{"ddl":"chatstorage.sql","extra_files":[],"family":"whatsapp-ios-chats","generator":{"files":{"db":"760e34b21f0422fe1d670161be296caaa4ddd4bd540fcd36c115ec81b6a69a0c"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"ios-chatstorage-othermodel","warnings":[]}
