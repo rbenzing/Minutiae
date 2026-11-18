@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -197,14 +198,11 @@ func TestIOSWhatsAppChatsDanglingKeysAreStated(t *testing.T) {
 			t.Errorf("message %d: raw.%s = %v, want %q (raw %v)", c.row, c.key, rawOf(r)[c.key], c.want, rawOf(r))
 		}
 	}
-	// the dangling media key: the converse direction names no row, the forward key names none, so the join says "no row"
-	// where a media row is stated, never an attachment out of nothing
+	// the dangling media key: the converse direction names no row and the forward key names none, so the media row is stated
+	// absent (never undecided, never an attachment out of nothing)
 	r3 := recs[3]
-	if len(attachmentsOf(r3)) != 0 && rawOf(r3)["media_state"] == nil {
-		t.Errorf("message 3: an attachment %v from a key that names no row, with no media_state", attachmentsOf(r3))
-	}
-	if rawOf(r3)["media_state"] == nil && rawOf(r3)["join_undecided"] == nil {
-		t.Errorf("message 3 (ZMEDIAITEM names no row) states neither media_state nor join_undecided: %v", rawOf(r3))
+	if rawOf(r3)["media_state"] != "no-ZWAMEDIAITEM-row" || rawOf(r3)["join_undecided"] != nil || len(attachmentsOf(r3)) != 0 {
+		t.Errorf("message 3: media_state %v join_undecided %v attachments %v, want no-ZWAMEDIAITEM-row, none, none", rawOf(r3)["media_state"], rawOf(r3)["join_undecided"], attachmentsOf(r3))
 	}
 }
 
@@ -259,8 +257,13 @@ func TestIOSWhatsAppChatsHostileJIDs(t *testing.T) {
 	if raw := rawOf(recs[2]); raw["chat_jid"] != nil && raw["chat_jid"] != "1@2@3@s.whatsapp.net" {
 		t.Errorf("many at: raw.chat_jid %v changed the stored text", raw["chat_jid"])
 	}
-	if raw := rawOf(recs[3]); raw["chat_jid"] != "1555�@s.whatsapp.net" && raw["chat_jid"] != "1555@s.whatsapp.net" {
-		t.Errorf("NUL: raw.chat_jid %q is not the cleaned stored text", raw["chat_jid"])
+	// CleanText turns the NUL into U+FFFD: the one cleaned form, stated with its flag
+	if raw := rawOf(recs[3]); raw["chat_jid"] != "1555�@s.whatsapp.net" || raw["chat_state"] != "altered" {
+		t.Errorf("NUL: raw.chat_jid %q chat_state %v, want the cleaned 1555\ufffd@s.whatsapp.net and altered", raw["chat_jid"], raw["chat_state"])
+	}
+	// a device suffix is a user address as stored: class user, the author is the stored text, no state of its own
+	if raw := rawOf(recs[5]); raw["chat_class"] != "user" || raw["chat_state"] != nil || raw["chat_jid"] != "15550000001:12@s.whatsapp.net" {
+		t.Errorf("device suffix: chat_class %v chat_state %v chat_jid %v", raw["chat_class"], raw["chat_state"], raw["chat_jid"])
 	}
 }
 
@@ -273,12 +276,14 @@ func TestIOSWhatsAppChatsHugeValuesAreCapped(t *testing.T) {
 		meta[i] = byte(i * 31)
 	}
 	sum := sha256.Sum256(meta)
+	blob := make([]byte, 3<<20) // a BLOB in a column that raw states as stored: only its length may reach raw
 	db, _ := buildChat(nil, func(tb chatTables) {
 		tb["ZWACHATSESSION"].put(1, map[string]any{"ZSESSIONTYPE": int64(0), "ZCONTACTJID": p1})
 		tb["ZWAMESSAGE"].put(1, msgRow(map[string]any{"ZTEXT": big}))
 		tb["ZWAMESSAGE"].put(2, msgRow(map[string]any{"ZMESSAGETYPE": int64(1), "ZTEXT": nil, "ZMEDIAITEM": int64(1)}))
 		tb["ZWAMEDIAITEM"].put(1, map[string]any{"ZMESSAGE": int64(2), "ZMETADATA": meta})
 		tb["ZWAMESSAGE"].put(3, msgRow(map[string]any{"ZMESSAGETYPE": int64(4), "ZTEXT": nil, "ZMEDIAITEM": int64(2)}))
+		tb["ZWAMESSAGE"].put(4, msgRow(map[string]any{"ZMESSAGETYPE": blob}))
 		tb["ZWAMEDIAITEM"].put(2, map[string]any{"ZMESSAGE": int64(3), "ZVCARDSTRING": "BEGIN:VCARD\r\nNOTE:" + strings.Repeat("v", 1<<20) + "\r\nEND:VCARD\r\n"})
 	})
 	res := hostileRun(t, db, nil, nil, 256<<20)
@@ -289,8 +294,8 @@ func TestIOSWhatsAppChatsHugeValuesAreCapped(t *testing.T) {
 	for _, r := range res.Records {
 		recs[rowidOf(r.Locator)] = r
 	}
-	if len(recs) != 3 {
-		t.Fatalf("%d records, want 3", len(recs))
+	if len(recs) != 4 {
+		t.Fatalf("%d records, want 4", len(recs))
 	}
 	r1 := recs[1]
 	if r1.Payload["body_truncated"] != true || r1.Payload["body_total_bytes"] != int64(4<<20) || len(r1.Body) > 256<<10 || len(r1.Body) < 200<<10 {
@@ -299,6 +304,9 @@ func TestIOSWhatsAppChatsHugeValuesAreCapped(t *testing.T) {
 	md, _ := rawOf(recs[2])["ZMETADATA"].(map[string]any)
 	if md["bytes"] != int64(64<<20) || md["sha256"] != hex.EncodeToString(sum[:]) || len(md) != 2 {
 		t.Errorf("message 2: raw.ZMETADATA = %v, want {bytes 67108864, sha256 %x} and nothing else", md, sum)
+	}
+	if got := rawOf(recs[4])["ZMESSAGETYPE"]; !reflect.DeepEqual(got, map[string]any{"blob_len": int64(3 << 20)}) {
+		t.Errorf("message 4: raw.ZMESSAGETYPE = %.80v, want {blob_len 3145728} and no base64", got)
 	}
 	if r3 := recs[3]; len(r3.Body) == 0 || len(r3.Body) > 256<<10 || r3.Payload["body_truncated"] != true {
 		t.Errorf("message 3: body %d bytes, truncated %v, want the 1 MiB vCard cut at 256 KiB and flagged", len(r3.Body), r3.Payload["body_truncated"])

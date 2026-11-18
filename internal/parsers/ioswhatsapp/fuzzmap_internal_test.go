@@ -2,6 +2,7 @@ package ioswhatsapp
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"math"
 	"testing"
@@ -159,6 +160,11 @@ func checkMapped(t testing.TB, place byte, cells []cell, joins map[string]fuzzRo
 		if verr := message.Validate(r.Payload); verr != nil {
 			t.Fatalf("%s: payload refused: %v", mp.Table, verr)
 		}
+		// raw stays inside a bound that follows the text cells only: a blob is shown by its length or by at most 256 bytes of
+		// base64, however large it is, so a big blob in any column cannot grow raw (the JSON escaping of a text byte is at most 6)
+		if rawJSON, err := json.Marshal(r.Payload["raw"]); err != nil || len(rawJSON) > rawBound(cells, joins) {
+			t.Errorf("%s: raw is %d bytes (%v), over the bound %d", mp.Table, len(rawJSON), err, rawBound(cells, joins))
+		}
 		if r.Recovery != "" || r.Confidence != nil {
 			t.Errorf("%s: the mapping stamped a recovery: %+v", mp.Table, r)
 		}
@@ -315,4 +321,48 @@ func FuzzMapIOSWhatsAppChatsRows(f *testing.F) {
 		mp := messageMappingWith(nil)
 		checkMapped(t, place, cellsFrom(len(mp.Columns), kinds, nums, texts), joinsFrom(kinds, nums, texts))
 	})
+}
+
+// rawBound is the size raw may reach for a row: a fixed 64 KiB for the keys, labels and 256-byte blobs, plus six bytes per byte of
+// text in any cell (the JSON escape of a control byte). A BLOB cell adds nothing: it is shown by its length or a 256-byte base64.
+func rawBound(cells []cell, joins map[string]fuzzRow) int {
+	n := 64 << 10
+	count := func(cs []cell) {
+		for _, c := range cs {
+			if c.kind == cText {
+				n += 6 * len(c.b)
+			}
+		}
+	}
+	count(cells)
+	for _, r := range joins {
+		count(r.cells)
+	}
+	return n
+}
+
+// A 1 MiB BLOB in every column of the row and of every join row: raw stays inside its bound (an uncapped base64 of the blobs
+// would be about 100 MB).
+func TestMapRowsBigBlobsDoNotGrowRaw(t *testing.T) {
+	mp := messageMappingWith(nil)
+	big := make([]byte, 1<<20)
+	fill := func(n int) []cell {
+		cs := make([]cell, n)
+		for i := range cs {
+			cs[i] = cell{kind: cBlob, b: big}
+		}
+		return cs
+	}
+	joins := map[string]fuzzRow{}
+	for name, cols := range joinColumns {
+		joins[name] = fuzzRow{table: name, id: 1, cells: fill(len(cols))}
+	}
+	for place := range byte(len(fuzzPlaces)) {
+		for col := range mp.Columns { // one column at a time: a row with a wrong-class required cell is a typed error and shows nothing
+			cs := goodCells(mp)
+			cs[col] = cell{kind: cBlob, b: big}
+			checkMapped(t, place, cs, goodJoins())
+		}
+		checkMapped(t, place, goodCells(mp), joins)
+	}
 }

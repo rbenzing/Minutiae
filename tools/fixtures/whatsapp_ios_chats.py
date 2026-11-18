@@ -901,10 +901,9 @@ def v_deleted(work):
     """Messages 1-3 live; 60 bulk messages (ids 100-159, half of them in the group) and messages 90-91 in the main file;
     one committed WAL transaction inserts messages 92-93 and the next deletes 90-93 and the even ids of 100-159. The odd ids
     stay live, so every leaf keeps half its cells and no page is freed: a page that later belongs to the freelist makes the
-    engine state relation unknown with owner-changed (docs/invariants/sqlite.md), which the oracle walker does not model.
-    The main file still holds
-    the deleted rows (versions that are history under the WAL) and the first WAL frame holds 92-93 (the old frame). Typed
-    recovery claims ZWAMESSAGE rows; the joins read the live side tables. Deleted rows are found only through the WAL here:
+    engine state relation unknown with owner-changed (internal/sqlitefile/rowsident.go, ruling C44), which the oracle walker
+    does not model. The main file still holds the deleted rows (versions that are history under the WAL) and the first WAL
+    frame holds 92-93 (the old frame). Typed recovery claims ZWAMESSAGE rows; the joins read the live side tables. Deleted rows are found only through the WAL here:
     the history oracle (sqlite_oracle.build_history) reads freelist leaves only of a store with no WAL or journal."""
     msgs = [dict(m, Z_ENT=9) for m in small_messages() + bulk(90, 2) + bulk(100, 30, 1) + bulk(130, 30, 2)]
     path = build_db(work, MODEL, tables_of(MODEL, msgs, sessions(4)[:2], with_items=False), wal=True)

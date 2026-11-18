@@ -12,15 +12,15 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
-// fuzzParser is the parser with its own typed outcomes accepted: a database whose Core Data model does not name the entities,
-// one that lacks the identifying tables and a path no glob names are the documented answers to hostile input, not contract
-// breaks. Every other error is still refused by parsertest.FuzzParseIOS unless it is one of the decoder's typed hostile-input
-// errors.
+// fuzzParser is the parser with its own typed outcomes accepted: a database whose Core Data model does not name the entities and
+// one that lacks the identifying tables are the documented answers to hostile input, not contract breaks. A path refusal is not
+// one (the fuzz place is fixed), so it fails. Every other error is still refused by parsertest.FuzzParseIOS unless it is one of
+// the decoder's typed hostile-input errors.
 type fuzzParser struct{ ioswhatsapp.Parser }
 
 func (p fuzzParser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	err := p.Parser.Parse(ctx, in, out)
-	for _, typed := range []error{ioswhatsapp.ErrUnsupportedModel, ioswhatsapp.ErrNoWhatsAppTables, ioswhatsapp.ErrNotWhatsAppPath} {
+	for _, typed := range []error{ioswhatsapp.ErrUnsupportedModel, ioswhatsapp.ErrNoWhatsAppTables} {
 		if errors.Is(err, typed) {
 			return nil
 		}
@@ -132,12 +132,23 @@ func TestFuzzSeedsAreSmall(t *testing.T) {
 			}
 		}
 	}
-	// the hand-built databases parse to records: a seed that gave none would let the target pass without reaching the mapper
+	// the hand-built databases parse to records through the fuzz entry itself (the bundle FuzzParseIOS builds: BundleIOS at
+	// extractRemote and fuzzLogical): a seed that gave none would let the target pass without reaching the mapper
 	for _, s := range seeds {
 		if s.name == "ios-chatstorage first page" {
 			continue
 		}
-		res := hostileRun(t, s.db, s.wal, s.journal, 0)
+		files := map[string][]byte{"db": s.db}
+		if s.wal != nil {
+			files["wal"] = s.wal
+		}
+		if s.journal != nil {
+			files["journal"] = s.journal
+		}
+		h := parsertest.NewHarness(t)
+		b := parsertest.Fixture{Name: "fuzz", Files: files}.BundleIOS(h, extractRemote, fuzzLogical)
+		p := fuzzParser{}
+		res := h.RunLenient(p, b.Input(h, p, false))
 		if res.Err != nil || len(res.Records) == 0 {
 			t.Errorf("seed %s: err %v, %d records", s.name, res.Err, len(res.Records))
 		}
