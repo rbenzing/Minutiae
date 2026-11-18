@@ -9,7 +9,9 @@ package artparse_test
 // (docs/testing.md, docs/performance.md).
 //
 // Phases, in order: gen, decode-200m, decode-1g, ingest-200m, jobs-500, and for plan 4I whatsapp-gen and whatsapp-decode-1m
-// (a 1,000,000-message msgstore.db written by the engine, then parsed with MemBudget 1 GiB). Environment:
+// (a 1,000,000-message msgstore.db written by the engine, then parsed with MemBudget 1 GiB), and for plan 4I2 waios-gen and
+// waios-decode-1m (the same for a 1,000,000-message iOS ChatStorage.sqlite; the database file plus the peak resident set
+// must stay within 2 GiB; both skip under -short). Environment:
 // MINUTIAE_SCALE_DIR (the work directory; about 4 GiB), MINUTIAE_SCALE_LABEL, MINUTIAE_SCALE_MACHINE,
 // MINUTIAE_SCALE_PHASE, and for gen only MINUTIAE_SCALE_GEN (a comma list of 200m, 1g; both by default).
 //
@@ -44,6 +46,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
+	"github.com/rbenzing/minutiae/internal/parsers/ioswhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
 )
@@ -69,7 +72,7 @@ func scaleEnvOf(t *testing.T) scaleEnv {
 	t.Helper()
 	e := scaleEnv{phase: os.Getenv("MINUTIAE_SCALE_PHASE")}
 	if e.phase == "" {
-		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m) to run the parse scale test; it is manual (see docs/testing.md)")
+		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m) to run the parse scale test; it is manual (see docs/testing.md)")
 	}
 	if e.label = os.Getenv("MINUTIAE_SCALE_LABEL"); e.label == "" {
 		t.Fatal("set MINUTIAE_SCALE_LABEL (a name for this run, such as 4h)")
@@ -653,8 +656,12 @@ func TestScaleParse(t *testing.T) {
 		runGenWhatsApp(t, e)
 	case "whatsapp-decode-1m":
 		whatsAppDecode(t, e)
+	case "waios-gen":
+		runGenWhatsAppIOS(t, e)
+	case "waios-decode-1m":
+		whatsAppIOSDecode(t, e)
 	default:
-		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m)", e.phase)
+		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m)", e.phase)
 	}
 }
 
@@ -822,6 +829,213 @@ func whatsAppDecode(t *testing.T, e scaleEnv) {
 	if res.Records < gi.Rows {
 		t.Errorf("records = %d, want at least the %d messages written", res.Records, gi.Rows)
 	}
+}
+
+// ---- iOS WhatsApp (plan 4I2 task 6) ----
+
+const (
+	waiosRemotePath = "/private/var/mobile/Containers/Shared/AppGroup/5A0B4C3D-0000-4000-8000-00000000A001/ChatStorage.sqlite"
+	waiosDDL        = "../../tools/fixtures/schemas/whatsapp-ios/chatstorage.sql"
+	waiosMessages   = 1_000_000
+	waiosSessions   = 1000
+	waiosMembers    = 100
+	waiosBudget     = 1024 * scaleMiB // MemBudget of waios-decode-1m (plan 4I2 task 6)
+	waiosSizeCap    = 2048 * scaleMiB // the database file plus the peak resident set must stay within 2 GiB
+)
+
+// genWhatsAppIOS writes a ChatStorage.sqlite through the engine from the committed DDL snapshot: n ZWAMESSAGE rows over
+// waiosSessions chat sessions (the first waiosMembers of them groups, each with one ZWAGROUPMEMBER row), 10% of them image
+// messages with a ZWAMEDIAITEM row, and the Core Data model that names the two entities the parser needs. It returns the
+// message rows.
+func genWhatsAppIOS(path string, n int64) (genInfo, error) {
+	db, err := openGen(path)
+	if err != nil {
+		return genInfo{}, err
+	}
+	fail := func(err error) (genInfo, error) { _ = db.Close(); return genInfo{}, err }
+	if err := execScript(db, waiosDDL); err != nil {
+		return fail(err)
+	}
+	r, pool := rand.New(rand.NewPCG(5, 6)), bodyPool()
+	tx, err := db.Begin()
+	if err != nil {
+		return fail(err)
+	}
+	for _, z := range []struct {
+		ent  int64
+		name string
+		max  int64
+	}{{4, "WAChatSession", waiosSessions}, {9, "WAMessage", n}} {
+		if _, err := tx.Exec("INSERT INTO Z_PRIMARYKEY (Z_ENT, Z_NAME, Z_SUPER, Z_MAX) VALUES (?,?,0,?)", z.ent, z.name, z.max); err != nil {
+			return fail(err)
+		}
+	}
+	for s := int64(1); s <= waiosSessions; s++ {
+		typ, jid := int64(0), fmt.Sprintf("1555%07d@s.whatsapp.net", s)
+		if s <= waiosMembers {
+			typ, jid = 1, fmt.Sprintf("1203630000%08d@g.us", s)
+		}
+		if _, err := tx.Exec("INSERT INTO ZWACHATSESSION (Z_PK, Z_ENT, ZSESSIONTYPE, ZCONTACTJID, ZPARTNERNAME) VALUES (?,4,?,?,?)", s, typ, jid, fmt.Sprintf("chat %d", s)); err != nil {
+			return fail(err)
+		}
+		if s <= waiosMembers {
+			if _, err := tx.Exec("INSERT INTO ZWAGROUPMEMBER (Z_PK, Z_ENT, ZCHATSESSION, ZMEMBERJID) VALUES (?,5,?,?)", s, s, fmt.Sprintf("1555%07d@s.whatsapp.net", 5000+s)); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
+	}
+	const batch = 20000
+	for start := int64(1); start <= n; start += batch {
+		tx, err := db.Begin()
+		if err != nil {
+			return fail(err)
+		}
+		msg, err := tx.Prepare("INSERT INTO ZWAMESSAGE (Z_PK, Z_ENT, ZCHATSESSION, ZISFROMME, ZMESSAGETYPE, ZMESSAGEDATE, ZGROUPMEMBER, ZMEDIAITEM, ZSTANZAID, ZTEXT) VALUES (?,9,?,?,?,?,?,?,?,?)")
+		if err != nil {
+			return fail(err)
+		}
+		media, err := tx.Prepare("INSERT INTO ZWAMEDIAITEM (Z_PK, Z_ENT, ZMESSAGE, ZFILESIZE, ZMEDIALOCALPATH, ZTITLE, ZVCARDSTRING) VALUES (?,6,?,12345,?,?,'image/jpeg')")
+		if err != nil {
+			return fail(err)
+		}
+		for id := start; id < start+batch && id <= n; id++ {
+			session, from := id%waiosSessions+1, id%2
+			typ, item, text := int64(0), any(nil), any(string(pool[r.IntN(len(pool)-160):][:40+r.IntN(120)]))
+			if id%10 == 0 {
+				typ, item, text = 1, id/10, nil
+			}
+			var member any
+			if session <= waiosMembers && from == 0 {
+				member = session
+			}
+			if _, err := msg.Exec(id, session, from, typ, float64(600_000_000+id), member, item, fmt.Sprintf("3EB0%09d", id), text); err != nil {
+				return fail(err)
+			}
+			if typ == 1 {
+				if _, err := media.Exec(item, id, fmt.Sprintf("Media/1555%07d@s.whatsapp.net/IMG-%09d.jpg", session, id), fmt.Sprintf("IMG-%09d", id)); err != nil {
+					return fail(err)
+				}
+			}
+		}
+		_ = msg.Close()
+		_ = media.Close()
+		if err := tx.Commit(); err != nil {
+			return fail(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		return genInfo{}, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return genInfo{}, err
+	}
+	return genInfo{Bytes: st.Size(), Rows: n}, nil
+}
+
+// runGenWhatsAppIOS is the waios-gen phase: the 1,000,000-message store under MINUTIAE_SCALE_DIR/input. Under -short it skips.
+func runGenWhatsAppIOS(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("waios-gen writes a database of several hundred MiB: skipped under -short")
+	}
+	if err := os.MkdirAll(filepath.Join(e.dir, "input"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	gi, err := genWhatsAppIOS(genPath(e, "chatstorage-1m.db"), waiosMessages)
+	if err != nil {
+		t.Fatalf("gen chatstorage-1m.db: %v", err)
+	}
+	t.Logf("gen chatstorage-1m.db: %d bytes, %d messages in %s", gi.Bytes, gi.Rows, time.Since(start).Round(time.Second))
+	b, _ := json.MarshalIndent(map[string]genInfo{"chatstorage-1m.db": gi}, "", "  ")
+	if err := os.WriteFile(genPath(e, "waios-gen.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeResult(t, e, phaseResult{Phase: "waios-gen", Outcome: "generated", InputBytes: gi.Bytes, Rows: gi.Rows})
+}
+
+// captureExtract stores a file as extracted from an APFS image at fsPath, so that the host names it
+// ios:HomeDomain/<fsPath below /private/var/mobile/>: an app group place, found by its signature.
+func captureExtract(t *testing.T, c *evidence.Case, fsPath, src string) {
+	t.Helper()
+	f, err := os.Open(src) //nolint:gosec // the operator's work directory
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	d := &evidence.Derivation{ParentID: "p", ParentSHA256: strings.Repeat("0", 64), FSType: "apfs", FSPath: fsPath}
+	_, err = c.Capture("D1", "A1", "files"+fsPath, evidence.Source{Kind: "extract", RemotePath: fsPath, DeviceID: "D1", Derived: d}, func(w io.Writer) error {
+		_, err := io.CopyBuffer(w, f, make([]byte, 1<<20))
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// whatsAppIOSDecode is the waios-decode-1m phase: the 1,000,000-message store parsed with MemBudget 1 GiB, counting what the
+// parser emits. The parser is registered under a synthetic source hash (it is not in the release registry yet); the phase
+// fails when the database file plus the peak resident set exceed 2 GiB. Under -short it skips.
+func whatsAppIOSDecode(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("waios-decode-1m parses a database of several hundred MiB with a 1 GiB budget: skipped under -short")
+	}
+	b, err := os.ReadFile(genPath(e, "waios-gen.json")) //nolint:gosec // the operator's work directory
+	if err != nil {
+		t.Fatalf("run the waios-gen phase first: %v", err)
+	}
+	m := map[string]genInfo{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	gi := m["chatstorage-1m.db"]
+	c := newScaleCase(t, filepath.Join(e.dir, "cases"), "WAIOSDECODE1M")
+	captureExtract(t, c, waiosRemotePath, genPath(e, "chatstorage-1m.db"))
+	p := ioswhatsapp.Parser{}
+	reg, err := artparse.Register(p, parsertest.FakeHash(ioswhatsapp.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg, err = reg.WithRecoveryHash(parsertest.FakeHash(ioswhatsapp.Name + ".recover")); err != nil {
+		t.Fatal(err)
+	}
+	lim := parse.DefaultLimits()
+	lim.MemBudget = waiosBudget
+	opt := artparse.Options{Limits: lim}
+	artparse.WithNewWriter(&opt, func(*evidence.Case, records.Parser, records.WriterOptions) (artparse.IngestWriter, error) {
+		return &countWriter{}, nil
+	})
+	h, err := artparse.New(c, []artparse.Registered{reg}, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug.FreeOSMemory()
+	start := time.Now()
+	sum, err := h.Run(context.Background(), artparse.RunOptions{})
+	wall := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	rss, ok := peakRSS()
+	res := phaseResult{Phase: "waios-decode-1m", MemBudget: waiosBudget, InputBytes: gi.Bytes, Rows: gi.Rows, PeakRSSLimit: waiosSizeCap - gi.Bytes}
+	fillResult(&res, sum, wall, rss, ok)
+	res.Streamed = streamedOf(t, c)
+	writeResult(t, e, res)
+	if len(sum.Jobs) != 1 {
+		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
+	}
+	if res.Outcome != artparse.OutcomeComplete {
+		t.Errorf("outcome %s (%s), want complete", res.Outcome, res.Reason)
+	}
+	if res.Records < gi.Rows {
+		t.Errorf("records = %d, want at least the %d messages written", res.Records, gi.Rows)
+	}
+	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
 }
 
 // TestScaleParseSmoke proves the harness works end to end on a 2 MiB database through decode and ingest,

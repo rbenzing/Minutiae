@@ -328,13 +328,15 @@ func TestIOSWhatsAppChatsOracleStatesTheAbsentOptionalTables(t *testing.T) {
 	}
 }
 
-// TestIOSWhatsAppChatsDeletedOracleStatesTheHistory (plan 4I2 PF2): messages 1-3 stay live; the rows 90-93 and 100-159 were
-// deleted by a committed WAL transaction, so they are history: the main file holds the versions that the deletion
-// superseded (90, 91, 100-159) and the first WAL frame holds 92 and 93, which a later frame deleted (the old frame).
+// TestIOSWhatsAppChatsDeletedOracleStatesTheHistory (plan 4I2 PF2): messages 1-3 and the odd ones of 100-159 stay live (so no
+// leaf page is freed: an emptied page would make the engine state relation unknown with owner-changed, which the oracle
+// walker does not model); the rows 90-93 and the even ones of 100-159 were deleted by a committed WAL transaction, so they
+// are history: the main file holds the versions that the deletion superseded (90, 91, the even ones) and the first WAL frame
+// holds 92 and 93, which a later frame deleted (the old frame).
 func TestIOSWhatsAppChatsDeletedOracleStatesTheHistory(t *testing.T) {
 	c, _ := recsOf(t, "ios-chatstorage-deleted")
-	if len(c.by) != 3 {
-		t.Errorf("%d live records, want 3 (messages 1-3)", len(c.by))
+	if len(c.by) != 33 {
+		t.Errorf("%d live records, want 33 (messages 1-3 and the 30 odd ones of 100-159)", len(c.by))
 	}
 	raw, err := os.ReadFile("testdata/ios-chatstorage-deleted.recover.expect.json")
 	if err != nil {
@@ -363,7 +365,7 @@ func TestIOSWhatsAppChatsDeletedOracleStatesTheHistory(t *testing.T) {
 		}
 	}
 	for n := int64(1); n <= 200; n++ {
-		want := n == 90 || n == 91 || n == 92 || n == 93 || (n >= 100 && n <= 159)
+		want := n == 90 || n == 91 || n == 92 || n == 93 || (n >= 100 && n <= 159 && n%2 == 0)
 		if rows[n] != want {
 			t.Errorf("row %d recovered = %v, want %v", n, rows[n], want)
 		}

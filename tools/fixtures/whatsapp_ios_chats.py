@@ -23,7 +23,7 @@ Variants (the placement of each is in internal/parsers/ioswhatsapp/fixtures_test
   ios-chatstorage-othermodel   Z_PRIMARYKEY names only CallRecord
   ios-chatstorage-otherapp     a same-named database of another app: one table ZMESSAGE(Z_PK, ZTEXT)
   ios-chatstorage-nooptional   no ZWAGROUPMEMBER, ZWAMESSAGEINFO or ZWAMEDIAITEM table (plan 4I2 PF3: the absence is stated)
-  ios-chatstorage-deleted      deleted ZWAMESSAGE rows and an old WAL frame (plan 4I2 PF2): the typed recovery scenario
+  ios-chatstorage-deleted      deleted ZWAMESSAGE rows (every other one of a run, so no page is freed) and an old WAL frame (plan 4I2 PF2)
   ios-chatstorage-deleted-freelist  no WAL: deleted ZWAMESSAGE rows on freelist pages, with a deleted image and a deleted revoke
 
 Python 3 with its bundled sqlite3 only; no Docker. Not part of gen.sh all.
@@ -899,7 +899,10 @@ def new_scenario(variant, con):
 
 def v_deleted(work):
     """Messages 1-3 live; 60 bulk messages (ids 100-159, half of them in the group) and messages 90-91 in the main file;
-    one committed WAL transaction inserts messages 92-93 and the next deletes 90-93 and 100-159. The main file still holds
+    one committed WAL transaction inserts messages 92-93 and the next deletes 90-93 and the even ids of 100-159. The odd ids
+    stay live, so every leaf keeps half its cells and no page is freed: a page that later belongs to the freelist makes the
+    engine state relation unknown with owner-changed (docs/invariants/sqlite.md), which the oracle walker does not model.
+    The main file still holds
     the deleted rows (versions that are history under the WAL) and the first WAL frame holds 92-93 (the old frame). Typed
     recovery claims ZWAMESSAGE rows; the joins read the live side tables. Deleted rows are found only through the WAL here:
     the history oracle (sqlite_oracle.build_history) reads freelist leaves only of a store with no WAL or journal."""
@@ -908,7 +911,7 @@ def v_deleted(work):
     con = C.connect(path)
     scen = new_scenario("ios-chatstorage-deleted", con)
     scen.write("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE"))
-    scen.want("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE", "Z_PK between 100 and 159 or Z_PK in (90, 91)"))
+    scen.want("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE", "(Z_PK between 100 and 159 and Z_PK % 2 = 0) or Z_PK in (90, 91)"))
     con.close()
     # the rows the first WAL transaction inserts, as the engine would store them
     old = [dict(m, Z_ENT=9) for m in bulk(92, 2)]
@@ -922,7 +925,7 @@ def v_deleted(work):
     scen.write("ZWAMESSAGE", old_rows)
     scen.want("ZWAMESSAGE", old_rows)
     X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0"] + [insert_stmt("ZWAMESSAGE", m) for m in old] +
-                      ["delete from ZWAMESSAGE where Z_PK in (90, 91, 92, 93) or Z_PK between 100 and 159"])
+                      ["delete from ZWAMESSAGE where Z_PK in (90, 91, 92, 93) or (Z_PK between 100 and 159 and Z_PK % 2 = 0)"])
     files = finish(path)
     exp = oracle(files, "ios-chatstorage-deleted", "backup", DOMAIN_WA)
     for rec in exp["records"]:

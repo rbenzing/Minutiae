@@ -84,7 +84,7 @@ func TestIOSWhatsAppChatsGlobsCompileAndMatch(t *testing.T) { // 4I2-R2
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "ios.whatsapp.chats" || m.Version != "1.0.0" || len(m.Claims) != 0 {
+	if m.Name != "ios.whatsapp.chats" || m.Version != "1.0.0" || len(m.Claims) != 1 || m.Claims[0].Table != "ZWAMESSAGE" {
 		t.Errorf("identity or claims: %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformIOS || len(m.Emits) != 1 || m.Emits[0].Type != "message" {

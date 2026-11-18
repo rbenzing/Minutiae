@@ -44,12 +44,25 @@ const (
 	entChat      = "WAChatSession"
 )
 
-// Meta describes the parser: the roles and globs of plan 4I2 "Globs and places". It claims no table until the claims
-// are earned (plan 4I2 task 6).
+// ClaimableTables are the tables whose mapping is total (4I2-R10): every ZWAMESSAGE row gives one record or one counted
+// warning, so typed recovery can map the rows that were deleted or superseded. ZWAMEDIAITEM and ZWACHATSESSION are joins
+// of that mapping, not mappings of their own: a recovered media or session row alone is no message.
+func ClaimableTables() []string { return []string{tableMessage} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
+}
+
+// Meta describes the parser: the roles and globs of plan 4I2 "Globs and places", and the claims of ClaimableTables.
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "iOS WhatsApp chats (ChatStorage.sqlite)",
 		Platforms: []string{parse.PlatformIOS},
+		Claims:    claimsOf(ClaimableTables()),
 		Emits:     []parse.Emit{{Type: message.Type, PayloadVersion: message.PayloadVersion}},
 		Inputs: []parse.InputSpec{
 			{Role: "db", Required: true, Globs: []string{

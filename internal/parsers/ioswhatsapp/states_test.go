@@ -62,6 +62,17 @@ func (c chatTable) put(pk int64, kv map[string]any) {
 	c.t.Insert(pk, vals...)
 }
 
+// update replaces the row of Z_PK pk with the values of kv (every other column NULL).
+func (c chatTable) update(pk int64, kv map[string]any) {
+	vals := make([]any, len(c.cols))
+	for i, n := range c.cols {
+		if n != "Z_PK" {
+			vals[i] = kv[n]
+		}
+	}
+	c.t.Update(pk, vals...)
+}
+
 type chatTables map[string]chatTable
 
 // buildChat builds a ChatStorage-like store from chatDDL. over replaces a table's DDL (an empty string drops the table);
