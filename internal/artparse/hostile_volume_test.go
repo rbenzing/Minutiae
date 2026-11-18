@@ -129,6 +129,9 @@ func largestFixture(t *testing.T, dir string) (string, []byte) {
 // makes the device's platform known.
 func hostilePath(t *testing.T, m parse.Meta) (remote, acqType string) {
 	t.Helper()
+	if p, ok := hostileLivePaths[m.Name]; ok {
+		return p, "logical"
+	}
 	g := m.Inputs[0].Globs[0]
 	switch {
 	case strings.HasPrefix(g, "android:"):
@@ -173,6 +176,14 @@ var hostileDirs = map[string]string{
 	"android.mmssms": "androidmms", "android.calllog": "androidcalllog", "android.contacts": "androidcontacts",
 	"ios.sms": "iossms", "ios.calls": "ioscalls", "ios.addressbook": "iosaddressbook",
 	"chromium.history": "chromium", "safari.history": "safari",
+	"android.whatsapp.msgstore": "androidwhatsapp", "android.whatsapp.contacts": "androidwacontacts",
+}
+
+// hostileLivePaths are device paths for parsers that parse only the app's live database (R7): the generic
+// "data/data/pkg" path is a non-live copy to them, so the mutated fixture would never be parsed.
+var hostileLivePaths = map[string]string{
+	"android.whatsapp.msgstore": "/data/data/com.whatsapp/databases/msgstore.db",
+	"android.whatsapp.contacts": "/data/data/com.whatsapp/databases/wa.db",
 }
 
 // hostileVolume is what one job wrote and what the log proves about its warnings.
