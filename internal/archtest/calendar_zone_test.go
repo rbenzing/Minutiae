@@ -17,6 +17,7 @@ import (
 // the rules of today (plan 4I3, spec 5.1). Each listed directory must exist.
 var calendarDirs = []string{
 	"internal/recordtypes/calendar",
+	"internal/parsers/androidcalendar",
 }
 
 // zoneFuncs are the functions of package time that make or load a zone.
