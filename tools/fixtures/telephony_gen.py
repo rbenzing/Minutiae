@@ -37,7 +37,7 @@ FAMILIES = {"mmssms": telephony_mmssms}
 def load_optional():
     for name in ("telephony_calllog", "telephony_contacts", "browser_chromium", "browser_safari",
                  "ios_sms", "ios_calls", "ios_addressbook", "whatsapp_gen", "whatsapp_wadb",
-                 "whatsapp_ios_chats", "whatsapp_ios_calls", "whatsapp_ios_contacts"):
+                 "whatsapp_ios_chats", "whatsapp_ios_calls", "whatsapp_ios_contacts", "calendar_android", "calendar_ios"):
         try:
             mod = __import__(name)
         except ImportError:

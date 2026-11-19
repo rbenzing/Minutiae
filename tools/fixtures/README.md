@@ -3343,3 +3343,57 @@ py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-contacts --check
 Notes of the oracle: `container`, `app` and `app_basis` or `app_state`, and `ZLID` = `absent` when the table has no such column. The
 warnings are the row warnings in rowid order, then the reader's (`ios-contactsv2`'s uncommitted frame). The 1024-byte JID limit is the
 message contract's `maxAddr` (Android wa.db's `maxJID`); the contact contract has none, so the parser restates it.
+
+### Calendar fixtures (plan 4I3)
+
+`tools/fixtures/calendar_android.py` is the family `calendar-android` of `telephony_gen.py`. Its databases are built from
+the DDL snapshots of `schemas/calendar-android/` (`601.sql`, `600.sql`, `502.sql`, `403.sql` and `403-upgraded-601.sql`),
+each with the `PRAGMA user_version` its header states. The snapshots are emitted by `ddl_crosscheck.py --family calendar
+--emit <table>` from the AOSP calendar provider's `CalendarDatabaseHelper.java` (column names from `CalendarContract.java`)
+and checked by four runs, one per tag, each limited to its snapshots with `--snapshot`:
+
+```
+py -3 -I tools/fixtures/ddl_crosscheck.py <src>/android-14.0.0_r1 tools/fixtures/schemas/calendar-android --family calendar \
+    --tag android-14.0.0_r1 --snapshot 601.sql --snapshot 600.sql --snapshot 403-upgraded-601.sql --commit <repo>=<sha>... \
+    --write-report <scratch>/android-14.0.0_r1.md
+# the same with --tag android-9.0.0_r1 --snapshot 600.sql, --tag android-4.2_r1 --snapshot 502.sql,
+# and --tag android-4.1.1_r1 --snapshot 403.sql
+```
+
+The four reports, concatenated under one heading per tag, are `schemas/calendar-android/CROSSCHECK.md`, which also pins
+every fetched file (repository, commit, SHA-256; the files are never committed), the facts of spec §2 with `file:line`
+and every `CalendarContract` constant the parser maps. `--family calendar` takes the first `CREATE TABLE` outside a method
+named after a version (the helper keeps `createCalendarsTable303` before the current `createCalendarsTable`); without the
+new flags the 4D output is unchanged. `_sync_state` and `_sync_state_metadata` are not in the snapshots: the helper does not
+define them (ruling F06).
+
+```
+py -3 -I tools/fixtures/telephony_gen.py --family calendar-android --out internal/parsers/androidcalendar/testdata \
+    --pins-go internal/parsers/androidcalendar/pins_test.go --pins-package androidcalendar_test
+py -3 -I tools/fixtures/telephony_gen.py --family calendar-android --recover-oracle --out internal/parsers/androidcalendar/testdata
+py -3 -I tools/fixtures/telephony_gen.py --family calendar-android --check
+```
+
+It needs Python 3 with its bundled `sqlite3` only, needs no Docker and is not part of `gen.sh all`. A WAL or journal never
+regenerates byte for byte (salts, nonce), so a regeneration rewrites the images, the oracles and the pins together. The
+oracle states the AOSP constants and the provider's end rule literally; it is a second reading of the spec, not
+independent of the design: it shares no code with the parser, and `internal/parsers/androidcalendar/oracle_facts_test.go`
+(`TestAndroidCalendarOracleStatesTheSpecRules`, literal facts written from the spec) checks it against the text. Its time
+strings carry the basis: a utc instant ends in `Z`, a local-unknown reading (an all-day date at 00:00 "as if UTC") has no
+zone suffix. Every variant is bundled at `/data/data/com.android.providers.calendar/databases/calendar.db`.
+
+| Variant (`internal/parsers/androidcalendar/testdata/`) | DDL | Holds |
+|---|---|---|
+| `calendar-601` | `601.sql`, with `-wal` | the CORE scenario (rows 1 to 41: timed, recurring with `PT1H`/`P3600S`/`P1D`/`P2W` and RRULE/EXDATE, all-day single and multi-day, all-day off midnight, exceptions, soft delete, a deleted calendar, last-synced copies, a numeric `organizer`, attendees of every code, reminders, alerts, extended properties, the edge rows), `Instances`, `CalendarMetaData`, `CalendarCache`; row 42 in a committed WAL frame, row 43 in an uncommitted one (never a record). The warnings: the reader's `wal-frames-not-applied`, then one `calendar-flag-undecided` per column (rows 32, 34 and calendar 5) |
+| `calendar-600` | `600.sql`, with a hot `-journal` | rows 1 to 6; an interrupted rewrite of row 6's title spilled into the file and is rolled back (the reader's `journal-hot`) |
+| `calendar-502` | `502.sql` | rows 1 to 6 and freelist pages (a dropped scratch table) |
+| `calendar-403` | `403.sql` | rows 1 to 6 (no `uid2445`, `isOrganizer`, `mutators`, `isPrimary`) |
+| `calendar-403-upgraded-601` | `403-upgraded-601.sql` | rows 1 to 3 written before the 501, 502 and 600 `ALTER`s (short records: row 1 has no uid), rows 4 to 6 after |
+| `calendar-otherversion` | `601.sql`, user version 307 | rows 1 to 3; outside the band 400-699 (B4), so no record is expected |
+| `calendar-noevents` | only `Calendars` of `601.sql`, user version 601 | one calendar, no `Events` table, no record |
+| `calendar-deleted` | `601.sql` on 512-byte pages, with `-wal` | rows 1 to 6 live; rows 50 to 59 deleted onto freelist leaves (a dropped one-page table is the trunk); an `Attendees` and a `Reminders` row of event 50 written after the delete, so they survive in the live view (F17); row 6 edited twice in a WAL never checkpointed (the file and the first frame hold older images). `--recover-oracle` writes `calendar-deleted.recover.expect.json`, a lower bound: the page walker reads freelist leaves only for a lone database, so `recover_expect` walks the database file alone for rows 50 to 59 and merges that answer with the WAL one |
+
+Notes of the oracle: `database_version`, and when they apply `rows.Instances`, `meta.localTimezone`, `meta.minInstance`,
+`meta.maxInstance`, the three `cache.*` zone notes and the counts `soft_deleted`, `lastsynced_copies` and
+`deleted_calendar_events` (a zero count is not stated). The oracle's recovered rows join nothing (B2): every join state is
+`not-joined-recovered`; their digests use the `Z` form of every time, as the Go kit renders a time whatever its basis.

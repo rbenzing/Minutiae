@@ -2,6 +2,7 @@
 
     py -3 -I tools/fixtures/ddl_crosscheck.py <sourcedir> <schemasdir>
         [--tag TAG] [--commit REPO=SHA]... [--write-report FILE] [--emit TABLE]...
+        [--snapshot NAME]... [--family calendar]
 
 <sourcedir> holds the fetched Java files under their base names. They are untrusted text:
 this script reads them as text and applies regular expressions to them; nothing in them is
@@ -22,7 +23,18 @@ ADD COLUMN (each cited by file and line); a table the sources never create is
 no-public-source; a table whose statement the script cannot evaluate is MANUAL and must be
 read by a person. Exit status 1 on any MISMATCH or MANUAL.
 
---emit TABLE prints the tag's definition of TABLE as a one-line CREATE TABLE.
+--emit TABLE prints the tag's definition of TABLE as a one-line CREATE TABLE (a table the tag
+does not define raises KeyError).
+
+Plan 4I3 adds two flags; without them the output is unchanged (the 4D report stays
+reproducible). --snapshot NAME (repeatable) limits the check to those .sql files of
+<schemasdir>, so one directory can hold the snapshots of several tags and each run checks
+only those of its tag. --family calendar writes the report heading "# DDL cross-check
+(plan 4I3)", leaves out the MMS note of plan 4D, and takes as the definition at the tag the
+first CREATE TABLE outside a method named after a version (bootstrap_first: the calendar
+helper keeps createCalendarsTable303 before createCalendarsTable). A comma inside a quoted
+DEFAULT literal no longer splits a column (split_items); no 4D snapshot has one, so their
+parse is unchanged.
 """
 import hashlib
 import os
@@ -33,6 +45,7 @@ SRC_FILES = [
     "MmsSmsDatabaseHelper.java",
     "ContactsDatabaseHelper.java",
     "CallLogDatabaseHelper.java",
+    "CalendarDatabaseHelper.java",  # plan 4I3; CalendarContract.java beside it supplies the column constants
 ]
 # The only columns a historical snapshot may use that no source defines: invented on purpose
 # for the unmapped_columns check (named in the header of mmssms-oem-extended.sql).
@@ -238,11 +251,14 @@ def expression_at(text, pos):
 
 
 def split_items(body):
-    depth, cur, items = 0, "", []
+    """The comma-separated items of a CREATE TABLE body. A comma inside parentheses or inside a quoted SQL literal
+    (DEFAULT '0,1', plan 4I3) does not separate items."""
+    depth, cur, items, quoted = 0, "", [], False
     for ch in body:
-        depth += ch == "("
-        depth -= ch == ")"
-        if ch == "," and depth == 0:
+        quoted ^= ch == "'"  # '' inside a literal toggles twice: still quoted
+        depth += ch == "(" and not quoted
+        depth -= ch == ")" and not quoted
+        if ch == "," and depth == 0 and not quoted:
             items.append(cur)
             cur = ""
         else:
@@ -290,6 +306,29 @@ def scan_statements(world, src, kind):
     return out
 
 
+METHOD_RE = re.compile(r"\b(\w+)\s*\([^;{}()]*\)\s*(?:throws\s+[\w.,\s]+)?\{")
+VERSIONED_RE = re.compile(r"(?:\d+|^upgradeTo\w*)$")
+
+
+def enclosing_method(src, line):
+    """The name of the last method declared before line (Java methods do not nest), or ""."""
+    pos = 0
+    for _ in range(line - 1):
+        pos = src.text.index("\n", pos) + 1
+    names = [m.group(1) for m in METHOD_RE.finditer(src.text, 0, pos) if m.group(1) not in ("if", "for", "while", "switch", "catch", "synchronized")]
+    return names[-1] if names else ""
+
+
+def bootstrap_first(world, creates):
+    """Plan 4I3 (--family calendar): the calendar helper keeps every historical CREATE TABLE in a method named after
+    its version (createCalendarsTable303) or in upgrade code (upgradeToVersion61), some of them BEFORE the current
+    one in the file. The definition of the tag is the first CREATE TABLE outside such a method; the historical ones
+    follow it in file order (they still define columns for a historical snapshot)."""
+    for table, defs in creates.items():
+        current = [d for d in defs if not VERSIONED_RE.search(enclosing_method(world.files[d[0]], d[1]))]
+        creates[table] = current + [d for d in defs if d not in current]
+
+
 def snapshot(path):
     with open(path, encoding="utf-8") as f:
         text = f.read()
@@ -323,11 +362,15 @@ def main(argv):
         for line, table, col in scan_statements(world, src, "alter"):
             if table is not None:
                 alters.setdefault(table, []).append((name, line, col))
+    calendar = (opt("--family") or [""])[0] == "calendar"
+    if calendar:
+        bootstrap_first(world, creates)
     for t in opt("--emit"):
         name, line, cols = creates[t][0]
         print("CREATE TABLE %s (%s);" % (t, ", ".join(d for _, d in cols)))
     rows, bad = [], False
-    for fn in sorted(f for f in os.listdir(schemas) if f.endswith(".sql")):
+    only = opt("--snapshot")
+    for fn in sorted(f for f in os.listdir(schemas) if f.endswith(".sql") and (not only or f in only)):
         verdict, tabs, adds = snapshot(os.path.join(schemas, fn))
         for tbl, col in adds:  # a column the snapshot adds with ALTER TABLE must be added by the sources' upgrade code
             hit = [(f, l) for f, l, c in alters.get(tbl, []) if c == col]
@@ -383,7 +426,7 @@ def main(argv):
     if report:
         tag = (opt("--tag") or ["?"])[0]
         with open(report[0], "w", encoding="utf-8", newline="\n") as f:
-            f.write("# DDL cross-check (plan 4D, Task 4b)\n\n")
+            f.write("# DDL cross-check (plan 4I3)\n\n" if calendar else "# DDL cross-check (plan 4D, Task 4b)\n\n")
             f.write("Generated by tools/fixtures/ddl_crosscheck.py. Tag: `%s`.\n\n" % tag)
             for c in opt("--commit"):
                 repo, _, sha = c.partition("=")
@@ -391,12 +434,18 @@ def main(argv):
             f.write("\nFetched files (not in the repository), SHA-256:\n\n")
             for fn, s in sorted(world.files.items()):
                 f.write("- %s `%s`\n" % (fn, s.sha256))
-            f.write("\nThe definition at the tag is the first CREATE TABLE of the table in the file; "
-                    "statements the script could not evaluate: %d.\n\n" % len(unresolved))
+            if calendar:
+                f.write("\nThe definition at the tag is the first CREATE TABLE of the table in the file outside a method "
+                        "named after a version (create...Table303, upgradeToVersion...); statements the script could not "
+                        "evaluate: %d.\n\n" % len(unresolved))
+            else:
+                f.write("\nThe definition at the tag is the first CREATE TABLE of the table in the file; "
+                        "statements the script could not evaluate: %d.\n\n" % len(unresolved))
             f.write("| File | Table | Verdict | Evidence |\n|---|---|---|---|\n")
             for fn, tbl, v, ev in rows:
                 f.write("| %s | %s | %s | %s |\n" % (fn, tbl, v, ev))
-            f.write(MMS_NOTE)
+            if not calendar:
+                f.write(MMS_NOTE)
     return 1 if bad else 0
 
 

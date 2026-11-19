@@ -1291,6 +1291,7 @@ var purityRequired = []string{
 	"internal/parsers/iossms", "internal/parsers/ioscalls", "internal/parsers/iosaddressbook", "internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/wajid", "internal/decode/plist", "internal/decode/typedstream", "internal/decode/iosbackup",
 	"internal/parsers/ioswacalls",
 	"internal/parsers/ioswacontacts",
+	"internal/parsers/androidcalendar",
 	"internal/carve",
 }
 
@@ -1963,6 +1964,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/parsers/androidmms/helper": pcParser,
 		"internal/parsers/androidcalllog":    pcParser,
 		"internal/parsers/androidcontacts":   pcParser,
+		"internal/parsers/androidcalendar":   pcParser,
 		"internal/parsers/androidwhatsapp":   pcParser,
 		"internal/parsers/androidwacontacts": pcParser,
 		"internal/parsers/ioswhatsapp":       pcParser,

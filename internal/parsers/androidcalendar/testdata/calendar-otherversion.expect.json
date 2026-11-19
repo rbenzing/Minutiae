@@ -1,0 +1,1 @@
+{"ddl":"601.sql","extra_files":[],"family":"calendar-android","generator":{"files":{"db":"0a775a4f8ef9c7b2020c82a3ebba9df4e6129b9bd9a95b1db60199309ca685da"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"calendar-otherversion","warnings":[]}
