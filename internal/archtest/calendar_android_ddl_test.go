@@ -12,6 +12,13 @@ import (
 // calendarAndroidSnapshots are the five Android calendar.db snapshots of plan 4I3 (spec 7.4).
 var calendarAndroidSnapshots = []string{"403-upgraded-601.sql", "403.sql", "502.sql", "600.sql", "601.sql"}
 
+// calendarAndroidTags is the tag each snapshot's `-- tag` line must carry (plan 4I3 Task 2 brief, F31: the
+// upgraded database names the tag of its ALTERs; CROSSCHECK.md cites android-4.1.1_r1 for its CREATE text).
+var calendarAndroidTags = map[string]string{
+	"403-upgraded-601.sql": "android-14.0.0_r1", "403.sql": "android-4.1.1_r1", "502.sql": "android-4.2_r1",
+	"600.sql": "android-14.0.0_r1", "601.sql": "android-14.0.0_r1",
+}
+
 var (
 	calTagRE      = regexp.MustCompile(`(?m)^-- tag (android-[0-9.]+_r[0-9]+)$`)
 	calAnyTagRE   = regexp.MustCompile(`(?m)^-- tag `)
@@ -61,6 +68,8 @@ func TestCalendarAndroidDDLSnapshotsCiteTheirSource(t *testing.T) {
 		tag, vd, uv := calTagRE.FindAllStringSubmatch(src, -1), calVerdictRE.FindAllStringSubmatch(src, -1), calVersionRE.FindAllStringSubmatch(src, -1)
 		if len(tag) != 1 || len(calAnyTagRE.FindAllString(src, -1)) != 1 {
 			t.Errorf("%s: want exactly one '-- tag android-<version>_r<n>' line", base)
+		} else if want := calendarAndroidTags[base]; tag[0][1] != want {
+			t.Errorf("%s: tag %s, the brief's tag is %s", base, tag[0][1], want)
 		}
 		if len(vd) != 1 || len(calAnyVerdict.FindAllString(src, -1)) != 1 {
 			t.Errorf("%s: want exactly one '-- verdict verified' or '-- verdict historical' line", base)

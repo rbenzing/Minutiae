@@ -24,6 +24,8 @@ func (e ev) basis() string {
 	switch {
 	case e.r.Time == nil:
 		return ""
+	case len(*e.r.Time) < len("2006-01-02T15:04:05"): // shorter than a reading: neither form (fix round 1, M8)
+		return "unrecognised"
 	case strings.HasSuffix(*e.r.Time, "Z"):
 		return "utc"
 	case !strings.ContainsAny((*e.r.Time)[10:], "Z+-"):
@@ -177,6 +179,14 @@ func TestAndroidCalendarOracleStatesTheSpecRules(t *testing.T) {
 	want("row 31", rec(31).str("timing") == "unknown" && rec(31).time() == nil)
 	// spec 6.3 and B7: an undecidable flag is stated, never deleted-by-guess and never live-by-default
 	want("rows 32 and 33", !rec(32).r.Deleted && rec(32).raw["deleted_state"] == "undecided" && !rec(33).r.Deleted && rec(33).raw["deleted_via_state"] == "undecided")
+	// spec 6.3 and C-rules (fix round 1, M1): a wrongly typed flag cell, on the event or on its calendar, is also listed
+	uc32, _ := rec(32).raw["unknown_columns"].(map[string]any)
+	uc33, _ := rec(33).raw["unknown_columns"].(map[string]any)
+	want("unknown_columns of rows 32 and 33", uc32["Events.deleted"] == "type-mismatch" && uc33["Calendars.deleted"] == "type-mismatch")
+	// spec 7.3 (fix round 1, M6): the count notes are soft_deleted and lastsynced_copies; no other count note is stated
+	notes := parsertest.LoadFixture(t, "testdata", "calendar-601").Expect.Notes
+	_, extra := notes["deleted_calendar_events"]
+	want("notes", notes["database_version"] == "601" && notes["soft_deleted"] == "1" && notes["lastsynced_copies"] == "2" && !extra)
 }
 
 // TestAndroidCalendarOracleStatesTheSchemaVersions: a version-403 database has no uid2445 column,

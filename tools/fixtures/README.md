@@ -3394,6 +3394,7 @@ zone suffix. Every variant is bundled at `/data/data/com.android.providers.calen
 | `calendar-deleted` | `601.sql` on 512-byte pages, with `-wal` | rows 1 to 6 live; rows 50 to 59 deleted onto freelist leaves (a dropped one-page table is the trunk); an `Attendees` and a `Reminders` row of event 50 written after the delete, so they survive in the live view (F17); row 6 edited twice in a WAL never checkpointed (the file and the first frame hold older images). `--recover-oracle` writes `calendar-deleted.recover.expect.json`, a lower bound: the page walker reads freelist leaves only for a lone database, so `recover_expect` walks the database file alone for rows 50 to 59 and merges that answer with the WAL one |
 
 Notes of the oracle: `database_version`, and when they apply `rows.Instances`, `meta.localTimezone`, `meta.minInstance`,
-`meta.maxInstance`, the three `cache.*` zone notes and the counts `soft_deleted`, `lastsynced_copies` and
-`deleted_calendar_events` (a zero count is not stated). The oracle's recovered rows join nothing (B2): every join state is
+`meta.maxInstance`, the three `cache.*` zone notes and the counts `soft_deleted` and `lastsynced_copies` (a zero
+count is not stated): exactly the notes spec §7.3 lists whose content it fixes. The tables-present, `unmapped_tables` and
+`unmapped_columns` notes are left to the parser task (spec §7.3 names them but not their order or form). The oracle's recovered rows join nothing (B2): every join state is
 `not-joined-recovered`; their digests use the `Z` form of every time, as the Go kit renders a time whatever its basis.

@@ -108,9 +108,10 @@ UNIT = {b"W": 604800, b"D": 86400, b"H": 3600, b"M": 60, b"S": 1}
 
 
 def parse_duration(b):
-    """(seconds, state): state "" (parsed), "unparsed", "out-of-range" or "too-long" (plan Task 3 grammar)."""
+    """(seconds, state): state "" (parsed), "unparsed" or "out-of-range" (spec 5.3 grammar). A text over 64 bytes is
+    "unparsed": the grammar is bounded at 64 bytes and the vocabulary has no other value (fix round 1, M3)."""
     if len(b) > MAX_DURATION:
-        return 0, "too-long"
+        return 0, "unparsed"
     i, n, sign = 0, len(b), 1
     if i < n and b[i:i + 1] in (b"+", b"-"):
         sign = -1 if b[i:i + 1] == b"-" else 1
@@ -307,13 +308,15 @@ def times_of(r, raw, unknown):
     return timing, start, end, sdate, edate, times
 
 
-def flag(raw, unknown, table, col, v, state_key):
-    """A deletion or sync flag (spec 6.3): 0 or 1, else undecided (and unknown_columns for an unreadable cell)."""
+def flag(raw, unknown, name, v, state_key):
+    """A deletion or sync flag (spec 6.3) of the column name ("<Table>.<col>"): 0 or 1, else undecided with
+    raw.<state_key> = "undecided" and an unknown_columns entry: "type-mismatch" for a cell of another type,
+    "out-of-set" for an INTEGER other than 0 and 1 (fix round 1, M1, M2). A stored NULL is undecided too but never
+    listed in unknown_columns (the vocabulary's rule)."""
     if is_int(v) and v in (0, 1):
         return v
-    if v is not None and not is_int(v):
-        if table == "Events":
-            unknown["Events." + col] = "type-mismatch"
+    if v is not None:
+        unknown[name] = "out-of-set" if is_int(v) else "type-mismatch"
     raw[state_key] = "undecided"
     return None
 
@@ -345,9 +348,15 @@ def expect_event(r, env, remote, file="any"):
         z = ident(raw, unknown, col, r.get(col), MAX_ZONE)
         if z:
             p[key] = z
-    d = ident(raw, unknown, "duration", r.get("duration"), MAX_DURATION) if is_text(r.get("duration")) else None
-    if d:
-        p["duration"] = d
+    # duration: the payload text when it fits 64 bytes; a longer one is never cut and never kept in the payload: its
+    # length and SHA-256 go to raw beside raw.duration_state = "unparsed" (set by times_of). raw.duration_state carries
+    # only the parse vocabulary (unparsed, out-of-range); ident's "too-long" is not used for this column (M3).
+    dv = r.get("duration")
+    if is_text(dv) and dv:
+        if len(dv) > MAX_DURATION:
+            raw["duration_len"], raw["duration_sha256"] = len(dv), hashlib.sha256(dv).hexdigest()
+        else:
+            p["duration"] = dv.decode("utf-8", errors="replace")
     title = free_text(raw, tf, "title", r.get("title"), MAX_TITLE, truncated)
     if title:
         p["title"] = title
@@ -419,7 +428,11 @@ def expect_event(r, env, remote, file="any"):
     else:
         cid = r.get("calendar_id")
         cal = env.calendars.get(cid) if is_int(cid) else None
-        if cal is None:
+        if not is_int(cid):  # an undecidable key (spec 7.3): the join is undecided, never "no row" (fix round 1, M5)
+            raw["join_undecided"] = ["Calendars"]
+            if cid is not None:
+                unknown["Events.calendar_id"] = "type-mismatch"
+        elif cal is None:
             raw["calendar_state"] = "no-calendars-row"
         else:
             cp = {"id": str(cid)}
@@ -438,19 +451,15 @@ def expect_event(r, env, remote, file="any"):
             rc = {k: jv(cal[k]) for k in CAL_RAW if cal.get(k) is not None}
             if rc:
                 raw["calendar"] = rc
-            cd = cal.get("deleted")
-            if is_int(cd) and cd in (0, 1):
-                cal_deleted = cd
-            else:
-                raw["deleted_via_state"] = "undecided"
-    ev_deleted = flag(raw, unknown, "Events", "deleted", r.get("deleted"), "deleted_state")
-    last_synced = flag(raw, unknown, "Events", "lastSynced", r.get("lastSynced"), "lastSynced_state") if "lastSynced" in r else None
+            cal_deleted = flag(raw, unknown, "Calendars.deleted", cal.get("deleted"), "deleted_via_state")
+    ev_deleted = flag(raw, unknown, "Events.deleted", r.get("deleted"), "deleted_state")
+    last_synced = flag(raw, unknown, "Events.lastSynced", r.get("lastSynced"), "lastSynced_state") if "lastSynced" in r else None
     dirty = r.get("dirty")
     if dirty is not None:
         if is_int(dirty) and dirty in (0, 1):
             raw["dirty"] = dirty
         else:
-            flag(raw, unknown, "Events", "dirty", dirty, "dirty_state")
+            flag(raw, unknown, "Events.dirty", dirty, "dirty_state")
             if is_int(dirty):
                 raw["dirty"] = dirty
     if r.get("mutators") is not None:
@@ -492,7 +501,7 @@ def expect_event(r, env, remote, file="any"):
         for k in ("attendees_state", "reminders_state", "alerts_state", "extended_properties_state", "raw_times_state"):
             raw[k] = "not-joined-recovered"
     else:
-        children(p, raw, tf, env, rid)
+        children(p, raw, tf, unknown, env, rid)
     if tf:
         raw["text_flags"] = ",".join(sorted(tf))
     if truncated:
@@ -512,14 +521,18 @@ def capped(items, key, holder):
     return items
 
 
-def children(p, raw, tf, env, rid):
+def children(p, raw, tf, unknown, env, rid):
     att, att_raw, unnamed = [], [], 0
     rows = sorted(env.children["Attendees"].get(rid, []), key=lambda x: x["rowid"])
     for a in rows:
-        e = {}
+        e, extra = {}, {}
         addr = a.get("attendeeEmail")
         if is_text(addr) and addr and len(addr) <= MAX_ID:
             e["address"] = addr.decode("utf-8", errors="replace")
+        elif is_text(addr) and addr:  # C5: never cut, never dropped silently (F27, fix round 1, M4)
+            extra = {"address_state": "too-long", "address_len": len(addr), "address_sha256": hashlib.sha256(addr).hexdigest()}
+        elif addr is not None and not is_text(addr):
+            unknown["Attendees.attendeeEmail"] = "type-mismatch"
         name = a.get("attendeeName")
         if is_text(name) and name:
             c = C.clean(name, MAX_TITLE)
@@ -527,8 +540,12 @@ def children(p, raw, tf, env, rid):
                 tf.add("attendees")
             if c.text:
                 e["name"] = c.text
+        codes = {k: jv(a[k]) for k in ("attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace")
+                 if a.get(k) is not None}
         if not e:
             unnamed += 1
+            if extra:  # F27: its raw.attendees entry keeps the address length and SHA-256 as sibling scalars
+                att_raw.append(dict(codes, **extra))
             continue
         for col, key, table in (("attendeeRelationship", "role", RELATIONSHIP), ("attendeeType", "type", ATTENDEE_TYPE),
                                 ("attendeeStatus", "status", ATTENDEE_STATUS)):
@@ -536,11 +553,11 @@ def children(p, raw, tf, env, rid):
             if v is not None:
                 e[key] = table[v] if is_int(v) and v in table else "unknown"
         att.append(e)
-        att_raw.append({k: jv(a[k]) for k in ("attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace")
-                        if a.get(k) is not None})
+        att_raw.append(dict(codes, **extra))
     att = capped(att, "attendees", p)
     if att:
         p["attendees"] = att
+    if att_raw:
         raw["attendees"] = att_raw[:MAX_LIST]
     if unnamed:
         raw["attendees_unnamed"] = unnamed
@@ -739,7 +756,9 @@ def user_version_of(ddl_name):
     return int(m.group(1))
 
 
-COUNT_NOTE = {"Events.deleted": "soft_deleted", "Events.lastSynced": "lastsynced_copies", "Calendars.deleted": "deleted_calendar_events"}
+# The count notes of spec 7.3 (soft_deleted, lastsynced_copies); spec 7.3 lists no note for the events of a deleted
+# calendar, so none is stated (fix round 1, M6).
+COUNT_NOTE = {"Events.deleted": "soft_deleted", "Events.lastSynced": "lastsynced_copies"}
 
 
 def oracle(files, ddl_name, variant, user_version, refused=False):
@@ -752,7 +771,7 @@ def oracle(files, ddl_name, variant, user_version, refused=False):
     env = Env(view)
     lone = set(files) == {"db"}
     remote, file = (REMOTE, "db") if lone else ("", "any")
-    counts = {"soft_deleted": 0, "lastsynced_copies": 0, "deleted_calendar_events": 0}
+    counts = {"soft_deleted": 0, "lastsynced_copies": 0}
     undecided = {}
     for r in view.get("Events", []):
         e = expect_event(r, env, remote, file)
@@ -767,7 +786,7 @@ def oracle(files, ddl_name, variant, user_version, refused=False):
                 undecided[col] = undecided.get(col, 0) + 1
     notes = exp["notes"]
     notes["database_version"] = str(user_version)
-    for k in ("soft_deleted", "lastsynced_copies", "deleted_calendar_events"):
+    for k in ("soft_deleted", "lastsynced_copies"):
         if counts[k]:
             notes[k] = str(counts[k])
     if view.get("Instances"):
@@ -998,12 +1017,10 @@ def recover_expect(variant, files):
     """The <variant>.recover.expect.json of a variant that has a scenario (F24): every recovered Events row is mapped with
     env None, so it joins nothing (B2, 4I3-P4). The digests use the Z form of the times (zform); the full records keep
     the oracle's time encoding (module doc)."""
-    kept = {}
-
     def expect_fn(table, d, env, file):
         rec = expect_event(d, None, "", file)
         z = zform(rec)
-        kept[id(z)] = rec
+        z["_oracle_form"] = rec  # both forms travel on the returned object; record_digest reads only the typed keys
         return z
 
     out = C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: None, expect_fn)
@@ -1020,7 +1037,7 @@ def recover_expect(variant, files):
                 written.append(w)
         out["written"] = sorted(written, key=lambda w: (w["table"], w["rowid"], json.dumps(w["values"], sort_keys=True)))
     for r in out["records"]:
-        r["record"] = kept.get(id(r["record"]), r["record"])
+        r["record"] = r["record"].pop("_oracle_form")
     return out
 
 
