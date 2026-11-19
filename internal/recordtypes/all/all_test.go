@@ -11,6 +11,7 @@ import (
 	_ "github.com/rbenzing/minutiae/internal/recordtypes/all"
 
 	// the packages again, directly: a second registration would panic at init
+	_ "github.com/rbenzing/minutiae/internal/recordtypes/calendar"
 	_ "github.com/rbenzing/minutiae/internal/recordtypes/call"
 	_ "github.com/rbenzing/minutiae/internal/recordtypes/contact"
 	_ "github.com/rbenzing/minutiae/internal/recordtypes/message"

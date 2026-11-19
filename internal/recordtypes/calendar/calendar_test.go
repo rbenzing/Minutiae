@@ -96,7 +96,8 @@ func events() map[string]calendar.Event {
 }
 
 // TestPayloadValidatorsAcceptParserOutput (calendar part): what the builder makes
-// validates, and a real records.Writer over a temp case accepts it.
+// validates, and a real records.Writer over a temp case accepts it (spec 4.1, the
+// fields and the validator cross-rules).
 func TestPayloadValidatorsAcceptParserOutput(t *testing.T) {
 	evs := events()
 	for name, e := range evs {
@@ -135,6 +136,8 @@ func TestPayloadValidatorsAcceptParserOutput(t *testing.T) {
 	}
 }
 
+// TestCalendarRegisteredValidator (spec 4: Validate installed at init through
+// records.SetValidator, payload version 1).
 func TestCalendarRegisteredValidator(t *testing.T) {
 	ti, ok := records.LookupType(calendar.Type)
 	if !ok {
@@ -155,7 +158,8 @@ func with(base calendar.Event, fn func(p map[string]any)) map[string]any {
 }
 
 // TestPayloadValidatorsRejectViolations (calendar part): one row per rule. Every
-// error names the path, and none repeats a value.
+// error names the path, and none repeats a value (spec 4.1, the fields and the
+// validator cross-rules; the year-less date rows pin 4I3-P11).
 func TestPayloadValidatorsRejectViolations(t *testing.T) {
 	const marker = "SECRET-VALUE-5521"
 	long := func(n int) string { return marker + strings.Repeat("x", n-len(marker)) }
@@ -178,6 +182,7 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 		{"start_date with timing timed", with(full(), func(p map[string]any) { p["start_date"] = "2023-11-15" }), "start_date"},
 		{"end_date with timing floating", with(floating(), func(p map[string]any) { p["end_date"] = "2023-11-15" }), "end_date"},
 		{"end_date before start_date", with(allDay(), func(p map[string]any) { p["end_date"] = "2023-11-14" }), "end_date"},
+		// 4I3-P11: an event date has a year (--MM-DD is a birthday form)
 		{"start_date without a year", with(allDay(), func(p map[string]any) { p["start_date"] = "--11-15" }), "start_date"},
 		{"end_date without a year", with(allDay(), func(p map[string]any) { p["end_date"] = "--11-16" }), "end_date"},
 		{"start_date not a date", with(allDay(), func(p map[string]any) { p["start_date"] = "2023-02-30" }), "payload.start_date"},
@@ -300,7 +305,8 @@ const v1Fixture = `{
 
 // TestCalendarEventDecodeRoundTrip: the current payload version decodes, as a round
 // trip and from a committed v1 fixture; unknown fields are ignored; any other
-// version is ErrUnsupportedPayloadVersion; a damaged payload is an error.
+// version is ErrUnsupportedPayloadVersion; a damaged payload is an error (spec 4,
+// Decode; preflight F09, the subtests of the call package).
 func TestCalendarEventDecodeRoundTrip(t *testing.T) {
 	t.Run("the version constant is the registered payload version", func(t *testing.T) {
 		ty, ok := records.LookupType(calendar.Type)
@@ -413,7 +419,8 @@ func TestCalendarEventDecodeRoundTrip(t *testing.T) {
 }
 
 // TestCalendarEventLiveIsFalseWithProvenance: an event that carries recovery,
-// snapshot or deleted provenance (even an empty object) is never live.
+// snapshot or deleted provenance (even an empty object) is never live (spec 4,
+// Live; coordinator ruling 2 and B3: a last-synced copy is Deleted, never live).
 func TestCalendarEventLiveIsFalseWithProvenance(t *testing.T) {
 	if !minimal().Live() || !allDay().Live() {
 		t.Error("a plain event is not live")
@@ -432,6 +439,8 @@ func TestCalendarEventLiveIsFalseWithProvenance(t *testing.T) {
 	}
 }
 
+// TestDateOfMidnight (spec 5.2 all-day dates, and 5.1: no zone is applied, so a
+// local midnight in another zone is no date).
 func TestDateOfMidnight(t *testing.T) {
 	mid := time.Date(2023, 11, 15, 0, 0, 0, 0, time.UTC)
 	for name, tc := range map[string]struct {
@@ -456,6 +465,8 @@ func TestDateOfMidnight(t *testing.T) {
 	}
 }
 
+// TestCalendarSummary (spec 4.2: the Summary format, its <when> by timing and the
+// Summarize bounds of title and location).
 func TestCalendarSummary(t *testing.T) {
 	at := func(y int, mo time.Month, d, h, mi, s int, b records.Basis) *records.Time {
 		return &records.Time{T: time.Date(y, mo, d, h, mi, s, 0, time.UTC), Basis: b}
@@ -521,5 +532,30 @@ func TestCalendarSummary(t *testing.T) {
 		if got := calendar.When(tc.t, tc.timing); got != tc.want {
 			t.Errorf("When(%s) = %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+// otherNumber is a number type with the method set of json.Number that is not
+// json.Number: the field check (common.KNumber) accepts it, so the range check must too.
+type otherNumber string
+
+func (n otherNumber) String() string { return string(n) }
+
+func (n otherNumber) Int64() (int64, error) { return json.Number(n).Int64() }
+
+func (n otherNumber) Float64() (float64, error) { return json.Number(n).Float64() }
+
+// TestCoordinatesReadEveryNumberTheFieldCheckAccepts (spec 4.1, location coordinates
+// in range): the range rule reads every number kind KNumber accepts, so an in-range
+// coordinate is never refused as out of range and an out-of-range one is still refused.
+func TestCoordinatesReadEveryNumberTheFieldCheckAccepts(t *testing.T) {
+	loc := func(lat, lon any) map[string]any {
+		return with(minimal(), func(p map[string]any) { p["location"] = map[string]any{"latitude": lat, "longitude": lon} })
+	}
+	if err := calendar.Validate(loc(otherNumber("45.5"), otherNumber("-180"))); err != nil {
+		t.Errorf("in-range coordinates of another number type: %v", err)
+	}
+	if err := calendar.Validate(loc(otherNumber("90.5"), otherNumber("0"))); err == nil || !strings.Contains(err.Error(), "payload.location: latitude") {
+		t.Errorf("latitude 90.5 of another number type = %v, want the range error", err)
 	}
 }

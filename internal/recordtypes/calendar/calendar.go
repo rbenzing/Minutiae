@@ -50,6 +50,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -414,7 +415,7 @@ func crossRules(m map[string]any) error {
 	if (hasStart || hasEnd) && m["timing"] != TimingAllDay {
 		return errors.New("start_date and end_date require timing all_day")
 	}
-	// a date of an event has a year (--MM-DD is a birthday form, never an event's)
+	// 4I3-P11: a date of an event has a year (--MM-DD is a birthday form, never an event's)
 	if hasStart && len(start) != len("2006-01-02") {
 		return errors.New("start_date must be a full YYYY-MM-DD date")
 	}
@@ -466,6 +467,15 @@ func coordinatesInRange(m map[string]any) error {
 	return nil
 }
 
+// numberLike is the method set by which the field check (common.KNumber) accepts
+// a json.Number; matching it here, not json.Number alone, keeps the range rule
+// reading every number the field check let through.
+type numberLike interface {
+	String() string
+	Int64() (int64, error)
+	Float64() (float64, error)
+}
+
 // number reads a finite number of a kind the field check accepted.
 func number(v any) (float64, bool) {
 	switch x := v.(type) {
@@ -477,8 +487,8 @@ func number(v any) (float64, bool) {
 		return float64(x), true
 	case uint64:
 		return float64(x), true
-	case json.Number:
-		f, err := x.Float64()
+	case numberLike:
+		f, err := strconv.ParseFloat(x.String(), 64)
 		return f, err == nil && !math.IsNaN(f) && !math.IsInf(f, 0)
 	}
 	return 0, false
