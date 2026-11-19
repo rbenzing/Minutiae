@@ -233,7 +233,7 @@ func digestRecord(h hash.Hash, r records.Record) {
 // field of records 0..1999 at seed 7 (type, times, artifact choice, deleted and recovered flags,
 // confidence and text), not only their sizes.
 func TestScaleGoldenDigest(t *testing.T) {
-	const want = "d95ba8ed35ba3c9227f422156f46a17239b577bdef4e4af84cbc6e1114240ef4"
+	const want = "c156d73e9d9ebbf69c92361dc7c91abf4426bb399e152c45eef5b1482d18bae1" // plan 4I3: calendar_event records carry ValidPayload (source, timing)
 	s, _ := scaleFixture(t, 7)
 	h := sha256.New()
 	for i := int64(0); i < 2000; i++ {

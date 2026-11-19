@@ -17,13 +17,13 @@ import (
 	_ "github.com/rbenzing/minutiae/internal/recordtypes/web"
 )
 
-var sixTypes = []string{"message", "call", "contact", "web_visit", "web_search", "download"}
+var validatedTypes = []string{"message", "call", "contact", "web_visit", "web_search", "download", "calendar_event"}
 
-// TestAllSixTypesHaveValidators: importing all installs exactly the six
-// validators, and no other core type gets one. (That the validators are set
+// TestAllValidatedTypesHaveValidators: importing all installs exactly the
+// validators of the validated types, and no other core type gets one. (That the validators are set
 // exactly once even when several packages import all is shown by this binary
 // starting at all: a second SetValidator panics at init.)
-func TestAllSixTypesHaveValidators(t *testing.T) {
+func TestAllValidatedTypesHaveValidators(t *testing.T) {
 	var with []string
 	infos := map[string]records.TypeInfo{}
 	for _, ti := range records.Types() {
@@ -32,18 +32,18 @@ func TestAllSixTypesHaveValidators(t *testing.T) {
 			with = append(with, ti.Name)
 		}
 	}
-	want := slices.Clone(sixTypes)
+	want := slices.Clone(validatedTypes)
 	slices.Sort(want)
 	slices.Sort(with)
 	if !slices.Equal(with, want) {
 		t.Errorf("types with a validator = %v, want %v", with, want)
 	}
-	for _, name := range sixTypes {
+	for _, name := range validatedTypes {
 		if ti, ok := infos[name]; !ok || ti.PayloadVersion != 1 {
 			t.Errorf("%s: registered %+v (%v)", name, ti, ok)
 		}
 	}
-	for _, name := range []string{"calendar_event", "location", "file", "event", "note"} {
+	for _, name := range []string{"location", "file", "event", "note"} {
 		if _, ok := infos[name]; !ok {
 			t.Errorf("%s is not a registered core type", name)
 		}
@@ -67,7 +67,7 @@ func TestValidPayloadPassesEveryValidator(t *testing.T) {
 	if err := w.Start(ctx, records.StartOptions{Artifacts: []string{a.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, typ := range sixTypes {
+	for _, typ := range validatedTypes {
 		p := recordstest.ValidPayload(typ)
 		if len(p) == 0 {
 			t.Errorf("ValidPayload(%q) is empty", typ)
@@ -80,7 +80,7 @@ func TestValidPayloadPassesEveryValidator(t *testing.T) {
 			t.Errorf("Add(empty %s payload) = %v, want ErrInvalidPayload", typ, err)
 		}
 	}
-	if res, err := w.End(ctx); err != nil || res.Records != int64(len(sixTypes)) || res.Rejected != len(sixTypes) {
+	if res, err := w.End(ctx); err != nil || res.Records != int64(len(validatedTypes)) || res.Rejected != len(validatedTypes) {
 		t.Fatalf("End = %+v, %v", res, err)
 	}
 }
@@ -88,7 +88,7 @@ func TestValidPayloadPassesEveryValidator(t *testing.T) {
 // TestValidPayloadIsFreshEachCall: a test may add keys to a payload, or change a
 // nested value, without touching what the next caller gets.
 func TestValidPayloadIsFreshEachCall(t *testing.T) {
-	for _, typ := range sixTypes {
+	for _, typ := range validatedTypes {
 		a := recordstest.ValidPayload(typ)
 		a["added"] = "x"
 		for k, v := range a {

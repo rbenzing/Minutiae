@@ -8,8 +8,8 @@ package recordstest
 // that those validators enforce. A test that links recordtypes/all proves the two
 // agree (TestValidPayloadPassesEveryValidator).
 //
-// The six validated types are message, call, contact, web_visit, web_search and
-// download; any other type name gets an empty map. Every call returns a new map
+// The seven validated types are message, call, contact, web_visit, web_search,
+// download and calendar_event; any other type name gets an empty map. Every call returns a new map
 // (and new nested values), so a test may add keys to it freely.
 func ValidPayload(typ string) map[string]any {
 	switch typ {
@@ -28,6 +28,8 @@ func ValidPayload(typ string) map[string]any {
 		return map[string]any{"term": "x"}
 	case "download":
 		return map[string]any{"url": "https://example.test/f"}
+	case "calendar_event":
+		return map[string]any{"source": "android_calendar", "timing": "unknown"}
 	}
 	return map[string]any{}
 }

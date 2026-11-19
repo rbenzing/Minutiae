@@ -357,6 +357,7 @@ func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {
 var recordTypePackages = map[string]bool{
 	"internal/recordtypes/message": true, "internal/recordtypes/call": true,
 	"internal/recordtypes/contact": true, "internal/recordtypes/web": true,
+	"internal/recordtypes/calendar": true,
 }
 
 // thirdPartyAllowed lists the non-stdlib, non-module packages and where each may be imported.
@@ -1284,7 +1285,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 // (the recordtypes packages are listed; the parsers and the others follow with their plans).
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
-	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
+	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/calendar", "internal/recordtypes/all",
 	"internal/decode/sqlitedb",
 	"internal/decode/sqlitedb/rowrun", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/census", "internal/decode/sqlitedb/recrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts", "internal/parsers/androidwhatsapp", "internal/parsers/androidwacontacts", "internal/parsers/ioswhatsapp",
 	"internal/parsers/iossms", "internal/parsers/ioscalls", "internal/parsers/iosaddressbook", "internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/wajid", "internal/decode/plist", "internal/decode/typedstream", "internal/decode/iosbackup",
@@ -1464,7 +1465,8 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcRTType, dirRecordtype + "/message", m + "internal/parse", false},
 		{pcRTType, dirRecordtype + "/message", m + "internal/recordtypes/common", true},
 		{pcRTType, dirRecordtype + "/message", m + "internal/recordtypes/call", false},
-		// the all package may link the four type packages, no other sibling
+		// the all package may link the five type packages, no other sibling
+		{pcRTType, dirRTAll, m + "internal/recordtypes/calendar", true},
 		{pcRTType, dirRTAll, m + "internal/recordtypes/call", true},
 		{pcRTType, dirRTAll, m + "internal/recordtypes/contact", true},
 		{pcRTType, dirRTAll, m + "internal/recordtypes/message", true},
@@ -1944,6 +1946,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/parse":                     pcParse,
 		"internal/recordtypes/common":        pcRTCommon,
 		"internal/recordtypes/message":       pcRTType,
+		"internal/recordtypes/calendar":      pcRTType,
 		"internal/recordtypes":               pcRTType,
 		"internal/decode/plist":              pcDecode,
 		"internal/decode/sqlitedb":           pcDecode,
