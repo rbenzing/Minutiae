@@ -127,6 +127,8 @@ def parse_duration(b):
                 return 0, "unparsed"
             seen_t = True
             i += 1
+            if i >= n:
+                return 0, "unparsed"  # a T must be followed by a run: "P1DT" is unparsed (Task 4, coordinator ruling d4)
             continue
         j = i
         while j < n and b[j:j + 1].isdigit():
@@ -179,10 +181,13 @@ def ident(raw, unknown, col, v, limit):
     return s or None
 
 
-def free_text(raw, tf, field, v, limit, truncated):
+def free_text(raw, tf, field, v, limit, truncated, unknown, col):
     """A cleaned free text (C4): altered or cut -> listed in raw.text_flags; cut -> truncated_fields; invalid UTF-8 or NUL
-    -> raw.<field>_raw_b64 (or _raw_sha256 when large)."""
+    -> raw.<field>_raw_b64 (or _raw_sha256 when large). A cell of another type is listed in unknown_columns as
+    "Events.<col>" (spec 5.4, 4I2-A6: a wrong type is undecided, never absent; Task 4 amendment)."""
     if not is_text(v):
+        if v is not None:
+            unknown["Events." + col] = "type-mismatch"
         return None
     c = C.clean(v, limit)
     if c.flags:
@@ -203,7 +208,8 @@ class Env:
     """The live view of the joined tables; None in the typed recovery pass (4I3-P4: a recovered row joins nothing)."""
 
     def __init__(self, view):
-        self.calendars = {r["rowid"]: r for r in view.get("Calendars", [])}
+        # None: the table is absent, so every calendar join is undecided (spec 7.3; Task 4 amendment)
+        self.calendars = {r["rowid"]: r for r in view["Calendars"]} if "Calendars" in view else None
         self.events = {r["rowid"] for r in view.get("Events", [])}
         self.children = {}
         for t in ("Attendees", "Reminders", "CalendarAlerts", "ExtendedProperties", "EventsRawTimes"):
@@ -321,14 +327,17 @@ def flag(raw, unknown, name, v, state_key):
     return None
 
 
-def labelled(raw, col, v, table, keep_raw=True):
-    """(label or None): a CalendarContract code; another value -> "unknown" with the code in raw."""
+def labelled(raw, col, v, table, unknown, keep_raw=True):
+    """(label or None): a CalendarContract code; another value -> "unknown" with the code in raw; a cell that is not an
+    INTEGER is also listed in unknown_columns (spec 5.4, 4I2-A6; Task 4 amendment)."""
     if v is None:
         return None
     if is_int(v) and v in table:
         if keep_raw:
             raw[col] = v
         return table[v]
+    if not is_int(v):
+        unknown["Events." + col] = "type-mismatch"
     raw[col] = jv(v)
     return "unknown"
 
@@ -349,22 +358,26 @@ def expect_event(r, env, remote, file="any"):
         if z:
             p[key] = z
     # duration: the payload text when it fits 64 bytes; a longer one is never cut and never kept in the payload: its
-    # length and SHA-256 go to raw beside raw.duration_state = "unparsed" (set by times_of). raw.duration_state carries
+    # length and SHA-256 go to raw beside raw.duration_state = "unparsed" (set here in every case). raw.duration_state carries
     # only the parse vocabulary (unparsed, out-of-range); ident's "too-long" is not used for this column (M3).
     dv = r.get("duration")
     if is_text(dv) and dv:
         if len(dv) > MAX_DURATION:
+            # unparsed in every case, also with no start or an unknown timing (coordinator ruling, Task 4)
+            raw["duration_state"] = "unparsed"
             raw["duration_len"], raw["duration_sha256"] = len(dv), hashlib.sha256(dv).hexdigest()
         else:
             p["duration"] = dv.decode("utf-8", errors="replace")
-    title = free_text(raw, tf, "title", r.get("title"), MAX_TITLE, truncated)
+    title = free_text(raw, tf, "title", r.get("title"), MAX_TITLE, truncated, unknown, "title")
     if title:
         p["title"] = title
-    loc = free_text(raw, tf, "location", r.get("eventLocation"), MAX_TITLE, truncated)
+    loc = free_text(raw, tf, "location", r.get("eventLocation"), MAX_TITLE, truncated, unknown, "eventLocation")
     if loc:
         p["location"] = {"text": loc}
     body = None
     desc = r.get("description")
+    if desc is not None and not is_text(desc):
+        unknown["Events.description"] = "type-mismatch"  # spec 5.4 (Task 4 amendment)
     if is_text(desc):
         c = C.clean(desc, MAX_BODY)
         body = c.text or None
@@ -376,14 +389,14 @@ def expect_event(r, env, remote, file="any"):
             p["body_raw_b64"] = c.b64
         elif c.sha:
             p["body_raw_sha256"], p["body_raw_len"] = c.sha, c.rawlen
-    st = labelled(raw, "eventStatus", r.get("eventStatus"), EVENT_STATUS)
+    st = labelled(raw, "eventStatus", r.get("eventStatus"), EVENT_STATUS, unknown)
     if st:
         p["status"] = st
     for col, key, table in (("availability", "availability", AVAILABILITY), ("accessLevel", "privacy", ACCESS_LEVEL)):
-        v = labelled(raw, col, r.get(col), table)
+        v = labelled(raw, col, r.get(col), table, unknown)
         if v:
             p[key] = v
-    ss = labelled(raw, "selfAttendeeStatus", r.get("selfAttendeeStatus"), ATTENDEE_STATUS, keep_raw=False)
+    ss = labelled(raw, "selfAttendeeStatus", r.get("selfAttendeeStatus"), ATTENDEE_STATUS, unknown, keep_raw=False)
     if ss:
         p["self_status"] = ss
     org = r.get("organizer")
@@ -403,6 +416,8 @@ def expect_event(r, env, remote, file="any"):
         p["recurrence"] = rec
     exc = {}
     oid = r.get("original_id")
+    if oid is not None and not is_int(oid):
+        unknown["Events.original_id"] = "type-mismatch"  # spec 5.4 (Task 4 amendment)
     if is_int(oid):
         exc["event_id"] = str(oid)
         if env is None:
@@ -427,10 +442,13 @@ def expect_event(r, env, remote, file="any"):
         raw["deleted_via_state"] = "not-joined-recovered"
     else:
         cid = r.get("calendar_id")
-        cal = env.calendars.get(cid) if is_int(cid) else None
-        if not is_int(cid):  # an undecidable key (spec 7.3): the join is undecided, never "no row" (fix round 1, M5)
+        cal = env.calendars.get(cid) if is_int(cid) and env.calendars is not None else None
+        if not is_int(cid) or env.calendars is None:
+            # an undecidable key or an absent table (spec 7.3): the join is undecided, never "no row" (fix round 1, M5),
+            # and so is the calendar's deletion state (B7; Task 4 amendment)
             raw["join_undecided"] = ["Calendars"]
-            if cid is not None:
+            raw["deleted_via_state"] = "undecided"
+            if cid is not None and not is_int(cid):
                 unknown["Events.calendar_id"] = "type-mismatch"
         elif cal is None:
             raw["calendar_state"] = "no-calendars-row"

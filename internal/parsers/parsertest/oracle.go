@@ -432,23 +432,20 @@ func compareRecord(t testing.TB, b Bundle, got records.Record, w ExpRecord) {
 	}
 	compareTime(t, id+" time", got.Time, w.Time)
 	compareTime(t, id+" time_end", got.TimeEnd, w.TimeEnd)
-	gotTimes := map[string]time.Time{}
+	gotTimes := map[string]records.Time{}
 	for _, nt := range got.Times {
-		if nt.Time.Basis != "" && nt.Time.Basis != records.BasisUTC {
-			t.Errorf("%s: time %s has basis %q", id, nt.Kind, nt.Time.Basis)
-		}
-		gotTimes[nt.Kind] = nt.Time.T
+		gotTimes[nt.Kind] = nt.Time
 	}
 	if len(got.Times) != len(w.Times) {
 		t.Errorf("%s: %d Times %v, want %d %v", id, len(got.Times), gotTimes, len(w.Times), w.Times)
 	}
 	for k, s := range w.Times {
-		wt, err := time.Parse(time.RFC3339Nano, s)
-		if err != nil {
-			t.Errorf("%s: oracle time %s: %v", id, k, err)
-		} else if g, ok := gotTimes[k]; !ok || !g.Equal(wt) {
-			t.Errorf("%s: time %s = %v, want %s", id, k, g, s)
+		g, ok := gotTimes[k]
+		if !ok {
+			t.Errorf("%s: no time %s, want %s", id, k, s)
+			continue
 		}
+		compareTime(t, id+" time "+k, &g, &s)
 	}
 	if w.Summary != nil && got.Summary != *w.Summary {
 		t.Errorf("%s: Summary %q, want %q", id, got.Summary, *w.Summary)
@@ -475,6 +472,13 @@ func clip(s string) string {
 	return s
 }
 
+// localReading is the layout of an oracle time written without a zone suffix: a local-unknown reading (plan 4I3,
+// the calendar oracles' time encoding), compared as the wall-clock reading of the record time.
+const localReading = "2006-01-02T15:04:05.999999999"
+
+// compareTime compares a record time with the oracle's text, by the basis the text states: with a zone ("Z" or an
+// offset) it is an instant, and the record time must be that instant with basis utc (or unset); without one it is a
+// local-unknown reading, and the record time must have basis local-unknown, no offset and that wall-clock reading.
 func compareTime(t testing.TB, label string, got *records.Time, want *string) {
 	t.Helper()
 	switch {
@@ -482,9 +486,20 @@ func compareTime(t testing.TB, label string, got *records.Time, want *string) {
 	case got == nil || want == nil:
 		t.Errorf("%s: got %v, want %v", label, got, want)
 	default:
-		wt, err := time.Parse(time.RFC3339Nano, *want)
-		if err != nil || !got.T.Equal(wt) || (got.Basis != "" && got.Basis != records.BasisUTC) {
-			t.Errorf("%s: got %v (%q), want %s", label, got.T, got.Basis, *want)
+		if wt, err := time.Parse(time.RFC3339Nano, *want); err == nil {
+			if !got.T.Equal(wt) || (got.Basis != "" && got.Basis != records.BasisUTC) {
+				t.Errorf("%s: got %v (%q), want %s", label, got.T, got.Basis, *want)
+			}
+			return
+		}
+		wt, err := time.Parse(localReading, *want)
+		switch {
+		case err != nil:
+			t.Errorf("%s: the oracle time %q is neither an instant nor a local reading: %v", label, *want, err)
+		case got.Basis != records.BasisLocalUnknown || got.OffsetMin != 0:
+			t.Errorf("%s: got basis %q offset %d, want the local-unknown reading %s", label, got.Basis, got.OffsetMin, *want)
+		case got.T.UTC().Format(localReading) != wt.Format(localReading):
+			t.Errorf("%s: got the reading %s, want %s", label, got.T.UTC().Format(localReading), *want)
 		}
 	}
 }

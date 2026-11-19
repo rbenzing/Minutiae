@@ -43,8 +43,8 @@ type Parser struct{}
 var _ parse.RowMapper = Parser{}
 
 // Meta describes the parser. The one primary glob ends in calendar.db, so a -wal, -journal or -shm file is never a
-// primary (4I-R21); it reaches the job only as the companion of its primary. No table is claimed until the Events
-// mapping is total (plan 4I3 Task 6).
+// primary (4I-R21); it reaches the job only as the companion of its primary. No table is claimed until the typed
+// recovery of Events is tested (plan 4I3 Task 6).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android calendar (calendar provider)",
@@ -58,8 +58,9 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings are the per-table mappings (none until the Events mapping, plan 4I3 Task 4).
-func (Parser) Mappings() []parse.TableMapping { return nil }
+// Mappings is the typed pass's mapping: Events with no Parse context, so a recovered row joins no table and says so
+// (4I3-P4, B2).
+func (Parser) Mappings() []parse.TableMapping { return []parse.TableMapping{eventMappingWith(nil)} }
 
 // The reasons of Probe (byte-exact, plan 4I3 "Probe reasons").
 const (
@@ -116,6 +117,12 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 	companion := wal || jr
 	main := sqlitedb.Files{DB: in.Primary.R, DBSize: in.Primary.Size}
 	db, err := sqlitedb.Open(ctx, main, in.Budget)
+	if cerr := ctx.Err(); cerr != nil { // a cancel or a deadline is the caller's, never a deferral (Task 4 ruling e)
+		if err == nil {
+			db.Release()
+		}
+		return parse.Applicability{}, cerr
+	}
 	switch {
 	case errors.Is(err, sqlitedb.ErrEncrypted): // before ErrNotSQLite, which it also wraps
 		if provider {
@@ -196,52 +203,84 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 	return f, nil
 }
 
-// Parse checks the live view's user version (B4, 4I3-P6) and, at the provider path, that Events exists, before any
-// mapping runs; both refusals fail the job with no record.
+// Parse checks the live view (its user version, B4, 4I3-P6; at the provider path that Events exists; Events' required
+// columns and rowid alias; the join tables) before any mapping runs, then maps Events. The step is Identifying
+// elsewhere (a database of another kind is not applicable there) and reads through the join guard. Records pass
+// through a counting emitter: the mapping cannot warn, so after rowrun.Run Parse warns once per undecided flag
+// column and once per table with an undecided join (4I3-P9, B9).
 func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
-	if in == nil || in.Primary.R == nil {
+	if in == nil || out == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
 	}
 	files, err := filesOf(in)
 	if err != nil {
 		return err
 	}
-	if err := checkLiveView(ctx, in, files); err != nil {
+	g, err := checkLiveView(ctx, in, files, out)
+	if err != nil {
 		return err
 	}
-	if _, err := rowrun.Run(ctx, in, out, nil); err != nil {
+	e := &env{}
+	if g != nil {
+		e.Guard = *g
+	}
+	ce := newCountingEmitter(out)
+	step := rowrun.Step{Mapping: eventMappingWith(e), Identifying: classifyPlace(in.Primary.Logical) == placeOther}
+	if _, err := rowrun.Run(ctx, in, ce, []rowrun.Step{step}); err != nil {
 		return fmt.Errorf("android.calendar: %w", err)
 	}
-	return nil
+	return ce.warn(ctx)
 }
 
-// checkLiveView opens the live view once: its user version must be in the band, and at the provider path it must
-// hold a readable Events table. An Events that the schema does not show is absent only when the schema was read
-// whole; otherwise its presence is unknown (ErrSchemaIncomplete). Every other failure to read Events is returned.
-func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files) error {
+// requiredEvents are the identifying columns of Events (spec 7.2).
+func requiredEvents() []string {
+	var out []string
+	for _, c := range eventSpecs() {
+		if c.Required {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+// checkLiveView opens the live view once: its user version must be in the band; an Events table must have its
+// required columns and _id as the rowid alias (Probe deferred these checks beside a companion), and then the join
+// tables are checked (the guard). At the provider path Events must exist: it is absent only when the schema was read
+// whole and the census saw no table of that name; otherwise its presence is unknown (ErrSchemaIncomplete), and a
+// census that saw one makes any failure to open it an error, never ErrNoEventsTable. Elsewhere a live view without
+// Events is left to the identifying step (nil guard).
+func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, out parse.Emitter) (*joinGuard, error) {
 	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
-		return fmt.Errorf("android.calendar: %w", err)
+		return nil, fmt.Errorf("android.calendar: %w", err)
 	}
 	defer db.Release()
 	if v := db.Info().Header.UserVersion; !inBand(v) {
-		return fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)
+		return nil, fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)
 	}
-	if classifyPlace(in.Primary.Logical) != placeProvider {
-		return nil // elsewhere a database without Events is of another kind (the identifying step, plan 4I3 Task 4)
-	}
-	_, err = db.Table(ctx, "Events", nil, nil)
-	if err == nil {
-		return nil
+	provider := classifyPlace(in.Primary.Logical) == placeProvider
+	t, err := db.Table(ctx, tableEvents, requiredEvents(), nil)
+	switch {
+	case err == nil:
+		if i := t.Col("_id"); i < 0 || !t.Cols()[i].RowidAlias {
+			return nil, fmt.Errorf("android.calendar: %w", &sqlitedb.UnsupportedSchemaError{Table: tableEvents, Reason: "column _id is not the rowid alias"})
+		}
+		return checkJoinSchema(ctx, db, out)
+	case !provider && errors.Is(err, sqlitedb.ErrNoSuchTable):
+		return nil, nil // a database of another kind: the identifying step states it
+	case !provider:
+		return nil, fmt.Errorf("android.calendar: Events: %w", err)
 	}
 	rep, cerr := census.Take(ctx, files, in.Budget, nil)
 	switch {
 	case cerr != nil:
-		return fmt.Errorf("android.calendar: Events: %w (the schema census failed: %w)", err, cerr)
-	case !hasEvents(rep.Objects) && rep.SchemaSkipped > 0:
-		return fmt.Errorf("%w: %w", ErrSchemaIncomplete, err)
+		return nil, fmt.Errorf("android.calendar: Events: %w (the schema census failed: %w)", err, cerr)
+	case hasEvents(rep.Objects):
+		return nil, fmt.Errorf("android.calendar: Events: %w", err) // the census saw it: never "absent" (Task 4 ruling f)
+	case rep.SchemaSkipped > 0:
+		return nil, fmt.Errorf("%w: %w", ErrSchemaIncomplete, err)
 	case errors.Is(err, sqlitedb.ErrNoSuchTable):
-		return ErrNoEventsTable
+		return nil, ErrNoEventsTable
 	}
-	return fmt.Errorf("android.calendar: Events: %w", err)
+	return nil, fmt.Errorf("android.calendar: Events: %w", err)
 }

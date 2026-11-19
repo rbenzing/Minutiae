@@ -326,10 +326,11 @@ var stdAllow = map[string]classSet{
 // stdDirAllow lists the standard packages that one directory alone may import beyond what its class gets from
 // stdAllow. android.whatsapp.msgstore records the SHA-256 of a view's SQL in a note (plan 4I-R4 h), so that the
 // examiner can recognise the app's own view text without the parser ever reading it as code. ios.whatsapp.chats
-// records the length and SHA-256 of the blobs it never decodes (plan 4I2, spec 8). Every other parser is without a
-// digest, so the parser class as a whole stays without crypto/sha256.
+// records the length and SHA-256 of the blobs it never decodes (plan 4I2, spec 8). android.calendar records the length
+// and SHA-256 of an identifier it never cuts (plan 4I3, spec 9: ident in text.go is the first use, F11). Every other
+// parser is without a digest, so the parser class as a whole stays without crypto/sha256.
 var stdDirAllow = map[string]map[string]bool{
-	"crypto/sha256": {"internal/parsers/androidwhatsapp": true, "internal/parsers/ioswhatsapp": true},
+	"crypto/sha256": {"internal/parsers/androidwhatsapp": true, "internal/parsers/ioswhatsapp": true, "internal/parsers/androidcalendar": true},
 }
 
 func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {

@@ -139,6 +139,54 @@ func TestAssertMatchesOracleAnyFileAndTableFilter(t *testing.T) {
 	}
 }
 
+// Plan 4I3 (coordinator ruling on the oracle time encoding): an oracle time written without a zone suffix is a
+// local-unknown reading. It matches only a record time of basis local-unknown whose wall-clock reading is that text;
+// a utc instant at the same reading, or another reading, is refused. A time with "Z" keeps its utc meaning, so a
+// local-unknown record time never matches it. The same holds for Times.
+func TestAssertMatchesOracleReadsALocalUnknownTime(t *testing.T) {
+	local := func(s string) *records.Time {
+		lt, err := time.Parse("2006-01-02T15:04:05", s)
+		if err != nil {
+			panic(err)
+		}
+		return &records.Time{T: lt, Basis: records.BasisLocalUnknown}
+	}
+	base := func() (Result, Expect) {
+		res := Result{Records: []records.Record{goodRecord()}, Notes: map[string]string{"schema.sms": "columns:3"}}
+		exp := goodExpect()
+		res.Records[0].Time = local("2023-11-15T00:00:00")
+		res.Records[0].Times = []records.NamedTime{{Kind: "original_start", Time: *local("2023-11-16T00:00:00")}}
+		exp.Records[0].Time = sp("2023-11-15T00:00:00")
+		exp.Records[0].Times = map[string]string{"original_start": "2023-11-16T00:00:00"}
+		return res, exp
+	}
+	res, exp := base()
+	rec := &recorder{TB: t}
+	AssertMatchesOracle(rec, res, oracleBundle(), exp)
+	if rec.Failed() {
+		t.Errorf("a matching local-unknown run was refused: %v", rec.errs)
+	}
+	mutate := map[string]func(*Result, *Expect){
+		"utc instant for a local reading":   func(r *Result, _ *Expect) { r.Records[0].Time = utc("2023-11-15T00:00:00Z") },
+		"another reading":                   func(r *Result, _ *Expect) { r.Records[0].Time = local("2023-11-15T01:00:00") },
+		"local reading for a utc instant":   func(_ *Result, e *Expect) { e.Records[0].Time = sp("2023-11-15T00:00:00Z") },
+		"an offset on a local reading":      func(r *Result, _ *Expect) { r.Records[0].Time.OffsetMin = 60 },
+		"utc Times for a local reading":     func(r *Result, _ *Expect) { r.Records[0].Times[0].Time = *utc("2023-11-16T00:00:00Z") },
+		"local Times for a utc instant":     func(_ *Result, e *Expect) { e.Records[0].Times["original_start"] = "2023-11-16T00:00:00Z" },
+		"another Times reading":             func(r *Result, _ *Expect) { r.Records[0].Times[0].Time = *local("2023-11-17T00:00:00") },
+		"a reading the oracle cannot parse": func(_ *Result, e *Expect) { e.Records[0].Time = sp("2023-11-15") },
+	}
+	for name, mut := range mutate {
+		res, exp := base()
+		mut(&res, &exp)
+		rec := &recorder{TB: t}
+		AssertMatchesOracle(rec, res, oracleBundle(), exp)
+		if !rec.Failed() {
+			t.Errorf("%s: the difference was not noticed", name)
+		}
+	}
+}
+
 // Ruling T15: under a table filter a reader warning is compared on both sides, never dropped from one.
 func TestAssertMatchesOracleComparesReaderWarningsUnderATableFilter(t *testing.T) {
 	reader := Warning{Locator: "sqlite:file=journal;page=0;offset=0", Reason: "journal-hot: a hot journal was applied in memory"}

@@ -2,6 +2,7 @@ package androidcalendar_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"strconv"
@@ -84,9 +85,6 @@ func TestMetaIsValid(t *testing.T) {
 	}
 	if len(m.Claims) != 0 {
 		t.Errorf("claims %v: none until the mapping is total (plan 4I3 Task 6)", m.Claims)
-	}
-	if (androidcalendar.Parser{}).Mappings() != nil {
-		t.Error("Mappings is not nil before the Events mapping exists (plan 4I3 Task 4)")
 	}
 }
 
@@ -314,5 +312,44 @@ func TestAndroidCalendarUserVersionBand(t *testing.T) {
 	res := parseAt(t, remoteProvider, other)
 	if !errors.Is(res.Err, androidcalendar.ErrUnsupportedVersion) || len(res.Records) != 0 {
 		t.Errorf("calendar-otherversion with an empty -wal: Parse err %v, %d records; want ErrUnsupportedVersion and none", res.Err, len(res.Records))
+	}
+}
+
+// Plan 4I3 Task 4 (coordinator rulings e, f and checks b, c on Task 3's Probe and Parse).
+func TestAndroidCalendarParseChecksTheLiveView(t *testing.T) {
+	// e: with a companion, a cancel during the open of the main file is the caller's, never a deferral
+	h := parsertest.NewHarness(t)
+	p := androidcalendar.Parser{}
+	in := inputAt(t, h, p, remoteProvider, map[string][]byte{"db": goBuilt(601, eventsDDL), "wal": {}}, true)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got, err := p.Probe(ctx, in); !errors.Is(err, context.Canceled) {
+		t.Errorf("Probe with a cancelled context and a companion = %+v, %v; want context.Canceled", got, err)
+	}
+	// f: a table the census matches as Events (Unicode case folding: "Eventſ") that the engine does not name Events is
+	// never "no Events table": the census saw one
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
+	b.CreateTable("Eventſ", `CREATE TABLE "Eventſ" (_id INTEGER PRIMARY KEY, calendar_id INTEGER, dtstart INTEGER, allDay INTEGER, deleted INTEGER)`)
+	res := parseAt(t, remoteProvider, map[string][]byte{"db": b.Bytes(), "wal": {}})
+	if res.Err == nil || errors.Is(res.Err, androidcalendar.ErrNoEventsTable) || len(res.Records) != 0 {
+		t.Errorf("Eventſ: Parse err %v, %d records; want an error that is not ErrNoEventsTable", res.Err, len(res.Records))
+	}
+	// b: under a deferral, an Events lacking a required column or the rowid alias fails the job at either place
+	noDeleted := goBuilt(601, `CREATE TABLE Events (_id INTEGER PRIMARY KEY AUTOINCREMENT, calendar_id INTEGER NOT NULL, dtstart INTEGER,
+allDay INTEGER NOT NULL DEFAULT 0, title TEXT)`)
+	noAlias := goBuilt(601, `CREATE TABLE Events (_id INTEGER, calendar_id INTEGER NOT NULL, dtstart INTEGER, allDay INTEGER, deleted INTEGER)`)
+	for name, db := range map[string][]byte{"no deleted": noDeleted, "no alias": noAlias} {
+		for _, remote := range []string{remoteProvider, remoteOther} {
+			res := parseAt(t, remote, map[string][]byte{"db": db, "wal": {}})
+			var us *sqlitedb.UnsupportedSchemaError
+			if !errors.As(res.Err, &us) || len(res.Records) != 0 {
+				t.Errorf("%s at %s: Parse err %v, %d records; want the unsupported-schema error and none", name, remote, res.Err, len(res.Records))
+			}
+		}
+	}
+	// c: elsewhere a database without Events is of another kind: no record, no error
+	res = parseAt(t, remoteOther, fixtureFiles(t, "calendar-noevents"))
+	if res.Err != nil || len(res.Records) != 0 || res.Notes["not_applicable"] == "" {
+		t.Errorf("calendar-noevents at %s: Parse err %v, %d records, notes %v", remoteOther, res.Err, len(res.Records), res.Notes)
 	}
 }
