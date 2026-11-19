@@ -361,6 +361,11 @@ def expect_event(r, env, remote, file="any"):
     # length and SHA-256 go to raw beside raw.duration_state = "unparsed" (set here in every case). raw.duration_state carries
     # only the parse vocabulary (unparsed, out-of-range); ident's "too-long" is not used for this column (M3).
     dv = r.get("duration")
+    if dv is not None and not is_text(dv):
+        # a cell of another type is listed and kept as stored in every case, whether or not an end depends on it
+        # (spec 5.4, C1; Task 4 fix round 1, I1)
+        unknown["Events.duration"] = "type-mismatch"
+        raw["duration"] = jv(dv)
     if is_text(dv) and dv:
         if len(dv) > MAX_DURATION:
             # unparsed in every case, also with no start or an unknown timing (coordinator ruling, Task 4)

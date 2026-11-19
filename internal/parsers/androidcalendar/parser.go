@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/census"
@@ -174,15 +173,36 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 	return got, nil
 }
 
-// hasEvents says the census saw a table named Events (the engine's name match is ASCII case-insensitive). A virtual
-// Events counts: it exists, and rowrun.Probe states that it cannot be read.
+// hasEvents says the census saw a table named Events, matched as the engine matches names: ASCII case-insensitive
+// only, so a name that folds to Events only under Unicode rules ("Eventſ") is not Events (coordinator ruling C2). A
+// virtual Events counts: it exists, and rowrun.Probe states that it cannot be read.
 func hasEvents(objs []census.Object) bool {
 	for _, o := range objs {
-		if o.Type == "table" && strings.EqualFold(o.Name, "Events") {
+		if o.Type == "table" && asciiEqualFold(o.Name, tableEvents) {
 			return true
 		}
 	}
 	return false
+}
+
+// asciiEqualFold compares two names folding the ASCII letters only, as SQLite does.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 // filesOf is the bundle of the input: the database and its companions.
@@ -272,15 +292,24 @@ func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, o
 		return nil, fmt.Errorf("android.calendar: Events: %w", err)
 	}
 	rep, cerr := census.Take(ctx, files, in.Budget, nil)
-	switch {
-	case cerr != nil:
+	if cerr != nil {
 		return nil, fmt.Errorf("android.calendar: Events: %w (the schema census failed: %w)", err, cerr)
-	case hasEvents(rep.Objects):
-		return nil, fmt.Errorf("android.calendar: Events: %w", err) // the census saw it: never "absent" (Task 4 ruling f)
-	case rep.SchemaSkipped > 0:
-		return nil, fmt.Errorf("%w: %w", ErrSchemaIncomplete, err)
-	case errors.Is(err, sqlitedb.ErrNoSuchTable):
-		return nil, ErrNoEventsTable
 	}
-	return nil, fmt.Errorf("android.calendar: Events: %w", err)
+	return nil, eventsAbsence(err, rep)
+}
+
+// eventsAbsence reads err, the failure to open Events at the provider path, against the schema census: a census that
+// saw Events makes any failure an error that wraps it, never "absent" (Task 4 ruling f); no Events in a schema read in
+// part is ErrSchemaIncomplete (unknown, never absent); no Events in a schema read whole and no such table is
+// ErrNoEventsTable; any other failure is returned wrapped.
+func eventsAbsence(err error, rep census.Report) error {
+	switch {
+	case hasEvents(rep.Objects):
+		return fmt.Errorf("android.calendar: Events: %w", err)
+	case rep.SchemaSkipped > 0:
+		return fmt.Errorf("%w: %w", ErrSchemaIncomplete, err)
+	case errors.Is(err, sqlitedb.ErrNoSuchTable):
+		return ErrNoEventsTable
+	}
+	return fmt.Errorf("android.calendar: Events: %w", err)
 }

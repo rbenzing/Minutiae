@@ -85,6 +85,9 @@ func mapEvent(m parse.MapContext, row parse.Row, e *env, names []string) ([]reco
 		return nil, err
 	}
 	raw, unknown := map[string]any{}, map[string]any{}
+	if fl := rowrun.DamageFlags(row); fl != nil {
+		raw["row_flags"] = fl // the decoder's row-level damage (fix round 1, M2)
+	}
 	r := cells{row: row, c: rowrun.Resolve(m, tableEvents, names...), raw: raw, unknown: unknown, prefix: unknownPrefix}
 	ev := calendar.Event{Source: sourceAndroid}
 	if id, ok := row.Rowid(); ok {
@@ -158,11 +161,25 @@ func mapEvent(m parse.MapContext, row parse.Row, e *env, names []string) ([]reco
 
 // readDuration keeps the stored duration text (spec 4.1, at most 64 bytes, never cut). A longer text is not in the
 // payload: its length and SHA-256 are in raw and raw.duration_state is "unparsed" in every case, also with no start
-// or an unknown timing (coordinator ruling on the oracle, Task 4).
+// or an unknown timing (coordinator ruling on the oracle, Task 4). A cell of another class or an unreadable one is
+// listed in unknown_columns in every case, a readable one kept as stored in raw.duration (spec 5.4, C1).
 func readDuration(r cells, ev *calendar.Event) {
-	b, k := textCellOf(r.row, r.c.At("duration"))
-	if k != rowrun.CellValue || len(b) == 0 {
-		return // an unreadable cell is listed by readTimes when the end depends on it
+	col := r.c.At("duration")
+	b, k := textCellOf(r.row, col)
+	switch k {
+	case rowrun.CellOther, rowrun.CellUnknown:
+		// listed and kept as stored whether or not an end depends on it (fix round 1, I1; the key is readTimes' own)
+		rowrun.Flag(r.unknown, r.row, r.prefix+"duration", col, k)
+		if v, ok := r.stored("duration"); ok {
+			r.raw["duration"] = v
+		}
+		return
+	case rowrun.CellValue:
+	default:
+		return
+	}
+	if len(b) == 0 {
+		return
 	}
 	if len(b) > maxDurationLen {
 		r.raw["duration_state"] = durUnparsed
@@ -294,7 +311,7 @@ const (
 	jRecovered                  // a recovered row: no join is made (B2)
 )
 
-// getRow returns the state of the Get join of table at rowid (and the row when found). A recovered row (nil env)
+// getRowAt returns the state of the Get join of table at rowid (and the row when found). A recovered row (nil env)
 // joins nothing. A table the database lacks is undecided, not a miss; every other error is fatal.
 func getRowAt(m parse.MapContext, e *env, table string, id int64) (parse.Row, joinState, error) {
 	if e == nil {
@@ -313,6 +330,7 @@ func getRowAt(m parse.MapContext, e *env, table string, id int64) (parse.Row, jo
 	return row, jFound, nil
 }
 
+// getRow is getRowAt for a join that needs only its state.
 func getRow(m parse.MapContext, e *env, table string, id int64) (joinState, error) {
 	_, st, err := getRowAt(m, e, table, id)
 	return st, err

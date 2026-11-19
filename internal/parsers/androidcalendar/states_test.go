@@ -5,8 +5,11 @@ import (
 	"encoding/hex"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
 const tM = int64(1700006400000) // 2023-11-15T00:00:00Z
@@ -88,13 +91,24 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 		},
 		// text (C4): a wrongly typed free text is listed, never absent silently
 		{35, map[string]any{"title": []byte{1, 2}}, map[string]any{"unknown_columns": map[string]any{"Events.title": "type-mismatch"}}, map[string]any{"title": nil}},
+		// a wrongly typed duration is listed and kept as stored even when no end is computed (fix round 1, I1)
+		{36, map[string]any{"allDay": int64(2), "duration": int64(5)}, map[string]any{"duration": int64(5), "unknown_columns": map[string]any{"Events.duration": "type-mismatch"}}, map[string]any{"duration": nil}},
+		{37, map[string]any{"dtstart": nil, "duration": []byte{1, 2, 3}}, map[string]any{"duration": map[string]any{"blob_b64": "AQID"}, "unknown_columns": map[string]any{"Events.duration": "type-mismatch"}}, nil},
+		// an intact row states no decoder damage (fix round 1, M2)
+		{38, nil, map[string]any{"row_flags": nil}, nil},
 	}
 	var rows []row
 	for _, c := range cases {
 		rows = append(rows, row{c.id, c.kw})
 	}
 	cals := []row{{1, nil}, {3, map[string]any{"calendar_displayName": "Odd", "deleted": int64(7)}}}
-	p := parseBuilt(t, buildCalendarDB(t, rows, cals), false)
+	// row 90: a record whose body is longer than its header says (the decoder's length_mismatch): _id NULL, _sync_id
+	// NULL, dirty 0, mutators NULL, lastSynced 0, calendar_id 1, then one byte too many (fix round 1, M2)
+	damaged := func(tb *sqlitetest.Table) { tb.InsertRaw(90, []uint64{0, 0, 1, 0, 1, 1}, []byte{0, 0, 1, 'Z'}) }
+	p := parseBuilt(t, buildCalendarDBWith(t, rows, cals, damaged), false)
+	if f, _ := rawOf(p.rec(t, 90))["row_flags"].([]any); !slices.Contains(f, any("length_mismatch")) {
+		t.Errorf("row 90: raw.row_flags %v, want length_mismatch (raw %v)", f, rawOf(p.rec(t, 90)))
+	}
 	for _, c := range cases {
 		r := p.rec(t, c.id)
 		raw := rawOf(r)
@@ -113,6 +127,29 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 	}
 	if w := warningsWith(p.res, "calendar-flag-undecided"); len(w) != 4 {
 		t.Errorf("flag warnings %v, want one each for Events.deleted, Events.lastSynced, Events.dirty, Calendars.deleted", w)
+	}
+
+	// the typed pass (Mappings, no Parse context, 4I3-P4, B2): a row joins nothing and each join-derived state says so;
+	// the row's own flags are stated as in a live parse (fix round 1, M3)
+	typed := mapTyped(t, buildCalendarDB(t, []row{
+		{1, map[string]any{"original_id": int64(1), "originalInstanceTime": tD, "originalAllDay": int64(0)}},
+		{2, map[string]any{"calendar_id": int64(3), "deleted": int64(1)}},
+	}, cals))
+	for id, w := range map[int64]map[string]any{
+		1: {"calendar_state": "not-joined-recovered", "deleted_via_state": "not-joined-recovered", "original_state": "not-joined-recovered", "calendar": nil, "join_undecided": nil},
+		2: {"calendar_state": "not-joined-recovered", "deleted_via_state": "not-joined-recovered", "original_state": nil, "deleted_via": nil},
+	} {
+		r, ok := typed[id]
+		if !ok {
+			t.Fatalf("typed pass: no record for row %d", id)
+		}
+		for k, v := range w {
+			check(t, id, "typed raw."+k, rawOf(r), k, v)
+		}
+		check(t, id, "typed calendar", r.Payload, "calendar", nil)
+	}
+	if r := typed[2]; !r.Deleted || objOf(r, "deleted")["source"] != "Events.deleted" || rawOf(r)["deletion_also"] != nil {
+		t.Errorf("typed row 2: Deleted %v, deleted %v, deletion_also %v (its own flag decides; the calendar is not joined)", r.Deleted, r.Payload["deleted"], rawOf(r)["deletion_also"])
 	}
 
 	// an absent Calendars table under a -wal (Probe deferred): every calendar join is undecided, never "no row", and

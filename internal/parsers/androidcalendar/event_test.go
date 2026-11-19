@@ -1,6 +1,7 @@
 package androidcalendar_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -379,13 +381,23 @@ func insertRows(tb *sqlitetest.Table, cols []string, defaults map[string]any, ro
 // nil, the 601 Calendars table.
 func buildCalendarDB(t *testing.T, events, calendars []row) []byte {
 	t.Helper()
+	return buildCalendarDBWith(t, events, calendars, nil)
+}
+
+// buildCalendarDBWith is buildCalendarDB with extra rows written by more into the Events table (InsertRaw).
+func buildCalendarDBWith(t *testing.T, events, calendars []row, more func(*sqlitetest.Table)) []byte {
+	t.Helper()
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
 	if calendars != nil {
 		ddl := snapshotDDL(t, "Calendars")
 		insertRows(b.CreateTable("Calendars", ddl), columnsOf(ddl), calendarDefaults(), calendars)
 	}
 	ddl := snapshotDDL(t, "Events")
-	insertRows(b.CreateTable("Events", ddl), columnsOf(ddl), eventDefaults(), events)
+	tb := b.CreateTable("Events", ddl)
+	insertRows(tb, columnsOf(ddl), eventDefaults(), events)
+	if more != nil {
+		more(tb)
+	}
 	return b.Bytes()
 }
 
@@ -417,4 +429,46 @@ func TestMappingsAreTheEventsTable(t *testing.T) {
 	if fmt.Sprint(req) != "[_id calendar_id dtstart allDay deleted]" {
 		t.Errorf("required columns %v (spec 7.2)", req)
 	}
+}
+
+// noteSink is the Notes of a mapping Context in a test: the typed pass's mapping writes none.
+type noteSink struct{}
+
+func (noteSink) Note(string, string) {}
+
+// mapTyped runs the typed pass's mapping (Mappings()[0], no Parse context, 4I3-P4) over every live Events row of a
+// Go-built database stored at the provider path, and returns the records by rowid.
+func mapTyped(t *testing.T, db []byte) map[int64]records.Record {
+	t.Helper()
+	h := parsertest.NewHarness(t)
+	p := androidcalendar.Parser{}
+	in := inputAt(t, h, p, remoteProvider, map[string][]byte{"db": db}, false)
+	d, err := sqlitedb.Open(t.Context(), sqlitedb.Files{DB: bytes.NewReader(db), DBSize: int64(len(db))}, in.Budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Release()
+	mc := sqlitedb.NewContext(t.Context(), d, in, noteSink{})
+	defer mc.Close()
+	m := p.Mappings()[0]
+	tab, err := d.Table(t.Context(), m.Table, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[int64]records.Record{}
+	err = tab.Scan(t.Context(), func(row sqlitedb.Row) error {
+		recs, err := m.Map(mc, row)
+		if err != nil {
+			return err
+		}
+		id, _ := row.Rowid()
+		for _, r := range recs {
+			out[id] = r
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

@@ -326,13 +326,16 @@ func TestAndroidCalendarParseChecksTheLiveView(t *testing.T) {
 	if got, err := p.Probe(ctx, in); !errors.Is(err, context.Canceled) {
 		t.Errorf("Probe with a cancelled context and a companion = %+v, %v; want context.Canceled", got, err)
 	}
-	// f: a table the census matches as Events (Unicode case folding: "Eventſ") that the engine does not name Events is
-	// never "no Events table": the census saw one
+	// coordinator ruling C2: table names fold ASCII only, as the engine does, so "Eventſ" (U+017F) is not Events:
+	// Probe and Parse both say there is no Events table (ruling f itself is pinned by TestEventsAbsenceFollowsTheCensus)
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
 	b.CreateTable("Eventſ", `CREATE TABLE "Eventſ" (_id INTEGER PRIMARY KEY, calendar_id INTEGER, dtstart INTEGER, allDay INTEGER, deleted INTEGER)`)
+	if got := probeAt(t, remoteProvider, map[string][]byte{"db": b.Bytes()}); got.Status != parse.UnsupportedSchema || got.Reason != "no Events table at the calendar provider path" {
+		t.Errorf("Eventſ: Probe = %+v, want no Events table", got)
+	}
 	res := parseAt(t, remoteProvider, map[string][]byte{"db": b.Bytes(), "wal": {}})
-	if res.Err == nil || errors.Is(res.Err, androidcalendar.ErrNoEventsTable) || len(res.Records) != 0 {
-		t.Errorf("Eventſ: Parse err %v, %d records; want an error that is not ErrNoEventsTable", res.Err, len(res.Records))
+	if !errors.Is(res.Err, androidcalendar.ErrNoEventsTable) || len(res.Records) != 0 {
+		t.Errorf("Eventſ: Parse err %v, %d records; want ErrNoEventsTable", res.Err, len(res.Records))
 	}
 	// b: under a deferral, an Events lacking a required column or the rowid alias fails the job at either place
 	noDeleted := goBuilt(601, `CREATE TABLE Events (_id INTEGER PRIMARY KEY AUTOINCREMENT, calendar_id INTEGER NOT NULL, dtstart INTEGER,
