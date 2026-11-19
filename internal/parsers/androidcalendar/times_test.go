@@ -195,6 +195,7 @@ func TestAndroidCalendarEndFollowsProviderRule(t *testing.T) {
 		evRow{101, map[string]any{"dtend": nil, "duration": "P" + string(bytes.Repeat([]byte("1"), 70)) + "S"}},
 		evRow{102, map[string]any{"dtstart": ms2100m, "dtend": nil, "duration": "P2D"}},
 		evRow{103, map[string]any{"dtend": tD + tH, "duration": "PT1H"}},
+		evRow{104, map[string]any{"dtend": int64(0), "duration": "PT1H"}},
 	)
 	expect(t, "row 1", got[1], "timed", utcAt(tD), utcAt(tD+tH), "", "", map[string]any{"time_end_basis": "dtend", "dtstart": tD, "dtend": tD + tH, "end_state": nil})
 	expect(t, "row 2", got[2], "timed", utcAt(tD), utcAt(tD+tH), "", "", map[string]any{"time_end_basis": "dtstart+duration", "end_conflict": nil})
@@ -213,9 +214,12 @@ func TestAndroidCalendarEndFollowsProviderRule(t *testing.T) {
 	expect(t, "none stored", got[100], "timed", utcAt(tD), nil, "", "", map[string]any{"end_state": "none-stored", "time_end_basis": nil})
 	// a duration over 64 bytes is unparsed (coordinator ruling on the oracle: duration_state takes only unparsed or out-of-range)
 	expect(t, "duration too long", got[101], "timed", utcAt(tD), nil, "", "", map[string]any{"duration_state": "unparsed", "end_state": nil})
-	expect(t, "end beyond 2100", got[102], "timed", utcAt(ms2100m), nil, "", "", map[string]any{"end_status": "invalid", "time_end_basis": nil})
+	// a computed end at or past 2100 is out-of-range (coordinator ruling D1 on Task 3): no TimeEnd, no new key
+	expect(t, "end beyond 2100", got[102], "timed", utcAt(ms2100m), nil, "", "", map[string]any{"end_state": "out-of-range", "end_status": nil, "time_end_basis": nil})
 	// both stored and agreeing: no conflict
 	expect(t, "agreeing", got[103], "timed", utcAt(tD), utcAt(tD+tH), "", "", map[string]any{"time_end_basis": "dtstart+duration", "end_conflict": nil})
+	// spec 5.3 "both are stored and disagree": a stored dtend that is no time (a sentinel) still disagrees (fix round 1, M2)
+	expect(t, "dtend sentinel", got[104], "timed", utcAt(tD), utcAt(tD+tH), "", "", map[string]any{"time_end_basis": "dtstart+duration", "end_conflict": true, "dtend_status": "sentinel"})
 }
 
 // Spec 5.3 (CORE row 27): an end before the start, stored or computed, is not stated.
@@ -290,6 +294,10 @@ func TestAndroidCalendarOriginalStartBasis(t *testing.T) {
 			t.Errorf("row %d: unknown_columns %v, want Events.originalAllDay type-mismatch", id, got[id].unknown)
 		}
 	}
+	// spec 5.4: a stored NULL is raw null (fix round 1, M3)
+	if v, has := got[133].raw["originalAllDay"]; !has || v != nil {
+		t.Errorf("row 133: raw.originalAllDay = %v (present %v), want a stored null", v, has)
+	}
 	if _, has := got[136].raw["originalInstanceTime"]; has {
 		t.Errorf("row 136: raw.originalInstanceTime stated for a row that is no exception: %v", got[136].raw)
 	}
@@ -304,18 +312,23 @@ func TestCalendarUnreadableCellsAreUndecided(t *testing.T) {
 		col    string // the unknown column
 		timing string
 		start  bool // a start is still read (the unreadable cell is not the start)
+		raw    any  // the stored value raw keeps for a readable cell of another class (C1, ruling D6); nil: no raw key
 	}{
-		{"dtstart NaN", map[string]any{"dtstart": math.NaN()}, "dtstart", "timed", false},
-		{"dtstart REAL", map[string]any{"dtstart": 1.7e12}, "dtstart", "timed", false},
-		{"dtstart BLOB", map[string]any{"dtstart": []byte{1, 2, 3}}, "dtstart", "timed", false},
-		{"dtstart TEXT", map[string]any{"dtstart": "1700000000000"}, "dtstart", "timed", false},
-		{"allDay NaN", map[string]any{"allDay": math.NaN()}, "allDay", "unknown", false},
-		{"allDay TEXT", map[string]any{"allDay": "1"}, "allDay", "unknown", false},
-		{"dtend NaN", map[string]any{"dtend": math.NaN()}, "dtend", "timed", true},
-		{"dtend TEXT", map[string]any{"dtend": "1700003600000"}, "dtend", "timed", true},
-		{"duration NaN", map[string]any{"dtend": nil, "duration": math.NaN()}, "duration", "timed", true},
-		{"duration INTEGER", map[string]any{"dtend": nil, "duration": int64(3600)}, "duration", "timed", true},
-		{"originalInstanceTime NaN", map[string]any{"originalInstanceTime": math.NaN(), "originalAllDay": int64(0)}, "originalInstanceTime", "timed", true},
+		{"dtstart NaN", map[string]any{"dtstart": math.NaN()}, "dtstart", "timed", false, nil},
+		{"dtstart REAL", map[string]any{"dtstart": 1.7e12}, "dtstart", "timed", false, nil},
+		{"dtstart BLOB", map[string]any{"dtstart": []byte{1, 2, 3}}, "dtstart", "timed", false, nil},
+		{"dtstart TEXT", map[string]any{"dtstart": "1700000000000"}, "dtstart", "timed", false, nil},
+		{"allDay NaN", map[string]any{"allDay": math.NaN()}, "allDay", "unknown", false, nil},
+		{"allDay TEXT", map[string]any{"allDay": "1"}, "allDay", "unknown", false, "1"},
+		{"allDay REAL", map[string]any{"allDay": 1.5}, "allDay", "unknown", false, 1.5},
+		{"allDay BLOB", map[string]any{"allDay": []byte{1, 2, 3}}, "allDay", "unknown", false, "AQID"},
+		{"allDay BLOB of one byte", map[string]any{"allDay": []byte{0xff}}, "allDay", "unknown", false, "/w=="},
+		{"allDay invalid UTF-8", map[string]any{"allDay": string([]byte{'a', 0xff})}, "allDay", "unknown", false, "a�"},
+		{"dtend NaN", map[string]any{"dtend": math.NaN()}, "dtend", "timed", true, nil},
+		{"dtend TEXT", map[string]any{"dtend": "1700003600000"}, "dtend", "timed", true, nil},
+		{"duration NaN", map[string]any{"dtend": nil, "duration": math.NaN()}, "duration", "timed", true, nil},
+		{"duration INTEGER", map[string]any{"dtend": nil, "duration": int64(3600)}, "duration", "timed", true, nil},
+		{"originalInstanceTime NaN", map[string]any{"originalInstanceTime": math.NaN(), "originalAllDay": int64(0)}, "originalInstanceTime", "timed", true, nil},
 	}
 	var rows []evRow
 	for i, c := range cases {
@@ -327,8 +340,12 @@ func TestCalendarUnreadableCellsAreUndecided(t *testing.T) {
 		if o.unknown["Events."+c.col] != "type-mismatch" {
 			t.Errorf("%s: unknown_columns %v, want Events.%s type-mismatch", c.name, o.unknown, c.col)
 		}
-		if v, has := o.raw[c.col]; has {
+		v, has := o.raw[c.col]
+		switch {
+		case c.raw == nil && has:
 			t.Errorf("%s: raw.%s = %v: an unreadable cell is never a stored value or null", c.name, c.col, v)
+		case c.raw != nil && !rawEqual(v, c.raw):
+			t.Errorf("%s: raw.%s = %#v (present %v), want the stored value %#v", c.name, c.col, v, has, c.raw)
 		}
 		if o.et.Timing != c.timing {
 			t.Errorf("%s: timing %q, want %q", c.name, o.et.Timing, c.timing)
@@ -350,4 +367,12 @@ func TestCalendarUnreadableCellsAreUndecided(t *testing.T) {
 			t.Errorf("%s: raw.timing_state %v, want undecided", c.name, o.raw["timing_state"])
 		}
 	}
+}
+
+// rawEqual compares a raw value with the expected one; a BLOB is expected as its base64 text ({"blob_b64": ...}).
+func rawEqual(got, want any) bool {
+	if m, ok := got.(map[string]any); ok {
+		return len(m) == 1 && m["blob_b64"] == want
+	}
+	return got == want
 }

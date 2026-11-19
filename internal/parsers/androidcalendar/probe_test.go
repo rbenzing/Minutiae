@@ -1,11 +1,14 @@
 package androidcalendar_test
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
@@ -194,6 +197,88 @@ allDay INTEGER NOT NULL DEFAULT 0, title TEXT)`)
 	if res := parseAt(t, remoteProvider, fixtureFiles(t, "calendar-601")); res.Err != nil {
 		t.Errorf("calendar-601: Parse err %v", res.Err)
 	}
+
+	// fix round 1, M4 and ruling D3: an encrypted file is Encrypted at the provider path and not-applicable elsewhere;
+	// a non-SQLite main file beside a companion is loud only at the provider path
+	enc := map[string][]byte{"db": highEntropy(8192)}
+	if got := probeAt(t, remoteProvider, enc); got.Status != parse.Encrypted || got.Reason != "the file looks encrypted" {
+		t.Errorf("encrypted at the provider path: Probe = %+v", got)
+	}
+	if got := probeAt(t, remoteOther, enc); got.Status != parse.NotApplicable {
+		t.Errorf("encrypted at %s: Probe = %+v, want not-applicable (B4: only the provider path is loud)", remoteOther, got)
+	}
+	if got := probeAt(t, remoteOther, withWAL); got.Status != parse.NotApplicable {
+		t.Errorf("text with a companion at %s: Probe = %+v, want not-applicable", remoteOther, got)
+	}
+
+	// ruling D2: a schema not read whole, with no Events in what was read, is stated as such at the provider path
+	damaged := goBuilt(601, eventsDDL)
+	damaged[108], damaged[109] = 0xff, 0xff // the first schema cell pointer points outside page 1
+	if got := probeAt(t, remoteProvider, map[string][]byte{"db": damaged}); got.Status != parse.UnsupportedSchema ||
+		got.Reason != "the schema could not be read whole and no Events table was found in what was read" {
+		t.Errorf("damaged schema at the provider path: Probe = %+v", got)
+	}
+	if got := probeAt(t, remoteOther, map[string][]byte{"db": damaged}); got.Status != parse.NotApplicable {
+		t.Errorf("damaged schema at %s: Probe = %+v", remoteOther, got)
+	}
+	// fix round 1, I1: Parse never claims an absent Events from a schema it could not read whole
+	res = parseAt(t, remoteProvider, map[string][]byte{"db": damaged, "wal": {}})
+	if !errors.Is(res.Err, androidcalendar.ErrSchemaIncomplete) || errors.Is(res.Err, androidcalendar.ErrNoEventsTable) || len(res.Records) != 0 {
+		t.Errorf("damaged schema: Parse err %v, %d records; want ErrSchemaIncomplete and none", res.Err, len(res.Records))
+	}
+	// fix round 1, I1: an Events that exists but cannot be read (a virtual table) is an error, never a silent pass
+	virtual := virtualEvents()
+	if got := probeAt(t, remoteProvider, map[string][]byte{"db": virtual}); got.Status != parse.UnsupportedSchema || !strings.Contains(got.Reason, "Events") {
+		t.Errorf("virtual Events at the provider path: Probe = %+v", got)
+	}
+	res = parseAt(t, remoteProvider, map[string][]byte{"db": virtual, "wal": {}})
+	var us *sqlitedb.UnsupportedSchemaError
+	if !errors.As(res.Err, &us) || errors.Is(res.Err, androidcalendar.ErrNoEventsTable) {
+		t.Errorf("virtual Events: Parse err %v; want the unsupported-schema error of the Events table", res.Err)
+	}
+}
+
+// fix round 1, M1 (4I3-P6): with a companion Probe defers before any failure of the full open of the main file, so a
+// SQLite main file that cannot be opened (here: a budget too small for one page) is checked by Parse.
+func TestAndroidCalendarProbeDefersBeforeOpeningWithACompanion(t *testing.T) {
+	db := goBuilt(601, eventsDDL)
+	in := func(companion bool) *parse.Input {
+		x := &parse.Input{
+			Primary: parse.Artifact{R: bytes.NewReader(db), Size: int64(len(db)), Logical: "android:" + remoteProvider, Platform: parse.PlatformAndroid},
+			Budget:  parse.NewBudget(1).View(),
+		}
+		x.Artifacts = map[string]parse.Artifact{"db": x.Primary}
+		if companion {
+			x.Artifacts["wal"] = parse.Artifact{R: bytes.NewReader(nil), Logical: "android:" + remoteProvider + "-wal", Platform: parse.PlatformAndroid}
+		}
+		return x
+	}
+	if _, err := (androidcalendar.Parser{}).Probe(t.Context(), in(false)); err == nil {
+		t.Fatal("Probe without a companion opened the main file within a 1-byte budget: the fixture proves nothing")
+	}
+	got, err := androidcalendar.Parser{}.Probe(t.Context(), in(true))
+	if err != nil || got.Status != parse.Applicable || got.Reason != "schema checked at parse time: a -wal or -journal companion is present" {
+		t.Errorf("Probe with a companion = %+v, %v; want the deferral", got, err)
+	}
+}
+
+// highEntropy is n deterministic bytes that look encrypted (a SHA-256 chain).
+func highEntropy(n int) []byte {
+	var out []byte
+	sum := sha256.Sum256([]byte("android.calendar"))
+	for len(out) < n {
+		out = append(out, sum[:]...)
+		sum = sha256.Sum256(sum[:])
+	}
+	return out[:n]
+}
+
+// virtualEvents is a Go-built database (user version 601) whose Events is a virtual table.
+func virtualEvents() []byte {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
+	b.CreateTable("Calendars", "CREATE TABLE Calendars (_id INTEGER PRIMARY KEY, name TEXT)")
+	b.AddSchemaRow("table", "Events", "Events", int64(0), "CREATE VIRTUAL TABLE Events USING fts4(title)")
+	return b.Bytes()
 }
 
 // B4, 4I3-P6: a calendar.db is claimed only inside the user-version band 400-699: loudly refused at the provider

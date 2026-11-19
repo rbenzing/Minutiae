@@ -28,6 +28,9 @@ var (
 	// ErrNoEventsTable says the database at the calendar provider path has no Events table (after a Probe that
 	// deferred the schema to Parse because a companion was present).
 	ErrNoEventsTable = errors.New("android.calendar: no Events table at the calendar provider path")
+	// ErrSchemaIncomplete says the live view's schema could not be read whole and no Events table was found in what
+	// was read: whether Events exists is unknown, never "absent".
+	ErrSchemaIncomplete = errors.New("android.calendar: the schema could not be read whole and no Events table was found in what was read")
 )
 
 // The supported band of calendar.db user versions (B4, 4I3-P6): 403, 502, 600 and 601 have fixtures; a version
@@ -67,6 +70,7 @@ const (
 	reasonDeferred        = "schema checked at parse time: a -wal or -journal companion is present"
 	reasonNotSQLiteOther  = "not an SQLite database"
 	reasonSchemaUnreadAll = "the schema could not be read whole and no Events table was found in what was read"
+	reasonNoEventsOther   = "table Events is absent"
 )
 
 func reasonVersion(v int32) string {
@@ -92,9 +96,10 @@ func reqs() []rowrun.Req {
 }
 
 // Probe decides from the main file only (4I3-P5, P6, B4). At the provider path every refusal is loud
-// (unsupported-schema): the path names a calendar store this parser cannot read, not another kind of file. Anywhere
-// else a refusal is not-applicable, except an Events table that lacks a required column (rowrun's rule). With a -wal
-// or -journal companion the main file's schema and user version prove nothing, so both are checked by Parse.
+// (unsupported-schema, or encrypted): the path names a calendar store this parser cannot read, not another kind of
+// file. Anywhere else (a signature claim) every refusal is not-applicable, except an Events table that lacks a required
+// column (rowrun's rule). With a -wal or -journal companion the main file's schema and user version prove nothing,
+// so both are checked by Parse; Probe then defers as soon as the main file is not refused as encrypted or not SQLite.
 func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, error) {
 	if in == nil || in.Primary.R == nil {
 		return parse.Applicability{}, rowrun.ErrNilInput
@@ -112,16 +117,22 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 	main := sqlitedb.Files{DB: in.Primary.R, DBSize: in.Primary.Size}
 	db, err := sqlitedb.Open(ctx, main, in.Budget)
 	switch {
-	case errors.Is(err, sqlitedb.ErrEncrypted):
-		return parse.Applicability{Status: parse.Encrypted, Reason: reasonEncrypted}, nil
+	case errors.Is(err, sqlitedb.ErrEncrypted): // before ErrNotSQLite, which it also wraps
+		if provider {
+			return parse.Applicability{Status: parse.Encrypted, Reason: reasonEncrypted}, nil
+		}
+		return refuse(reasonEncrypted), nil
 	case errors.Is(err, sqlitedb.ErrNotSQLite):
 		switch {
+		case !provider:
+			return refuse(reasonNotSQLiteOther), nil
 		case companion:
-			return parse.Applicability{Status: parse.UnsupportedSchema, Reason: reasonCompanionOnly}, nil
-		case provider:
-			return refuse(reasonNotSQLite), nil
+			return refuse(reasonCompanionOnly), nil
 		}
-		return refuse(reasonNotSQLiteOther), nil
+		return refuse(reasonNotSQLite), nil
+	case err != nil && companion:
+		// a SQLite main file that cannot be opened whole (budget, I/O, damage) proves nothing beside a companion
+		return parse.Applicability{Status: parse.Applicable, Reason: reasonDeferred}, nil
 	case err != nil:
 		return parse.Applicability{}, err
 	}
@@ -133,17 +144,18 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 	if !inBand(version) {
 		return refuse(reasonVersion(version)), nil
 	}
-	if provider {
-		rep, err := census.Take(ctx, main, in.Budget, nil)
-		if err != nil {
-			return parse.Applicability{}, err
-		}
-		if !hasEvents(rep.Objects) {
-			if rep.SchemaSkipped > 0 {
-				return refuse(reasonSchemaUnreadAll), nil
-			}
+	rep, err := census.Take(ctx, main, in.Budget, nil)
+	if err != nil {
+		return parse.Applicability{}, err
+	}
+	if !hasEvents(rep.Objects) {
+		switch {
+		case rep.SchemaSkipped > 0:
+			return refuse(reasonSchemaUnreadAll), nil
+		case provider:
 			return refuse(reasonNoEvents), nil
 		}
+		return refuse(reasonNoEventsOther), nil
 	}
 	got, err := rowrun.Probe(ctx, in, reqs())
 	if err != nil {
@@ -155,10 +167,11 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 	return got, nil
 }
 
-// hasEvents says the census saw a base table named Events (the engine's name match is ASCII case-insensitive).
+// hasEvents says the census saw a table named Events (the engine's name match is ASCII case-insensitive). A virtual
+// Events counts: it exists, and rowrun.Probe states that it cannot be read.
 func hasEvents(objs []census.Object) bool {
 	for _, o := range objs {
-		if o.Type == "table" && strings.EqualFold(o.Name, "Events") && !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(o.SQL)), "CREATE VIRTUAL") {
+		if o.Type == "table" && strings.EqualFold(o.Name, "Events") {
 			return true
 		}
 	}
@@ -203,7 +216,8 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 }
 
 // checkLiveView opens the live view once: its user version must be in the band, and at the provider path it must
-// hold an Events table.
+// hold a readable Events table. An Events that the schema does not show is absent only when the schema was read
+// whole; otherwise its presence is unknown (ErrSchemaIncomplete). Every other failure to read Events is returned.
 func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files) error {
 	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
@@ -216,8 +230,18 @@ func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files) e
 	if classifyPlace(in.Primary.Logical) != placeProvider {
 		return nil // elsewhere a database without Events is of another kind (the identifying step, plan 4I3 Task 4)
 	}
-	if _, err := db.Table(ctx, "Events", nil, nil); errors.Is(err, sqlitedb.ErrNoSuchTable) {
+	_, err = db.Table(ctx, "Events", nil, nil)
+	if err == nil {
+		return nil
+	}
+	rep, cerr := census.Take(ctx, files, in.Budget, nil)
+	switch {
+	case cerr != nil:
+		return fmt.Errorf("android.calendar: Events: %w (the schema census failed: %w)", err, cerr)
+	case !hasEvents(rep.Objects) && rep.SchemaSkipped > 0:
+		return fmt.Errorf("%w: %w", ErrSchemaIncomplete, err)
+	case errors.Is(err, sqlitedb.ErrNoSuchTable):
 		return ErrNoEventsTable
 	}
-	return nil
+	return fmt.Errorf("android.calendar: Events: %w", err)
 }

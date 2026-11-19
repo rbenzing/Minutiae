@@ -1,6 +1,10 @@
 package androidcalendar
 
 import (
+	"math"
+	"strings"
+	"unicode/utf8"
+
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -16,6 +20,7 @@ const (
 	stateNoneStored     = "none-stored"
 	stateEndBeforeStart = "end-before-start"
 	stateNotUTC         = "not-utc"
+	stateOutOfRange     = "out-of-range"
 )
 
 // The values of raw.time_end_basis (4I3-P7).
@@ -138,7 +143,7 @@ func readTimes(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) eventT
 	}
 	end := rowrun.Millis(endMs)
 	if !end.Valid() {
-		raw["end_status"] = end.Status.String() // a computed end outside the decoder's range is no time
+		raw["end_state"] = stateOutOfRange // a computed end outside the decoder's range is no time (coordinator ruling D1)
 		return et
 	}
 	if et.Timing == calendar.TimingTimed {
@@ -168,6 +173,9 @@ func readTiming(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) strin
 		raw["allDay"] = nil
 	default:
 		rowrun.Flag(unknown, row, unknownPrefix+"allDay", col, k)
+		if v, ok := storedOther(row, col); ok {
+			raw["allDay"] = v // C1: a readable value of another class is kept as stored (ruling D6)
+		}
 	}
 	raw["timing_state"] = stateUndecided
 	return calendar.TimingUnknown
@@ -191,7 +199,7 @@ func endOf(row parse.Row, c rowrun.Cols, startMs int64, dtend millisCell, raw, u
 			return 0, "", false
 		}
 		endMs = startMs + secs*millisPerSecond
-		if dtend.ok() && dtend.inst.Raw != endMs {
+		if dtend.kind == rowrun.CellValue && dtend.inst.Raw != endMs { // both stored (spec 5.3), a sentinel dtend included
 			raw["end_conflict"] = true // duration wins, as in the provider
 		}
 		return endMs, basisDuration, true
@@ -220,6 +228,8 @@ func readOriginalStart(row parse.Row, c rowrun.Cols, raw, unknown map[string]any
 	switch k {
 	case rowrun.CellValue:
 		raw["originalAllDay"] = oad
+	case rowrun.CellNull:
+		raw["originalAllDay"] = nil
 	case rowrun.CellOther, rowrun.CellUnknown:
 		rowrun.Flag(unknown, row, unknownPrefix+"originalAllDay", col, k)
 	}
@@ -247,4 +257,63 @@ func readMillisIfStored(row parse.Row, c rowrun.Cols, name string, raw, unknown 
 		return millisCell{kind: k}
 	}
 	return readMillis(row, c, name, raw, unknown)
+}
+
+// storedOther is a readable cell of another storage class as raw keeps it (C1): TEXT as its string with each byte
+// that is not valid UTF-8 replaced by U+FFFD, a finite REAL as its number, a BLOB as {"blob_b64": ...}. It is false
+// for an unreadable cell and for a NaN or an infinity (no stored value JSON can hold).
+func storedOther(row parse.Row, col int) (any, bool) {
+	if col < 0 || !rowrun.StateOf(row, col).Known() || nanCell(row, col) {
+		return nil, false
+	}
+	if b, ok := row.Text(col); ok {
+		return validText(b), true
+	}
+	if f, ok := row.Float(col); ok && !math.IsNaN(f) && !math.IsInf(f, 0) {
+		return f, true
+	}
+	if b, ok := row.Blob(col); ok {
+		return map[string]any{"blob_b64": base64(b)}, true
+	}
+	return nil, false
+}
+
+// validText is b as a string, each byte that does not start a valid UTF-8 sequence replaced by U+FFFD.
+func validText(b []byte) string {
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	var sb strings.Builder
+	for len(b) > 0 {
+		r, n := utf8.DecodeRune(b)
+		if r == utf8.RuneError && n == 1 {
+			sb.WriteRune(utf8.RuneError)
+		} else {
+			sb.Write(b[:n])
+		}
+		b = b[n:]
+	}
+	return sb.String()
+}
+
+const b64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// base64 is standard padded base64 (encoding/base64 is not importable by a parser).
+func base64(b []byte) string {
+	out := make([]byte, 0, (len(b)+2)/3*4)
+	for i := 0; i < len(b); i += 3 {
+		var v uint32
+		n := min(3, len(b)-i)
+		for j := range n {
+			v |= uint32(b[i+j]) << (16 - 8*j)
+		}
+		for j := range 4 {
+			if j <= n {
+				out = append(out, b64Alphabet[v>>(18-6*j)&0x3f])
+			} else {
+				out = append(out, '=')
+			}
+		}
+	}
+	return string(out)
 }
