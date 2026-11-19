@@ -187,6 +187,8 @@ func TestAndroidCalendarOracleStatesTheSpecRules(t *testing.T) {
 	notes := parsertest.LoadFixture(t, "testdata", "calendar-601").Expect.Notes
 	_, extra := notes["deleted_calendar_events"]
 	want("notes", notes["database_version"] == "601" && notes["soft_deleted"] == "1" && notes["lastsynced_copies"] == "2" && !extra)
+	// spec 7.3 and the plan's "Notes and warnings": the Instances cache is counted and named unmapped, never read as records
+	want("store notes", notes["rows.Instances"] == "1" && notes["unmapped_tables"] == "Instances,Colors" && strings.Contains(notes["tables"], "Instances"))
 }
 
 // TestAndroidCalendarOracleStatesTheSchemaVersions: a version-403 database has no uid2445 column,

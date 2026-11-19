@@ -19,12 +19,13 @@ func sha(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// The plan's state vocabularies (android.calendar), the keys Task 4 owns: one Go-built row per value, each asserted
-// with a hard-coded expected value (a nil want means the key is absent). Task 5 extends this function (F20).
+// The plan's state vocabularies (android.calendar), the keys Tasks 4 and 5 own: one Go-built row per value, each
+// asserted with a hard-coded expected value (a nil want means the key is absent). Task 6 extends this function (F20).
 func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 	longDur := "P" + strings.Repeat("1", 70) + "S"
 	longSync := strings.Repeat("s", 1500)
 	longOrg := strings.Repeat("o", 1100) + "@example.test"
+	longAddr := strings.Repeat("a", 2<<10) + "@example.test"
 	cases := []struct {
 		id   int64
 		kw   map[string]any
@@ -94,18 +95,66 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 		// a wrongly typed duration is listed and kept as stored even when no end is computed (fix round 1, I1)
 		{36, map[string]any{"allDay": int64(2), "duration": int64(5)}, map[string]any{"duration": int64(5), "unknown_columns": map[string]any{"Events.duration": "type-mismatch"}}, map[string]any{"duration": nil}},
 		{37, map[string]any{"dtstart": nil, "duration": []byte{1, 2, 3}}, map[string]any{"duration": map[string]any{"blob_b64": "AQID"}, "unknown_columns": map[string]any{"Events.duration": "type-mismatch"}}, nil},
-		// an intact row states no decoder damage (fix round 1, M2)
-		{38, nil, map[string]any{"row_flags": nil}, nil},
+		// an intact row states no decoder damage (fix round 1, M2); a row with no child rows states no child key (C3)
+		{
+			38, nil,
+			map[string]any{
+				"row_flags": nil, "attendees": nil, "attendees_unnamed": nil, "reminders": nil, "reminders_state": nil, "alerts": nil,
+				"extended_properties": nil, "raw_times": nil, "join_undecided": nil, "attendees_state": nil, "alerts_state": nil,
+				"extended_properties_state": nil, "raw_times_state": nil,
+			},
+			map[string]any{"attendees": nil, "reminders": nil, "attendees_total": nil, "reminders_total": nil},
+		},
+		// children (spec 7.3, 9, F27): an address over 1 KiB is never kept nor cut; with no name the attendee is counted
+		// unnamed and its raw.attendees entry keeps the length and SHA-256 as sibling scalars
+		{
+			39, nil,
+			map[string]any{"attendees_unnamed": int64(1), "attendees": []any{map[string]any{"attendeeRelationship": int64(1), "address_state": "too-long", "address_len": int64(len(longAddr)), "address_sha256": sha(longAddr)}}},
+			map[string]any{"attendees": nil},
+		},
+		{
+			40, nil,
+			map[string]any{"attendees_unnamed": nil, "attendees": []any{map[string]any{"address_state": "too-long", "address_len": int64(len(longAddr)), "address_sha256": sha(longAddr)}}},
+			map[string]any{"attendees": []any{map[string]any{"name": "Named"}}},
+		},
+		{41, nil, map[string]any{"reminders_state": "negative-minutes", "reminders": []any{map[string]any{"minutes": int64(-5), "method": int64(2)}}}, map[string]any{"reminders": []any{map[string]any{"method": "email"}}}},
+		// the caps (spec 9, C6): 1,001 of each list keep 1,000 with the total and the flag
+		{
+			42, nil,
+			map[string]any{"alerts_total": int64(1001), "alerts_truncated": true, "extended_properties_total": int64(1001), "extended_properties_truncated": true},
+			map[string]any{"attendees_total": int64(1001), "attendees_truncated": true, "reminders_total": int64(1001), "reminders_truncated": true},
+		},
+		// a wrongly typed attendee address is listed, never absent silently (spec 9); the named attendee stays
+		{
+			43, nil,
+			map[string]any{"unknown_columns": map[string]any{"Attendees.attendeeEmail": "type-mismatch"}, "attendees": []any{map[string]any{}}},
+			map[string]any{"attendees": []any{map[string]any{"name": "Num"}}},
+		},
 	}
 	var rows []row
 	for _, c := range cases {
 		rows = append(rows, row{c.id, c.kw})
 	}
+	kids := map[string][]row{
+		"Attendees": {
+			{1, map[string]any{"event_id": int64(39), "attendeeEmail": longAddr, "attendeeRelationship": int64(1)}},
+			{2, map[string]any{"event_id": int64(40), "attendeeEmail": longAddr, "attendeeName": "Named"}},
+			{3, map[string]any{"event_id": int64(43), "attendeeEmail": int64(5), "attendeeName": "Num"}},
+		},
+		"Reminders": {{1, map[string]any{"event_id": int64(41), "minutes": int64(-5), "method": int64(2)}}},
+	}
+	for i := int64(1); i <= 1001; i++ {
+		kids["Attendees"] = append(kids["Attendees"], row{100 + i, map[string]any{"event_id": int64(42), "attendeeName": "N"}})
+		kids["Reminders"] = append(kids["Reminders"], row{100 + i, map[string]any{"event_id": int64(42), "minutes": int64(1), "method": int64(1)}})
+		kids["CalendarAlerts"] = append(kids["CalendarAlerts"], row{i, map[string]any{"event_id": int64(42), "state": int64(0)}})
+		kids["ExtendedProperties"] = append(kids["ExtendedProperties"], row{i, map[string]any{"event_id": int64(42), "name": "n"}})
+	}
 	cals := []row{{1, nil}, {3, map[string]any{"calendar_displayName": "Odd", "deleted": int64(7)}}}
 	// row 90: a record whose body is longer than its header says (the decoder's length_mismatch): _id NULL, _sync_id
 	// NULL, dirty 0, mutators NULL, lastSynced 0, calendar_id 1, then one byte too many (fix round 1, M2)
 	damaged := func(tb *sqlitetest.Table) { tb.InsertRaw(90, []uint64{0, 0, 1, 0, 1, 1}, []byte{0, 0, 1, 'Z'}) }
-	p := parseBuilt(t, buildCalendarDBWith(t, rows, cals, damaged), false)
+	built, _ := buildDB(t, dbSpec{events: rows, calendars: cals, children: kids, more: damaged})
+	p := parseBuilt(t, built, false)
 	if f, _ := rawOf(p.rec(t, 90))["row_flags"].([]any); !slices.Contains(f, any("length_mismatch")) {
 		t.Errorf("row 90: raw.row_flags %v, want length_mismatch (raw %v)", f, rawOf(p.rec(t, 90)))
 	}
@@ -131,12 +180,21 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 
 	// the typed pass (Mappings, no Parse context, 4I3-P4, B2): a row joins nothing and each join-derived state says so;
 	// the row's own flags are stated as in a live parse (fix round 1, M3)
-	typed := mapTyped(t, buildCalendarDB(t, []row{
+	// (event 1 has an attendee and a reminder: a recovered row joins neither, B2)
+	typedDB, _ := buildDB(t, dbSpec{events: []row{
 		{1, map[string]any{"original_id": int64(1), "originalInstanceTime": tD, "originalAllDay": int64(0)}},
 		{2, map[string]any{"calendar_id": int64(3), "deleted": int64(1)}},
-	}, cals))
+	}, calendars: cals, children: map[string][]row{
+		"Attendees": {{1, map[string]any{"event_id": int64(1), "attendeeName": "A"}}},
+		"Reminders": {{1, map[string]any{"event_id": int64(1), "minutes": int64(5)}}},
+	}})
+	typed := mapTyped(t, typedDB)
 	for id, w := range map[int64]map[string]any{
-		1: {"calendar_state": "not-joined-recovered", "deleted_via_state": "not-joined-recovered", "original_state": "not-joined-recovered", "calendar": nil, "join_undecided": nil},
+		1: {
+			"calendar_state": "not-joined-recovered", "deleted_via_state": "not-joined-recovered", "original_state": "not-joined-recovered", "calendar": nil, "join_undecided": nil,
+			"attendees_state": "not-joined-recovered", "reminders_state": "not-joined-recovered", "alerts_state": "not-joined-recovered",
+			"extended_properties_state": "not-joined-recovered", "raw_times_state": "not-joined-recovered", "attendees": nil, "reminders": nil,
+		},
 		2: {"calendar_state": "not-joined-recovered", "deleted_via_state": "not-joined-recovered", "original_state": nil, "deleted_via": nil},
 	} {
 		r, ok := typed[id]

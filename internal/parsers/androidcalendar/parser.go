@@ -224,7 +224,8 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 }
 
 // Parse checks the live view (its user version, B4, 4I3-P6; at the provider path that Events exists; Events' required
-// columns and rowid alias; the join tables) before any mapping runs, then maps Events. The step is Identifying
+// columns and rowid alias; the join tables) and states the store (writeNotes) before any mapping runs, then maps
+// Events and writes the count notes after it. The step is Identifying
 // elsewhere (a database of another kind is not applicable there) and reads through the join guard. Records pass
 // through a counting emitter: the mapping cannot warn, so after rowrun.Run Parse warns once per undecided flag
 // column and once per table with an undecided join (4I3-P9, B9).
@@ -236,20 +237,27 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	if err != nil {
 		return err
 	}
-	g, err := checkLiveView(ctx, in, files, out)
+	g, version, err := checkLiveView(ctx, in, files, out)
 	if err != nil {
 		return err
 	}
 	e := &env{}
 	if g != nil {
 		e.Guard = *g
+		if err := writeNotes(ctx, files, in.Budget, out, version); err != nil {
+			return fmt.Errorf("android.calendar: %w", err)
+		}
 	}
 	ce := newCountingEmitter(out)
 	step := rowrun.Step{Mapping: eventMappingWith(e), Identifying: classifyPlace(in.Primary.Logical) == placeOther}
 	if _, err := rowrun.Run(ctx, in, ce, []rowrun.Step{step}); err != nil {
 		return fmt.Errorf("android.calendar: %w", err)
 	}
-	return ce.warn(ctx)
+	if err := ce.warn(ctx); err != nil {
+		return err
+	}
+	writeCountNotes(out, ce.c)
+	return nil
 }
 
 // requiredEvents are the identifying columns of Events (spec 7.2).
@@ -268,34 +276,36 @@ func requiredEvents() []string {
 // tables are checked (the guard). At the provider path Events must exist: it is absent only when the schema was read
 // whole and the census saw no table of that name; otherwise its presence is unknown (ErrSchemaIncomplete), and a
 // census that saw one makes any failure to open it an error, never ErrNoEventsTable. Elsewhere a live view without
-// Events is left to the identifying step (nil guard).
-func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, out parse.Emitter) (*joinGuard, error) {
+// Events is left to the identifying step (nil guard). The user version is returned for the note database_version.
+func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, out parse.Emitter) (*joinGuard, int32, error) {
 	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
-		return nil, fmt.Errorf("android.calendar: %w", err)
+		return nil, 0, fmt.Errorf("android.calendar: %w", err)
 	}
 	defer db.Release()
-	if v := db.Info().Header.UserVersion; !inBand(v) {
-		return nil, fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)
+	v := db.Info().Header.UserVersion
+	if !inBand(v) {
+		return nil, v, fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)
 	}
 	provider := classifyPlace(in.Primary.Logical) == placeProvider
 	t, err := db.Table(ctx, tableEvents, requiredEvents(), nil)
 	switch {
 	case err == nil:
 		if i := t.Col("_id"); i < 0 || !t.Cols()[i].RowidAlias {
-			return nil, fmt.Errorf("android.calendar: %w", &sqlitedb.UnsupportedSchemaError{Table: tableEvents, Reason: "column _id is not the rowid alias"})
+			return nil, v, fmt.Errorf("android.calendar: %w", &sqlitedb.UnsupportedSchemaError{Table: tableEvents, Reason: "column _id is not the rowid alias"})
 		}
-		return checkJoinSchema(ctx, db, out)
+		g, err := checkJoinSchema(ctx, db, out)
+		return g, v, err
 	case !provider && errors.Is(err, sqlitedb.ErrNoSuchTable):
-		return nil, nil // a database of another kind: the identifying step states it
+		return nil, v, nil // a database of another kind: the identifying step states it
 	case !provider:
-		return nil, fmt.Errorf("android.calendar: Events: %w", err)
+		return nil, v, fmt.Errorf("android.calendar: Events: %w", err)
 	}
 	rep, cerr := census.Take(ctx, files, in.Budget, nil)
 	if cerr != nil {
-		return nil, fmt.Errorf("android.calendar: Events: %w (the schema census failed: %w)", err, cerr)
+		return nil, v, fmt.Errorf("android.calendar: Events: %w (the schema census failed: %w)", err, cerr)
 	}
-	return nil, eventsAbsence(err, rep)
+	return nil, v, eventsAbsence(err, rep)
 }
 
 // eventsAbsence reads err, the failure to open Events at the provider path, against the schema census: a census that

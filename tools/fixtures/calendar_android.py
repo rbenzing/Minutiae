@@ -563,8 +563,13 @@ def children(p, raw, tf, unknown, env, rid):
                 tf.add("attendees")
             if c.text:
                 e["name"] = c.text
+        elif name is not None and not is_text(name):  # spec 9: a wrong type is listed, never absent silently
+            unknown["Attendees.attendeeName"] = "type-mismatch"
         codes = {k: jv(a[k]) for k in ("attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace")
                  if a.get(k) is not None}
+        for col in ("attendeeRelationship", "attendeeType", "attendeeStatus"):
+            if a.get(col) is not None and not is_int(a[col]):
+                unknown["Attendees." + col] = "type-mismatch"
         if not e:
             unnamed += 1
             if extra:  # F27: its raw.attendees entry keeps the address length and SHA-256 as sibling scalars
@@ -588,13 +593,19 @@ def children(p, raw, tf, unknown, env, rid):
     for x in sorted(env.children["Reminders"].get(rid, []), key=lambda x: x["rowid"]):
         e = {}
         m = x.get("minutes")
-        if is_int(m) and m >= 0:
+        if is_int(m) and 0 <= m * 60 <= 2 ** 63 - 1:
             e["before_s"] = m * 60
+        elif is_int(m) and m >= 0:  # seconds beyond the int64 range: no before_s, listed
+            unknown["Reminders.minutes"] = "out-of-range"
         elif is_int(m) and m != -1:
             raw["reminders_state"] = "negative-minutes"
+        elif m is not None and not is_int(m):
+            unknown["Reminders.minutes"] = "type-mismatch"
         meth = x.get("method")
         if meth is not None:
             e["method"] = REMINDER_METHOD[meth] if is_int(meth) and meth in REMINDER_METHOD else "unknown"
+            if not is_int(meth):
+                unknown["Reminders.method"] = "type-mismatch"
         if not e:
             continue
         rem.append(e)
@@ -615,8 +626,11 @@ def children(p, raw, tf, unknown, env, rid):
     props = []
     for x in sorted(env.children["ExtendedProperties"].get(rid, []), key=lambda x: x["rowid"]):
         e = {}
-        if x.get("name") is not None:
-            e["name"] = jv(x["name"])
+        name = x.get("name")
+        if is_text(name) and len(name) > MAX_ID:  # the name is an identifier: never cut (spec 7.3, 9)
+            e.update({"name_state": "too-long", "name_len": len(name), "name_sha256": hashlib.sha256(name).hexdigest()})
+        elif name is not None:
+            e["name"] = jv(name)
         v = x.get("value")
         if is_text(v):
             c = C.clean(v, MAX_PROP)
@@ -768,6 +782,29 @@ META = {"_id": 1, "localTimezone": "Europe/Berlin", "minInstance": 1698796800000
 CACHE = [{"_id": 1, "key": "timezoneType", "value": "auto"}, {"_id": 2, "key": "timezoneInstances", "value": "Europe/Berlin"},
          {"_id": 3, "key": "timezoneInstancesPrevious", "value": "Europe/Berlin"}]
 CHILD_TABLES = ("Attendees", "Reminders", "CalendarAlerts", "ExtendedProperties", "EventsRawTimes", "Instances")
+# The Events columns the Go mapping reads, in its order (eventSpecs), with whether each is required: rowrun's notes
+# schema.Events and unmapped_columns.Events (C.note_columns).
+EVENTS_MAPPED = [(n, True) for n in ("_id", "calendar_id", "dtstart", "allDay", "deleted")] + [(n, False) for n in (
+    "_sync_id", "dirty", "mutators", "lastSynced", "title", "eventLocation", "description", "eventColor", "eventColor_index",
+    "eventStatus", "selfAttendeeStatus", "dtend", "eventTimezone", "duration", "accessLevel", "availability", "hasAlarm",
+    "hasExtendedProperties", "rrule", "rdate", "exrule", "exdate", "original_id", "original_sync_id", "originalInstanceTime",
+    "originalAllDay", "lastDate", "hasAttendeeData", "guestsCanModify", "guestsCanInviteOthers", "guestsCanSeeGuests",
+    "organizer", "isOrganizer", "eventEndTimezone", "customAppPackage", "customAppUri", "uid2445",
+    *("sync_data%d" % i for i in range(1, 11)))]
+# The tables the parser never reads, in the order the note unmapped_tables names them (plan "Notes and warnings").
+UNMAPPED_TABLES = ("Instances", "Colors", "_sync_state", "_sync_state_metadata")
+MAX_NOTE = 512
+
+
+def note_list(names):
+    """A comma list cut at an entry boundary within MAX_NOTE bytes, with a trailing ",…" (plan "Notes and warnings")."""
+    out = ""
+    for n in names:
+        add = len(n.encode("utf-8")) + (1 if out else 0)
+        if len(out.encode("utf-8")) + add > MAX_NOTE - len(",…".encode("utf-8")):
+            return out + ",…"
+        out += ("," if out else "") + n
+    return out
 
 
 # ---------------------------------------------------------------- the expect.json
@@ -790,7 +827,7 @@ def oracle(files, ddl_name, variant, user_version, refused=False):
     exp = C.expect_header(FAMILY, variant, ddl_name)
     if refused:
         return exp
-    view = C.engine_view(files, ["Events", "Calendars"] + list(CHILD_TABLES) + ["CalendarMetaData", "CalendarCache"])
+    view = C.engine_view(files, ["Events", "Calendars"] + list(CHILD_TABLES) + ["CalendarMetaData", "CalendarCache", "sqlite_master"])
     env = Env(view)
     lone = set(files) == {"db"}
     remote, file = (REMOTE, "db") if lone else ("", "any")
@@ -812,7 +849,16 @@ def oracle(files, ddl_name, variant, user_version, refused=False):
     for k in ("soft_deleted", "lastsynced_copies"):
         if counts[k]:
             notes[k] = str(counts[k])
-    if view.get("Instances"):
+    # the base tables present (byte order) and the present tables never read (plan "Notes and warnings")
+    tables = sorted({jv(m["name"]) for m in view["sqlite_master"] if m["type"] == b"table"}, key=lambda n: n.encode("utf-8"))
+    if tables:
+        notes["tables"] = note_list(tables)
+    unmapped = [t for t in UNMAPPED_TABLES if any(n.lower() == t.lower() for n in tables)]
+    if unmapped:
+        notes["unmapped_tables"] = note_list(unmapped)
+    if view.get("Events"):
+        C.note_columns(list(view["Events"][0])[1:], EVENTS_MAPPED, "Events", notes)
+    if "Instances" in view:  # a present table's row count, 0 included
         notes["rows.Instances"] = str(len(view["Instances"]))
     for m in view.get("CalendarMetaData", [])[:1]:
         for k in ("localTimezone", "minInstance", "maxInstance"):

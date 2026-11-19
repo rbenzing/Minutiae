@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -387,18 +388,49 @@ func buildCalendarDB(t *testing.T, events, calendars []row) []byte {
 // buildCalendarDBWith is buildCalendarDB with extra rows written by more into the Events table (InsertRaw).
 func buildCalendarDBWith(t *testing.T, events, calendars []row, more func(*sqlitetest.Table)) []byte {
 	t.Helper()
+	db, _ := buildDB(t, dbSpec{events: events, calendars: calendars, more: more})
+	return db
+}
+
+// childTables are the child tables the mapping joins by event_id (spec 7.3): every Go-built database has them, empty
+// unless rows are given, so a join through them is decided.
+var childTables = []string{"Attendees", "Reminders", "CalendarAlerts", "ExtendedProperties", "EventsRawTimes"}
+
+// dbSpec is a Go-built calendar.db: Events rows, Calendars rows (nil: no Calendars table), child rows by table (each
+// row's kw holds its event_id; a child table listed in omit is not created) and extra Events rows written by more.
+type dbSpec struct {
+	events, calendars []row
+	children          map[string][]row
+	omit              []string
+	more              func(*sqlitetest.Table)
+}
+
+// buildDB builds s (user version 601, F05, the 601 snapshot's tables) and returns the bytes and the tables by name.
+func buildDB(t *testing.T, s dbSpec) ([]byte, map[string]*sqlitetest.Table) {
+	t.Helper()
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
-	if calendars != nil {
+	tables := map[string]*sqlitetest.Table{}
+	if s.calendars != nil {
 		ddl := snapshotDDL(t, "Calendars")
-		insertRows(b.CreateTable("Calendars", ddl), columnsOf(ddl), calendarDefaults(), calendars)
+		tables["Calendars"] = b.CreateTable("Calendars", ddl)
+		insertRows(tables["Calendars"], columnsOf(ddl), calendarDefaults(), s.calendars)
 	}
 	ddl := snapshotDDL(t, "Events")
 	tb := b.CreateTable("Events", ddl)
-	insertRows(tb, columnsOf(ddl), eventDefaults(), events)
-	if more != nil {
-		more(tb)
+	tables["Events"] = tb
+	insertRows(tb, columnsOf(ddl), eventDefaults(), s.events)
+	if s.more != nil {
+		s.more(tb)
 	}
-	return b.Bytes()
+	for _, name := range childTables {
+		if slices.Contains(s.omit, name) {
+			continue
+		}
+		cddl := snapshotDDL(t, name)
+		tables[name] = b.CreateTable(name, cddl)
+		insertRows(tables[name], columnsOf(cddl), nil, s.children[name])
+	}
+	return b.Bytes(), tables
 }
 
 // parseBuilt parses a Go-built database at the provider path (with an empty -wal when wal is set: Probe defers).

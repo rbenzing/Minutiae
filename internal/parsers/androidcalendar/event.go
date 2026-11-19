@@ -139,6 +139,9 @@ func mapEvent(m parse.MapContext, row parse.Row, e *env, names []string) ([]reco
 	ev.Deleted = d.record(raw)
 
 	readRawOnly(r)
+	if err := readChildren(m, row, e, r, flags, &ev); err != nil {
+		return nil, err
+	}
 	flags.write(raw)
 	slices.Sort(truncated)
 	ev.TruncatedFields = truncated
