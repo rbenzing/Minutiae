@@ -201,7 +201,7 @@ func attachmentOf(m parse.MapContext, ir cellReader) (message.Attachment, bool) 
 // not, and is never read as "no path" (PF15).
 func localPath(ir cellReader) ([]byte, bool) {
 	col := ir.cols.At("ZMEDIALOCALPATH")
-	b, k := rowrun.TextCell(ir.row, col)
+	b, k := textCellOf(ir.row, col)
 	rowrun.Flag(ir.unknown, ir.row, ir.prefix+"ZMEDIALOCALPATH", col, k)
 	switch k {
 	case rowrun.CellValue:

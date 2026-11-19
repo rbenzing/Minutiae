@@ -155,6 +155,8 @@ func TestIOSWhatsAppContactsStateVocabularyIsPinned(t *testing.T) {
 		put(17, contactRow(map[string]any{"ZFULLNAME": "a", "ZWHATSAPPID": user, "ZLID": strings.Repeat("1", 2000) + "@lid"}))
 		put(18, contactRow(map[string]any{"ZFULLNAME": "a", "ZWHATSAPPID": "1\x00@s.whatsapp.net", "ZLID": lid}))
 		put(19, contactRow(map[string]any{"ZFULLNAME": "a", "ZWHATSAPPID": "120363@g.us", "ZPHONENUMBER": "+1", "ZLID": lid}))
+		put(21, contactRow(map[string]any{"ZFULLNAME": "a", "ZWHATSAPPID": big, "ZLID": lid}))
+		put(22, contactRow(map[string]any{"ZFULLNAME": "a", "ZWHATSAPPID": int64(22), "ZLID": lid}))
 		// phone_label_stored
 		put(20, contactRow(map[string]any{"ZPHONENUMBER": "+1", "ZPHONENUMBERLABEL": "_$!<Home>!$_"}))
 	})
@@ -181,7 +183,14 @@ func TestIOSWhatsAppContactsStateVocabularyIsPinned(t *testing.T) {
 	if !reflect.DeepEqual(state(10, "lid_map"), wantMap) || state(10, "lid_state") != nil {
 		t.Errorf("row 10: lid_map %v lid_state %v", state(10, "lid_map"), state(10, "lid_state"))
 	}
-	lidStates := map[int64]any{11: "altered", 12: "not-text", 13: "jid-not-a-phone", 14: "jid-not-a-phone", 15: nil, 16: nil, 17: "too-long", 18: "jid-not-a-phone"}
+	// amendment 4I2-A5: an undecided JID (altered, too-long, not-text) is "jid-undecided"; "jid-not-a-phone" is a decided JID
+	// of another class or an absent one. Whenever no lid_map is written, raw.ZLID keeps the stored LID (cleaned, text_flags on
+	// alteration) unless it is too long.
+	lidStates := map[int64]any{
+		11: "altered", 12: "not-text", 13: "jid-not-a-phone", 14: "jid-not-a-phone", 15: nil, 16: nil, 17: "too-long",
+		18: "jid-undecided", 21: "jid-undecided", 22: "jid-undecided",
+	}
+	lidStored := map[int64]any{11: "1�@lid", 12: int64(12), 13: lid, 14: lid, 15: nil, 16: nil, 17: nil, 18: lid, 21: lid, 22: lid}
 	for id, want := range lidStates {
 		if got := state(id, "lid_state"); got != want {
 			t.Errorf("row %d: lid_state %v, want %v", id, got, want)
@@ -189,6 +198,23 @@ func TestIOSWhatsAppContactsStateVocabularyIsPinned(t *testing.T) {
 		if state(id, "lid_map") != nil {
 			t.Errorf("row %d: a lid_map %v without a decided user JID and a clean ZLID", id, state(id, "lid_map"))
 		}
+		if got := state(id, "ZLID"); got != lidStored[id] {
+			t.Errorf("row %d: raw.ZLID %#v, want %#v", id, got, lidStored[id])
+		}
+	}
+	if state(10, "ZLID") != nil {
+		t.Errorf("row 10: raw.ZLID %v beside lid_map", state(10, "ZLID"))
+	}
+	if !reflect.DeepEqual(state(11, "text_flags"), []any{"ZLID"}) {
+		t.Errorf("row 11: text_flags %v, want [ZLID]", state(11, "text_flags"))
+	}
+	// the LID's own record: its ims is the LID, never merged with the phone JID of another row
+	if got := recs[13].Payload["ims"]; !reflect.DeepEqual(got, []any{map[string]any{"value": lid, "kind": "whatsapp"}}) {
+		t.Errorf("row 13: ims %#v, want exactly the LID", got)
+	}
+	// final review M4: a ZWHATSAPPID that is not text keeps its stored value in raw (a blob by its marker)
+	if state(5, "ZWHATSAPPID") != int64(5) || !reflect.DeepEqual(state(6, "ZWHATSAPPID"), map[string]any{"blob_b64": "MTU1NTAwMDAwMDFAcy53aGF0c2FwcC5uZXQ="}) {
+		t.Errorf("rows 5 and 6: raw.ZWHATSAPPID %#v and %#v", state(5, "ZWHATSAPPID"), state(6, "ZWHATSAPPID"))
 	}
 	for _, id := range []int64{15, 16, 7} {
 		if state(id, "lid_map") != nil || state(id, "lid_state") != nil {

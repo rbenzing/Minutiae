@@ -148,7 +148,7 @@ func textOf(c cell) (string, bool) { return string(c.b), c.kind == cText }
 var rawKeys = map[string]bool{
 	"app": true, "app_basis": true, "app_state": true, "row_flags": true, "unknown_columns": true, "text_flags": true,
 	"phone_label_stored": true, "ZPHONENUMBERLABEL": true, "whatsapp_id_state": true, "whatsapp_id_text": true, "lid_map": true,
-	"lid_state": true, "Z_ENT": true, "ZHIGHLIGHTEDNAME": true, "ZABOUTTIMESTAMP": true,
+	"lid_state": true, "Z_ENT": true, "ZHIGHLIGHTEDNAME": true, "ZABOUTTIMESTAMP": true, "ZLID": true, "ZWHATSAPPID": true,
 }
 
 // checkMapped holds the mapping to its contract on any row: no panic, and either a typed row error (a counted warning) or at

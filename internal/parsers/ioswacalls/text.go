@@ -43,14 +43,14 @@ type cellReader struct {
 
 // int reads an INTEGER cell.
 func (r cellReader) int(name string) (int64, bool) {
-	v, k := rowrun.IntCell(r.row, r.cols.At(name))
+	v, k := intCellOf(r.row, r.cols.At(name))
 	rowrun.Flag(r.unknown, r.row, r.prefix+name, r.cols.At(name), k)
 	return v, k == rowrun.CellValue
 }
 
 // text reads a TEXT cell; the bytes may be empty (a stored empty string is a value).
 func (r cellReader) text(name string) ([]byte, bool) {
-	v, k := rowrun.TextCell(r.row, r.cols.At(name))
+	v, k := textCellOf(r.row, r.cols.At(name))
 	rowrun.Flag(r.unknown, r.row, r.prefix+name, r.cols.At(name), k)
 	return v, k == rowrun.CellValue
 }
@@ -63,7 +63,8 @@ func (r cellReader) number(name string) (cellx.Number, bool) {
 }
 
 // stored returns the stored value of a cell of any storage class for raw: an integer, a cleaned text, a finite float, the string
-// "non-finite" or a blob marker; nil for NULL, an absent column and an unreadable cell.
+// "non-finite" or a blob marker; nil for NULL, an absent column and an unreadable cell. A text of the aggregate row that
+// cleaning changed is listed in raw.text_flags as "aggregate.<column>" (raw.aggregate holds it).
 func (r cellReader) stored(name string) any {
 	col := r.cols.At(name)
 	if col < 0 || r.row.IsNull(col) || !rowrun.StateOf(r.row, col).Known() {
@@ -73,7 +74,11 @@ func (r cellReader) stored(name string) any {
 		return v
 	}
 	if b, ok := r.row.Text(col); ok {
-		return cleanField(r.raw, name, b)
+		field := name
+		if r.prefix == prefixAgg {
+			field = "aggregate." + name
+		}
+		return cleanField(r.raw, field, b)
 	}
 	if f, ok := r.row.Float(col); ok {
 		if math.IsNaN(f) || math.IsInf(f, 0) {
@@ -158,6 +163,24 @@ func undecidedJoin(raw map[string]any, table string) {
 func nanCell(row parse.Row, col int) bool {
 	r, ok := row.(sqlitedb.Row)
 	return ok && col >= 0 && r.State(col) == sqlitedb.StateNull && r.Value(col).Serial == 7
+}
+
+// intCellOf is rowrun.IntCell with a stored NaN read as a value of another class (CellOther), never as NULL.
+func intCellOf(row parse.Row, col int) (int64, rowrun.CellKind) {
+	v, k := rowrun.IntCell(row, col)
+	if k == rowrun.CellNull && nanCell(row, col) {
+		k = rowrun.CellOther
+	}
+	return v, k
+}
+
+// textCellOf is rowrun.TextCell with a stored NaN read as a value of another class (CellOther), never as NULL.
+func textCellOf(row parse.Row, col int) ([]byte, rowrun.CellKind) {
+	b, k := rowrun.TextCell(row, col)
+	if k == rowrun.CellNull && nanCell(row, col) {
+		k = rowrun.CellOther
+	}
+	return b, k
 }
 
 // nanStatus states a column that holds a NaN as raw.<name>_status = "invalid" (no time, no stored value to show).

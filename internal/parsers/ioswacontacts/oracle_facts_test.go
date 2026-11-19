@@ -155,7 +155,8 @@ func TestIOSWhatsAppContactsOracleStatesTheSpecRules(t *testing.T) {
 
 	// row 9: a LID JID is an ims entry; its own ZLID names no phone JID, so no lid_map (never inferred)
 	r9 := c.rec(9)
-	want(fmt.Sprint(r9.ims()) == "[100000000000009@lid|whatsapp]" && r9.raw["lid_map"] == nil && r9.raw["lid_state"] == "jid-not-a-phone", "row 9: %v", r9.Payload)
+	want(fmt.Sprint(r9.ims()) == "[100000000000009@lid|whatsapp]" && r9.raw["lid_map"] == nil && r9.raw["lid_state"] == "jid-not-a-phone" &&
+		r9.raw["ZLID"] == "100000000000009@lid", "row 9: %v", r9.Payload) // 4I2-A5: the stored LID is kept
 
 	// row 10: a 300 KiB about text is cut at the text cap in the Body, its name in text_flags, never a record field of its own
 	r10 := c.rec(10)
@@ -171,10 +172,12 @@ func TestIOSWhatsAppContactsOracleStatesTheSpecRules(t *testing.T) {
 	want(len(r14.ims()) == 0 && r14.raw["whatsapp_id_state"] == "too-long" && r14.rawAbsent("whatsapp_id_text") && r14.rawAbsent("text_flags") &&
 		r14.raw["ZHIGHLIGHTEDNAME"] == "Ivy H", "row 14: %v", r14.Payload)
 
-	// row 15: a JID cell that is not TEXT is not-text, and the unreadable cell is stated, never taken for absent
+	// row 15: a JID cell that is not TEXT is not-text, and the unreadable cell is stated, never taken for absent; its stored value
+	// is in raw (a blob by its marker, final review M4)
 	r15 := c.rec(15)
 	unk, _ := r15.raw["unknown_columns"].(map[string]any)
-	want(len(r15.ims()) == 0 && r15.raw["whatsapp_id_state"] == "not-text" && fmt.Sprint(unk) == "map[ZWAADDRESSBOOKCONTACT.ZWHATSAPPID:type-mismatch]", "row 15: %v", r15.Payload)
+	want(len(r15.ims()) == 0 && r15.raw["whatsapp_id_state"] == "not-text" && fmt.Sprint(unk) == "map[ZWAADDRESSBOOKCONTACT.ZWHATSAPPID:type-mismatch]" &&
+		fmt.Sprint(r15.raw["ZWHATSAPPID"]) == "map[blob_b64:MTU1NTAwMDAwMTVAcy53aGF0c2FwcC5uZXQ=]", "row 15: %v", r15.Payload)
 
 	// only the two rows with a ZLID say anything about a LID (D6: never inferred from the JID)
 	for id := range c.by {

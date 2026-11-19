@@ -12,5 +12,5 @@ var fixturePins = map[string]string{
 	"ios-contactsv2-nolid.db":      "552928bb7880ad7bba8642bf46eed3b7751dbb42b01e26c6d865c80a3f0fabda",
 	"ios-contactsv2-otherapp.db":   "2058309ccbf1fb46e6d133a471e52bb02a5416dc2f9a88bb903a5564e05ab350",
 	"ios-contactsv2.db":            "0e894b7b844e4d0d7679192e01f3ee2835cff100111ba7536113c74ce07b3a13",
-	"ios-contactsv2.wal":           "c21ddd7cc2be8ead03f7009dd8a75f9ce8bfcf8eb787d9ea0a603940115d5082",
+	"ios-contactsv2.wal":           "5f314fbc2c1410187523fae759c165f0da91693715301a594a972324c2fd1985",
 }

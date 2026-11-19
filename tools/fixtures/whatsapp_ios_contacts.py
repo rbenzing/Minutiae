@@ -24,7 +24,10 @@ What the oracle states:
   - the phone label `_$!<X>!$_` is decoded as ios.addressbook does (the rule restated in ios_addressbook.py: the wrapper with a
     non-empty X gives X, the stored label in raw.phone_label_stored); any other label text is kept as it is.
   - the LID statement is the row's own ZLID (D6): raw.lid_map only for a non-empty unaltered ZLID on a row whose ZWHATSAPPID is a
-    user-class JID; with a non-empty ZLID otherwise raw.lid_state says why. A column the variant lacks adds nothing.
+    user-class JID; with a non-empty ZLID otherwise raw.lid_state says why (amendment 4I2-A5: jid-undecided for a JID that is
+    altered, too-long or not text, jid-not-a-phone for a decided JID of another class or an absent one) and raw.ZLID keeps the
+    stored LID unless it is too long. A column the variant lacks adds nothing. A JID cell that is not text keeps its stored value
+    in raw.ZWHATSAPPID; a row with no name or number and an undecided JID is the warning "(JID undecided)", never "(JID only)".
   - ZABOUTTEXT is in the Body only (cut at the text cap with its name in raw.text_flags); ZABOUTTIMESTAMP is raw, never a time.
 
 Variants (the placement of each is in internal/parsers/ioswacontacts/fixtures_test.go placeOf):
@@ -69,6 +72,7 @@ TABLES = [TABLE, "Z_PRIMARYKEY"]
 # the warning texts of the plan's vocabulary ("State vocabularies", ios.whatsapp.contacts), byte-exact
 W_NO_ID = "ZWAADDRESSBOOKCONTACT row has no name, number or JID"  # PF16(c)
 W_JID_ONLY = "ZWAADDRESSBOOKCONTACT row has no name or number (JID only)"
+W_JID_UNDECIDED = "ZWAADDRESSBOOKCONTACT row has no name or number (JID undecided)"  # final review M3
 W_NO_FULL = "ZWAADDRESSBOOKCONTACT row has no full name or number"
 W_DAMAGED = "ZWAADDRESSBOOKCONTACT row has no readable name or number (a name column is damaged or not text)"
 
@@ -199,6 +203,8 @@ def classify(r):
     if state == "absent":  # PF16(c): NULL (or empty) JID and no name, number or other naming text
         assert not any(has_text(r.get(n)) for n in names), "W_NO_ID is for a row with no naming text"
         return "warn", W_NO_ID
+    if state is not None:  # altered, too-long or not-text: no class is decided, so never "JID only"
+        return "warn", W_JID_UNDECIDED
     return "warn", W_JID_ONLY
 
 
@@ -247,17 +253,22 @@ def expect_contact(r, ctx, file="any"):
     if state == "altered":
         raw["whatsapp_id_text"] = jid
         C.mark(raw, "whatsapp_id_text")
+    if state == "not-text":  # final review M4: the stored value of a JID cell that is not text, never absent
+        raw["ZWHATSAPPID"] = X.stored(raw, "ZWHATSAPPID", r.get("ZWHATSAPPID"))
     if state:
         raw["whatsapp_id_state"] = state
     else:
         p["ims"] = [{"value": jid, "kind": "whatsapp"}]
 
-    # D6: the LID statement of the row itself, never inferred
+    # D6: the LID statement of the row itself, never inferred. Amendment 4I2-A5: a JID that is altered, too-long or not text is
+    # "jid-undecided", a decided JID of another class or an absent one "jid-not-a-phone"; with no lid_map, raw.ZLID keeps the
+    # stored LID (cleaned, text_flags on alteration) unless it is too long.
     lid_cell = r.get("ZLID")
     if lid_cell is not None:
         lb = c.text("ZLID")
         if lb is None:
             raw["lid_state"] = "not-text"
+            raw["ZLID"] = X.stored(raw, "ZLID", lid_cell)
         elif len(lb) > 0:
             cl = W.text_of(lb)
             assert len(cl.text.encode("utf-8")) <= MAX_ADDR and not cl.truncated, "the scenario holds no over-long ZLID"
@@ -265,8 +276,12 @@ def expect_contact(r, ctx, file="any"):
                 raw["lid_state"] = "altered"
             elif state is None and jid_class(jid) == "user":
                 raw["lid_map"] = [{"lid": cl.text, "jid": jid, "source": "ZWAADDRESSBOOKCONTACT.ZLID"}]
+            elif state in ("altered", "too-long", "not-text"):
+                raw["lid_state"] = "jid-undecided"
             else:
                 raw["lid_state"] = "jid-not-a-phone"
+            if "lid_map" not in raw:
+                raw["ZLID"] = X.cleaned(raw, "ZLID", lb)
 
     # raw beside interpreted: stored as they are
     v = c.int("Z_ENT")

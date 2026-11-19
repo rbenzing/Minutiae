@@ -18,7 +18,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.whatsapp.chats"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // Parser is the ios.whatsapp.chats parser. It holds no state.
@@ -174,23 +174,39 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 		return err
 	}
 	l.note(out, p)
-	g, err := preflight(ctx, in, out, p)
+	g, pfDropped, err := preflight(ctx, in, out, p)
 	if err != nil {
 		return err
 	}
 	ce := &countingEmitter{Emitter: out, counts: map[string]int64{}}
 	step := rowrun.Step{Mapping: withGuard(messageMappingWith(&env{Place: p, Label: l}), g), Identifying: p.Place == placeAppGroup}
 	_, err = rowrun.Run(ctx, in, ce, []rowrun.Step{step})
+	if dropped := pfDropped + ce.runDropped; dropped > 0 {
+		out.Note("warnings_dropped", strconv.Itoa(dropped)) // one total: preflight's and rowrun.Run's
+	}
 	if werr := ce.warn(ctx); err == nil {
 		err = werr
 	}
 	return err
 }
 
-// countingEmitter counts the records whose raw.join_undecided names a table (4I2-P7).
+// countingEmitter counts the records whose raw.join_undecided names a table (4I2-P7) and holds back rowrun.Run's note
+// warnings_dropped (runDropped), so that Parse writes one total with preflight's (the first write of a note wins).
 type countingEmitter struct {
 	parse.Emitter
-	counts map[string]int64
+	counts     map[string]int64
+	runDropped int
+}
+
+// Note holds back warnings_dropped of rowrun.Run: Parse states the total.
+func (c *countingEmitter) Note(key, value string) {
+	if key == "warnings_dropped" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.runDropped += n
+			return
+		}
+	}
+	c.Emitter.Note(key, value)
 }
 
 func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
@@ -226,15 +242,16 @@ const maxPreflightWarnings = 1000
 // preflight opens the database once, decides whether ZWAMESSAGE is present and, when it is, reads the Core Data model
 // and notes the entity numbers. It forwards the reader's warnings raised after the open (the pages of Z_PRIMARYKEY
 // it read, which Run never reads, even when it still delivered a row), and on an error all of them: the damage that
-// made the model unreadable is evidence and rowrun.Run never runs.
-func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlace) (g *joinGuard, err error) {
+// made the model unreadable is evidence and rowrun.Run never runs. A warning the host refuses is the job's failure; the
+// count it dropped over the cap is returned, for the one total note Parse writes after rowrun.Run (on an error, noted here).
+func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlace) (g *joinGuard, dropped int, err error) {
 	files, err := filesOf(in)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer db.Release()
 	n0 := len(db.Warnings()) // the open's own schema warnings: rowrun.Run's open raises them again
@@ -243,49 +260,56 @@ func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlac
 		if err != nil {
 			from = 0
 		}
-		dropped := 0
+		n := 0
 		for i, w := range db.Warnings()[from:] {
 			if i >= maxPreflightWarnings {
-				dropped++
+				n++
 				continue
 			}
 			loc := fmt.Sprintf("sqlite:file=%s;page=%d;offset=%d", w.File, w.Page, w.Offset)
 			if werr := out.Warn(ctx, loc, w.Code+": "+w.Msg); werr != nil {
+				if err == nil {
+					g, err = nil, werr // a refused warning is the job's failure, never swallowed
+				}
 				return
 			}
 		}
-		if dropped > 0 {
-			out.Note("warnings_dropped", strconv.Itoa(dropped))
+		switch {
+		case err == nil:
+			dropped = n // the total note is written once, after rowrun.Run
+		case n > 0:
+			out.Note("warnings_dropped", strconv.Itoa(n)) // rowrun.Run never runs: this is the total
 		}
 	}()
 	_, terr := db.Table(ctx, tableMessage, nil, nil)
 	switch {
 	case errors.Is(terr, sqlitedb.ErrNoSuchTable):
 		if p.Place == placeDomain {
-			return nil, ErrNoWhatsAppTables
+			return nil, 0, ErrNoWhatsAppTables
 		}
-		return nil, nil
+		return nil, 0, nil
 	case terr != nil && !dataDamage(terr):
-		return nil, terr
+		return nil, 0, terr
 	}
 	// present (a table that exists but cannot be read counts as present: the mapping that reads it reports why)
 	m, err := readModelDB(ctx, db, entMessage, entChat)
 	var me *modelError
 	if errors.As(err, &me) {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedModel, me.Reason)
+		return nil, 0, fmt.Errorf("%w: %s", ErrUnsupportedModel, me.Reason)
 	} else if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out.Note("entity."+entMessage, strconv.FormatInt(m.ByName[entMessage].Ent, 10))
 	out.Note("entity."+entChat, strconv.FormatInt(m.ByName[entChat].Ent, 10))
 	names, terr := db.Tables(ctx)
 	if terr != nil {
-		return nil, terr
+		return nil, 0, terr
 	}
 	if list := unmappedTables(names); list != "" {
 		out.Note("unmapped_tables", list)
 	}
-	return checkJoinSchema(ctx, db, out)
+	g, err = checkJoinSchema(ctx, db, out)
+	return g, 0, err // the deferred forwarding sets dropped
 }
 
 // maxUnmapped is the size of the unmapped_tables note.

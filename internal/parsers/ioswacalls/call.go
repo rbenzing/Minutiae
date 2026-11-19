@@ -164,7 +164,7 @@ func directionOf(m parse.MapContext, r cellReader, e *env, pk int64, hasPK bool)
 	if col < 0 || (e.Aggs != nil && e.Aggs.NoColumn) {
 		return state("no-aggregate-column")
 	}
-	switch _, k := rowrun.IntCell(r.row, col); {
+	switch _, k := intCellOf(r.row, col); {
 	case k == rowrun.CellNull || (k == rowrun.CellValue && z1.Value == 0):
 		return state("no-aggregate")
 	case k != rowrun.CellValue: // not an integer, or a cell that cannot be read: no key was read, so never "no-aggregate"
@@ -212,7 +212,7 @@ func directionOf(m parse.MapContext, r cellReader, e *env, pk int64, hasPK bool)
 	case jNoRow:
 		return state("no-ZWAAGGREGATECALLEVENT-row")
 	}
-	incoming, ik := rowrun.IntCell(arow, ar.cols.At(colIncoming))
+	incoming, ik := intCellOf(arow, ar.cols.At(colIncoming))
 	switch ik {
 	case rowrun.CellMissing, rowrun.CellUnknown: // the column is lacking or unreadable: unknown, not "NULL"
 		return state(stateUndec)

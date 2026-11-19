@@ -66,7 +66,7 @@ func joinMedia(m parse.MapContext, msgPK int64, forward mediaKey) (parse.Row, me
 // mediaKeyOf reads the ZMEDIAITEM cell of a message row.
 func mediaKeyOf(r cellReader) mediaKey {
 	col := r.cols.At("ZMEDIAITEM")
-	v, k := rowrun.IntCell(r.row, col)
+	v, k := intCellOf(r.row, col)
 	rowrun.Flag(r.unknown, r.row, r.prefix+"ZMEDIAITEM", col, k)
 	return mediaKey{PK: v, Set: k == rowrun.CellValue && v != 0, Bad: k == rowrun.CellOther || k == rowrun.CellUnknown}
 }

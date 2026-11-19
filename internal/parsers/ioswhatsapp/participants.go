@@ -47,11 +47,12 @@ func jidUnknownKey(field string) string {
 	return field
 }
 
-// readJID reads the JID in column col of row. CleanText comes first: a JID that cleaning changed is altered and its
-// cleaned text goes to raw[field] with text_flags (4I2-R6, the 4I carry-over); a cell that cannot be read is stated in
-// unknown and is undecided, never empty.
+// readJID reads the JID in column col of row. NULL and an empty text are empty; a cell that cannot be read (a stored NaN
+// included) is stated in unknown and is undecided, never empty. The text is then cleaned: a JID longer than the contract's
+// limit (or cut by cleaning) is too-long and keeps no text, which is checked first; a JID that cleaning changed is altered
+// and its cleaned text goes to raw[field] with text_flags (4I2-R6, the 4I carry-over).
 func readJID(row parse.Row, col int, raw, unknown map[string]any, field string) jidRef {
-	b, k := rowrun.TextCell(row, col)
+	b, k := textCellOf(row, col)
 	switch k {
 	case rowrun.CellNull:
 		return jidRef{State: stateEmpty}

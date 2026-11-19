@@ -105,7 +105,7 @@ func (c chatFacts) status() bool {
 func readChat(m parse.MapContext, r cellReader, raw, unknown map[string]any) (chatFacts, error) {
 	var c chatFacts
 	col := r.cols.At("ZCHATSESSION")
-	key, k := rowrun.IntCell(r.row, col)
+	key, k := intCellOf(r.row, col)
 	switch {
 	case k == rowrun.CellNull || (k == rowrun.CellValue && key == 0):
 		c.Ref.State = "absent"
@@ -164,7 +164,7 @@ func readChat(m parse.MapContext, r cellReader, raw, unknown map[string]any) (ch
 // ZMEMBERJID is the sender. The returned State is "" for a usable person's JID, else why there is none (the vocabulary
 // of raw.sender_state).
 func readSender(m parse.MapContext, r cellReader, raw, unknown map[string]any) (jidRef, error) {
-	key, k := rowrun.IntCell(r.row, r.cols.At("ZGROUPMEMBER"))
+	key, k := intCellOf(r.row, r.cols.At("ZGROUPMEMBER"))
 	switch {
 	case k == rowrun.CellNull || (k == rowrun.CellValue && key == 0):
 		return jidRef{State: "absent"}, nil
@@ -407,7 +407,7 @@ func addressConflict(r cellReader, raw map[string]any, dir string, chat chatFact
 	} else if dir != message.DirIn {
 		return
 	}
-	b, k := rowrun.TextCell(r.row, r.cols.At(col))
+	b, k := textCellOf(r.row, r.cols.At(col))
 	if k != rowrun.CellValue || len(b) == 0 {
 		return
 	}
@@ -464,7 +464,7 @@ func joinMediaOf(m parse.MapContext, r cellReader, raw map[string]any, pk int64,
 // names the row. A key that names no row is raw.receipt_info_state; a table that cannot be joined is raw.join_undecided.
 func readReceipt(m parse.MapContext, r cellReader, raw, unknown map[string]any) error {
 	col := r.cols.At("ZMESSAGEINFO")
-	key, k := rowrun.IntCell(r.row, col)
+	key, k := intCellOf(r.row, col)
 	rowrun.Flag(unknown, r.row, prefixMessage+"ZMESSAGEINFO", col, k)
 	if k != rowrun.CellValue || key == 0 {
 		return nil // NULL and 0 name none; an unreadable cell is stated in unknown_columns, never read as none

@@ -40,14 +40,14 @@ type cellReader struct {
 
 // int reads an INTEGER cell.
 func (r cellReader) int(name string) (int64, bool) {
-	v, k := rowrun.IntCell(r.row, r.cols.At(name))
+	v, k := intCellOf(r.row, r.cols.At(name))
 	rowrun.Flag(r.unknown, r.row, r.prefix+name, r.cols.At(name), k)
 	return v, k == rowrun.CellValue
 }
 
 // text reads a TEXT cell; the bytes may be empty (a stored empty string is a value).
 func (r cellReader) text(name string) ([]byte, bool) {
-	v, k := rowrun.TextCell(r.row, r.cols.At(name))
+	v, k := textCellOf(r.row, r.cols.At(name))
 	rowrun.Flag(r.unknown, r.row, r.prefix+name, r.cols.At(name), k)
 	return v, k == rowrun.CellValue
 }
@@ -198,6 +198,24 @@ func setBody(msg *message.Message, raw map[string]any, c common.Cleaned) {
 func nanCell(row parse.Row, col int) bool {
 	r, ok := row.(sqlitedb.Row)
 	return ok && col >= 0 && r.State(col) == sqlitedb.StateNull && r.Value(col).Serial == 7
+}
+
+// intCellOf is rowrun.IntCell with a stored NaN read as a value of another class (CellOther), never as NULL.
+func intCellOf(row parse.Row, col int) (int64, rowrun.CellKind) {
+	v, k := rowrun.IntCell(row, col)
+	if k == rowrun.CellNull && nanCell(row, col) {
+		k = rowrun.CellOther
+	}
+	return v, k
+}
+
+// textCellOf is rowrun.TextCell with a stored NaN read as a value of another class (CellOther), never as NULL.
+func textCellOf(row parse.Row, col int) ([]byte, rowrun.CellKind) {
+	b, k := rowrun.TextCell(row, col)
+	if k == rowrun.CellNull && nanCell(row, col) {
+		k = rowrun.CellOther
+	}
+	return b, k
 }
 
 // nanStatus states a date column that holds a NaN as raw.<name>_status = "invalid" (no time, no stored value to show).

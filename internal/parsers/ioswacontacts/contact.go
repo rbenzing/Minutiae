@@ -34,6 +34,7 @@ const (
 const (
 	reasonNotPersonFmt = tableContact + " row is not a person (%s)"
 	reasonJIDOnly      = tableContact + " row has no name or number (JID only)"
+	reasonJIDUndecided = tableContact + " row has no name or number (JID undecided)"
 	reasonNoFullName   = tableContact + " row has no full name or number"
 	reasonNameDamaged  = tableContact + " row has no readable name or number (a name column is damaged or not text)"
 	reasonNoIdentity   = tableContact + " row has no name, number or JID"
@@ -258,10 +259,14 @@ func mapContact(m parse.MapContext, row parse.Row, e *env, names []string) ([]re
 		if hb, _ := r.peekText(colHighlight); usable(given, gk) || len(hb) > 0 {
 			return nil, rowrun.Unmappable(reasonNoFullName)
 		}
-		if jid.State == "absent" {
+		switch jid.State {
+		case "absent":
 			return nil, rowrun.Unmappable(reasonNoIdentity)
+		case "":
+			return nil, rowrun.Unmappable(reasonJIDOnly) // a decided person's JID (user or lid)
 		}
-		return nil, rowrun.Unmappable(reasonJIDOnly)
+		return nil, rowrun.Unmappable(reasonJIDUndecided) // altered, too-long or not-text: no class is decided
+
 	}
 
 	rowLabel(m, e).raw(raw)
@@ -300,9 +305,14 @@ func mapContact(m parse.MapContext, row parse.Row, e *env, names []string) ([]re
 		ct.IMs = []contact.Value{{Value: jid.Text, Kind: "whatsapp"}}
 	} else {
 		raw["whatsapp_id_state"] = jid.State
-		if jid.State == "altered" {
+		switch jid.State {
+		case "altered":
 			raw["whatsapp_id_text"] = jid.Text
 			markText(raw, "whatsapp_id_text")
+		case "not-text":
+			if v := r.stored(colWhatsAppID); v != nil {
+				raw[colWhatsAppID] = v // as stored: an integer, a float or a blob marker (unknown is never absent)
+			}
 		}
 	}
 	lidState(r, jid)
@@ -337,9 +347,11 @@ func mapContact(m parse.MapContext, row parse.Row, e *env, names []string) ([]re
 	return []records.Record{rec}, nil
 }
 
-// lidState states what the row's own ZLID says (D6): raw.lid_map when it is clean text and the row's JID is a user (phone)
-// JID, else, with a non-empty ZLID, raw.lid_state. The LID is kept as stored: its format is not established. Nothing is inferred
-// from the JID, and no other row is consulted.
+// lidState states what the row's own ZLID says (D6): raw.lid_map when it is clean text and the row's JID is a decided user
+// (phone) JID, else, with a non-empty ZLID, raw.lid_state (amendment 4I2-A5): "jid-undecided" for a JID that is altered,
+// too-long or not text, "jid-not-a-phone" for a decided JID of another class or an absent one. Whenever no lid_map is written
+// and the LID is not too long, raw.ZLID keeps it as stored (cleaned, listed in text_flags when cleaning changed it): its format
+// is not established. Nothing is inferred from the JID, and no other row is consulted.
 func lidState(r cellReader, jid jidCell) {
 	b, k := r.text(colLID)
 	switch {
@@ -347,19 +359,27 @@ func lidState(r cellReader, jid jidCell) {
 		return
 	case k != rowrun.CellValue:
 		r.raw["lid_state"] = "not-text"
+		if v := r.stored(colLID); v != nil {
+			r.raw[colLID] = v
+		}
 		return
 	}
 	cl := common.CleanText(b, maxText)
 	switch {
 	case len(cl.Text) > maxJID || cl.Truncated:
-		r.raw["lid_state"] = "too-long"
+		r.raw["lid_state"] = "too-long" // no text kept: it would be over the contract's limit
+		return
 	case len(cl.Flags) > 0:
 		r.raw["lid_state"] = "altered"
 	case jid.State == "" && jid.Class == string(wajid.ClassUser):
 		r.raw["lid_map"] = []any{map[string]any{"lid": cl.Text, "jid": jid.Text, "source": tableContact + "." + colLID}}
+		return
+	case jid.State == "altered" || jid.State == "too-long" || jid.State == "not-text":
+		r.raw["lid_state"] = "jid-undecided"
 	default:
 		r.raw["lid_state"] = "jid-not-a-phone"
 	}
+	r.raw[colLID] = cleanField(r.raw, colLID, b)
 }
 
 // wrapped returns X for a system label of the form _$!<X>!$_ with a non-empty X (the rule of ios.addressbook, restated).

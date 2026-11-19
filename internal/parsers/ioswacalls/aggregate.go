@@ -83,7 +83,7 @@ func loadAggregates(ctx context.Context, db *sqlitedb.DB, b *parse.BudgetView, m
 			lossy("a call row is damaged")
 			return nil
 		}
-		key, k := rowrun.IntCell(r, col)
+		key, k := intCellOf(r, col)
 		switch k {
 		case rowrun.CellNull, rowrun.CellOther: // names no aggregate (the row's own state says undecided for a non-integer)
 			return nil

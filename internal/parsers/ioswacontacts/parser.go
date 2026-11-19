@@ -14,7 +14,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.whatsapp.contacts"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // Parser is the ios.whatsapp.contacts parser. It holds no state.
