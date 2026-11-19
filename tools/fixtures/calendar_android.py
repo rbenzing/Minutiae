@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 
 import telephony_common as C
 
@@ -537,6 +538,25 @@ def expect_event(r, env, remote, file="any"):
             "body": body, "payload": p}
 
 
+def put_entry(entry, key, v):
+    """A stored value in a child entry (level 4: scalars only, B8): a BLOB is the sibling scalar <key>_blob_b64
+    (Task 5 fix round 1, C1)."""
+    j = jv(v)
+    if isinstance(j, dict):
+        entry[key + "_blob_b64"] = j["blob_b64"]
+    else:
+        entry[key] = j
+    return entry
+
+
+def entry_of(row, cols):
+    e = {}
+    for k in cols:
+        if row.get(k) is not None:
+            put_entry(e, k, row[k])
+    return e
+
+
 def capped(items, key, holder):
     if len(items) > MAX_LIST:
         holder[key + "_total"], holder[key + "_truncated"] = len(items), True
@@ -545,17 +565,19 @@ def capped(items, key, holder):
 
 
 def children(p, raw, tf, unknown, env, rid):
-    att, att_raw, unnamed = [], [], 0
+    att, att_raw, unnamed, unnamed_raw = [], [], 0, []
     rows = sorted(env.children["Attendees"].get(rid, []), key=lambda x: x["rowid"])
     for a in rows:
-        e, extra = {}, {}
+        e, extra, undecided = {}, {}, False
         addr = a.get("attendeeEmail")
         if is_text(addr) and addr and len(addr) <= MAX_ID:
             e["address"] = addr.decode("utf-8", errors="replace")
         elif is_text(addr) and addr:  # C5: never cut, never dropped silently (F27, fix round 1, M4)
             extra = {"address_state": "too-long", "address_len": len(addr), "address_sha256": hashlib.sha256(addr).hexdigest()}
-        elif addr is not None and not is_text(addr):
+        elif addr is not None and not is_text(addr):  # kept as stored, its address undecided (Task 5 fix round 1, I3)
             unknown["Attendees.attendeeEmail"] = "type-mismatch"
+            extra = put_entry({"address_state": "undecided"}, "attendeeEmail", addr)
+            undecided = True
         name = a.get("attendeeName")
         if is_text(name) and name:
             c = C.clean(name, MAX_TITLE)
@@ -565,15 +587,18 @@ def children(p, raw, tf, unknown, env, rid):
                 e["name"] = c.text
         elif name is not None and not is_text(name):  # spec 9: a wrong type is listed, never absent silently
             unknown["Attendees.attendeeName"] = "type-mismatch"
-        codes = {k: jv(a[k]) for k in ("attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace")
-                 if a.get(k) is not None}
+        codes = {}
+        for k in ("attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace"):
+            if a.get(k) is not None:
+                put_entry(codes, k, a[k])
         for col in ("attendeeRelationship", "attendeeType", "attendeeStatus"):
             if a.get(col) is not None and not is_int(a[col]):
                 unknown["Attendees." + col] = "type-mismatch"
         if not e:
-            unnamed += 1
-            if extra:  # F27: its raw.attendees entry keeps the address length and SHA-256 as sibling scalars
-                att_raw.append(dict(codes, **extra))
+            if not undecided:
+                unnamed += 1
+            if extra:  # F27, I3: its entry goes to raw.attendees_unnamed_entries; raw.attendees stays parallel (I2)
+                unnamed_raw.append(dict(codes, **extra))
             continue
         for col, key, table in (("attendeeRelationship", "role", RELATIONSHIP), ("attendeeType", "type", ATTENDEE_TYPE),
                                 ("attendeeStatus", "status", ATTENDEE_STATUS)):
@@ -585,10 +610,12 @@ def children(p, raw, tf, unknown, env, rid):
     att = capped(att, "attendees", p)
     if att:
         p["attendees"] = att
-    if att_raw:
         raw["attendees"] = att_raw[:MAX_LIST]
     if unnamed:
         raw["attendees_unnamed"] = unnamed
+    unnamed_raw = capped(unnamed_raw, "attendees_unnamed_entries", raw)
+    if unnamed_raw:
+        raw["attendees_unnamed_entries"] = unnamed_raw
     rem, rem_raw = [], []
     for x in sorted(env.children["Reminders"].get(rid, []), key=lambda x: x["rowid"]):
         e = {}
@@ -609,14 +636,14 @@ def children(p, raw, tf, unknown, env, rid):
         if not e:
             continue
         rem.append(e)
-        rem_raw.append({k: jv(x[k]) for k in ("minutes", "method") if x.get(k) is not None})
+        rem_raw.append(entry_of(x, ("minutes", "method")))
     rem = capped(rem, "reminders", p)
     if rem:
         p["reminders"] = rem
         raw["reminders"] = rem_raw[:MAX_LIST]
     alerts = []
     for x in sorted(env.children["CalendarAlerts"].get(rid, []), key=lambda x: x["rowid"]):
-        e = {k: jv(x[k]) for k in ("begin", "end", "alarmTime", "creationTime", "receivedTime", "notifyTime", "state") if x.get(k) is not None}
+        e = entry_of(x, ("begin", "end", "alarmTime", "creationTime", "receivedTime", "notifyTime", "state"))
         if is_int(x.get("state")) and x["state"] in ALERT_STATE:
             e["state_label"] = ALERT_STATE[x["state"]]
         alerts.append(e)
@@ -630,7 +657,7 @@ def children(p, raw, tf, unknown, env, rid):
         if is_text(name) and len(name) > MAX_ID:  # the name is an identifier: never cut (spec 7.3, 9)
             e.update({"name_state": "too-long", "name_len": len(name), "name_sha256": hashlib.sha256(name).hexdigest()})
         elif name is not None:
-            e["name"] = jv(name)
+            put_entry(e, "name", name)
         v = x.get("value")
         if is_text(v):
             c = C.clean(v, MAX_PROP)
@@ -638,7 +665,7 @@ def children(p, raw, tf, unknown, env, rid):
             if c.flags:
                 e["value_flags"] = ",".join(c.flags)
         elif v is not None:
-            e["value"] = jv(v)
+            put_entry(e, "value", v)
         props.append(e)
     props = capped(props, "extended_properties", raw)
     if props:
@@ -646,9 +673,11 @@ def children(p, raw, tf, unknown, env, rid):
     rt = env.children["EventsRawTimes"].get(rid, [])
     if rt:
         x = sorted(rt, key=lambda x: x["rowid"])[0]
-        e = {k: jv(x[k]) for k in ("dtstart2445", "dtend2445", "originalInstanceTime2445", "lastDate2445") if x.get(k) is not None}
+        e = entry_of(x, ("dtstart2445", "dtend2445", "originalInstanceTime2445", "lastDate2445"))
         if e:
             raw["raw_times"] = e
+        if len(rt) > 1:  # Task 5 fix round 1, M5: more than one row is stated, never dropped silently
+            raw["raw_times_total"] = len(rt)
 
 
 def summary(p, start):
@@ -796,6 +825,34 @@ UNMAPPED_TABLES = ("Instances", "Colors", "_sync_state", "_sync_state_metadata")
 MAX_NOTE = 512
 
 
+# The columns each child join reads or names (Task 5 fix round 1, M7): the others are unmapped_columns.<table>.
+CHILD_READ = {
+    "Attendees": ("event_id", "attendeeEmail", "attendeeName", "attendeeRelationship", "attendeeType", "attendeeStatus",
+                  "attendeeIdentity", "attendeeIdNamespace"),
+    "Reminders": ("event_id", "minutes", "method"),
+    "CalendarAlerts": ("event_id", "begin", "end", "alarmTime", "creationTime", "receivedTime", "notifyTime", "state"),
+    "ExtendedProperties": ("event_id", "name", "value"),
+    "EventsRawTimes": ("event_id", "dtstart2445", "dtend2445", "originalInstanceTime2445", "lastDate2445"),
+}
+
+
+def ascii_fold(s):
+    """The ASCII-only case fold of the engine (and of the Go parser): other letters are left as they are."""
+    return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in s)
+
+
+def declared_columns(sql):
+    """[(name, is_rowid_alias)] of a CREATE TABLE statement, read by the engine itself (an empty in-memory database)."""
+    con = sqlite3.connect(":memory:")
+    try:
+        con.execute(sql)
+        info = con.execute("select name, type, pk from pragma_table_info((select name from sqlite_master where type = 'table'))").fetchall()
+    finally:
+        con.close()
+    pks = [r for r in info if r[2]]
+    return [(n, len(pks) == 1 and pk == 1 and t.upper() == "INTEGER") for n, t, pk in info]
+
+
 def note_list(names):
     """A comma list cut at an entry boundary within MAX_NOTE bytes, with a trailing ",…" (plan "Notes and warnings")."""
     out = ""
@@ -853,13 +910,21 @@ def oracle(files, ddl_name, variant, user_version, refused=False):
     tables = sorted({jv(m["name"]) for m in view["sqlite_master"] if m["type"] == b"table"}, key=lambda n: n.encode("utf-8"))
     if tables:
         notes["tables"] = note_list(tables)
-    unmapped = [t for t in UNMAPPED_TABLES if any(n.lower() == t.lower() for n in tables)]
+    unmapped = [t for t in UNMAPPED_TABLES if any(ascii_fold(n) == ascii_fold(t) for n in tables)]
     if unmapped:
         notes["unmapped_tables"] = note_list(unmapped)
     if view.get("Events"):
         C.note_columns(list(view["Events"][0])[1:], EVENTS_MAPPED, "Events", notes)
+    for m in view["sqlite_master"]:
+        name = jv(m["name"])
+        if m["type"] == b"table" and name in CHILD_READ:
+            un = [c for c, alias in declared_columns(jv(m["sql"])) if not alias and ascii_fold(c) not in [ascii_fold(k) for k in CHILD_READ[name]]]
+            if un:
+                notes["unmapped_columns." + name] = ",".join(un)
     if "Instances" in view:  # a present table's row count, 0 included
         notes["rows.Instances"] = str(len(view["Instances"]))
+    if "CalendarMetaData" in view:  # Task 5 fix round 1, M6: later rows are counted, never dropped silently
+        notes["rows.CalendarMetaData"] = str(len(view["CalendarMetaData"]))
     for m in view.get("CalendarMetaData", [])[:1]:
         for k in ("localTimezone", "minInstance", "maxInstance"):
             if m.get(k) is not None:

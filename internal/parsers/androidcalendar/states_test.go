@@ -106,10 +106,14 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 			map[string]any{"attendees": nil, "reminders": nil, "attendees_total": nil, "reminders_total": nil},
 		},
 		// children (spec 7.3, 9, F27): an address over 1 KiB is never kept nor cut; with no name the attendee is counted
-		// unnamed and its raw.attendees entry keeps the length and SHA-256 as sibling scalars
+		// unnamed and its entry, in raw.attendees_unnamed_entries (raw.attendees stays parallel to attendees, fix round
+		// 1, I2), keeps the length and SHA-256 as sibling scalars
 		{
 			39, nil,
-			map[string]any{"attendees_unnamed": int64(1), "attendees": []any{map[string]any{"attendeeRelationship": int64(1), "address_state": "too-long", "address_len": int64(len(longAddr)), "address_sha256": sha(longAddr)}}},
+			map[string]any{
+				"attendees_unnamed": int64(1), "attendees": nil,
+				"attendees_unnamed_entries": []any{map[string]any{"attendeeRelationship": int64(1), "address_state": "too-long", "address_len": int64(len(longAddr)), "address_sha256": sha(longAddr)}},
+			},
 			map[string]any{"attendees": nil},
 		},
 		{
@@ -124,12 +128,40 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 			map[string]any{"alerts_total": int64(1001), "alerts_truncated": true, "extended_properties_total": int64(1001), "extended_properties_truncated": true},
 			map[string]any{"attendees_total": int64(1001), "attendees_truncated": true, "reminders_total": int64(1001), "reminders_truncated": true},
 		},
-		// a wrongly typed attendee address is listed, never absent silently (spec 9); the named attendee stays
+		// a wrongly typed attendee address is listed and kept as stored with address_state "undecided", never absent
+		// silently (spec 9, C1, fix round 1, I3): beside a name in the parallel raw.attendees entry; without one in
+		// raw.attendees_unnamed_entries, not counted as an attendee with neither address nor name
 		{
 			43, nil,
-			map[string]any{"unknown_columns": map[string]any{"Attendees.attendeeEmail": "type-mismatch"}, "attendees": []any{map[string]any{}}},
+			map[string]any{
+				"unknown_columns": map[string]any{"Attendees.attendeeEmail": "type-mismatch"},
+				"attendees":       []any{map[string]any{"attendeeEmail": int64(5), "address_state": "undecided"}},
+			},
 			map[string]any{"attendees": []any{map[string]any{"name": "Num"}}},
 		},
+		{
+			44, nil,
+			map[string]any{
+				"attendees_unnamed": nil, "attendees": nil,
+				"attendees_unnamed_entries": []any{map[string]any{"attendeeEmail_blob_b64": "AQI=", "address_state": "undecided"}},
+			},
+			map[string]any{"attendees": nil},
+		},
+		// a BLOB in a child cell is flattened to a sibling scalar <col>_blob_b64 (B8: raw stays within the container
+		// depth; fix round 1, C1), and the event is still emitted
+		{
+			45, nil,
+			map[string]any{
+				"attendees":           []any{map[string]any{"attendeeType_blob_b64": "AQI="}},
+				"alerts":              []any{map[string]any{"begin_blob_b64": "AQI=", "state": int64(1), "state_label": "fired"}},
+				"extended_properties": []any{map[string]any{"name": "n", "value_blob_b64": "AQI="}},
+				"raw_times":           map[string]any{"dtstart2445_blob_b64": "AQI="},
+				"unknown_columns":     map[string]any{"Attendees.attendeeType": "type-mismatch"},
+			},
+			map[string]any{"attendees": []any{map[string]any{"name": "Blob", "type": "unknown"}}},
+		},
+		// more than one EventsRawTimes row: the first is kept and the number is stated (fix round 1, M5)
+		{46, nil, map[string]any{"raw_times": map[string]any{"dtstart2445": "A"}, "raw_times_total": int64(2)}, nil},
 	}
 	var rows []row
 	for _, c := range cases {
@@ -140,8 +172,17 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 			{1, map[string]any{"event_id": int64(39), "attendeeEmail": longAddr, "attendeeRelationship": int64(1)}},
 			{2, map[string]any{"event_id": int64(40), "attendeeEmail": longAddr, "attendeeName": "Named"}},
 			{3, map[string]any{"event_id": int64(43), "attendeeEmail": int64(5), "attendeeName": "Num"}},
+			{4, map[string]any{"event_id": int64(44), "attendeeEmail": []byte{1, 2}}},
+			{5, map[string]any{"event_id": int64(45), "attendeeName": "Blob", "attendeeType": []byte{1, 2}}},
 		},
-		"Reminders": {{1, map[string]any{"event_id": int64(41), "minutes": int64(-5), "method": int64(2)}}},
+		"Reminders":          {{1, map[string]any{"event_id": int64(41), "minutes": int64(-5), "method": int64(2)}}},
+		"CalendarAlerts":     {{2000, map[string]any{"event_id": int64(45), "begin": []byte{1, 2}, "state": int64(1)}}},
+		"ExtendedProperties": {{2000, map[string]any{"event_id": int64(45), "name": "n", "value": []byte{1, 2}}}},
+		"EventsRawTimes": {
+			{1, map[string]any{"event_id": int64(45), "dtstart2445": []byte{1, 2}}},
+			{2, map[string]any{"event_id": int64(46), "dtstart2445": "A"}},
+			{3, map[string]any{"event_id": int64(46), "dtstart2445": "B"}},
+		},
 	}
 	for i := int64(1); i <= 1001; i++ {
 		kids["Attendees"] = append(kids["Attendees"], row{100 + i, map[string]any{"event_id": int64(42), "attendeeName": "N"}})

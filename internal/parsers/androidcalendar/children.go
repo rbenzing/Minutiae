@@ -13,8 +13,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 )
 
-// The child tables the mapping joins by event_id (spec 7.3), their list cap (spec 4.1, 9: the telephony list cap) and
-// the cap of an extended property's value.
+// The child tables the mapping joins by event_id (spec 7.3), their list cap (spec 4.1, 9: the telephony list cap),
+// the cap of an extended property's value and the child states.
 const (
 	tableAttendees    = "Attendees"
 	tableReminders    = "Reminders"
@@ -27,8 +27,28 @@ const (
 )
 
 // childStateKeys are the raw state keys of the child joins: a recovered row (nil env) joins none of them and states
-// each as "not-joined-recovered" (4I3-P4, B2).
-var childStateKeys = []string{"attendees_state", "reminders_state", "alerts_state", "extended_properties_state", "raw_times_state"}
+// each as "not-joined-recovered" (4I3-P4, B2). A fresh slice per call: the package holds no mutable state.
+func childStateKeys() []string {
+	return []string{"attendees_state", "reminders_state", "alerts_state", "extended_properties_state", "raw_times_state"}
+}
+
+// childColumns are the columns each child table's join reads (or names, event_id), for the note
+// unmapped_columns.<table> (fix round 1, M7).
+func childColumns(table string) []string {
+	switch table {
+	case tableAttendees:
+		return []string{"event_id", "attendeeEmail", "attendeeName", "attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace"}
+	case tableReminders:
+		return []string{"event_id", "minutes", "method"}
+	case tableAlerts:
+		return append([]string{"event_id"}, alertCols()...)
+	case tableProperties:
+		return []string{"event_id", "name", "value"}
+	case tableRawTimes:
+		return append([]string{"event_id"}, rawTimesCols()...)
+	}
+	return nil
+}
 
 // childRows returns the rows of table whose event_id is id, in row-id order. undecided is true when the answer is not
 // trusted (spec 7.3, 9): a table the database lacks or that cannot be read, a lossy or over-cap join index, a guarded
@@ -75,6 +95,26 @@ func capCount(n int) (*int64, bool) {
 	return &t, true
 }
 
+// putEntry keeps a stored value v in a child entry under key. A child entry is a map inside a raw list (level 4), so
+// it holds scalars only (B8): a BLOB, which raw elsewhere states as {"blob_b64": ...}, is flattened to the sibling
+// scalar <key>_blob_b64 (fix round 1, C1).
+func putEntry(entry map[string]any, key string, v any) {
+	if b, ok := v.(map[string]any); ok {
+		if s, ok := b["blob_b64"].(string); ok {
+			entry[key+"_blob_b64"] = s
+		}
+		return
+	}
+	entry[key] = v
+}
+
+// storeCell keeps the stored value of column name of c in entry under the same name (putEntry), if it has one.
+func storeCell(c cells, entry map[string]any, name string) {
+	if v, ok := c.stored(name); ok {
+		putEntry(entry, name, v)
+	}
+}
+
 // childCode maps a stored child code of col by the contract's column enum (spec 2): the stored value is kept in entry
 // and its label returned, "unknown" for a value the contract does not define; a wrongly typed or unreadable cell is
 // also listed in unknown_columns; NULL states nothing.
@@ -93,43 +133,63 @@ func childCode(c cells, col, enum string, entry map[string]any) string {
 	}
 	rowrun.Flag(c.unknown, c.row, c.prefix+col, i, k)
 	if s, ok := storedOther(c.row, i); ok {
-		entry[col] = s
+		putEntry(entry, col, s)
 	}
 	return labelUnknown
 }
 
-// attendeesOf joins the event's Attendees (spec 7.3): attendeeEmail is the address (an identifier, never cut: over
-// 1 KiB it is not kept and its raw entry states address_state "too-long", address_len and address_sha256 as sibling
-// scalars, F27), attendeeName the name (cleaned at 4 KiB; an altered name puts "attendees" in raw.text_flags). An
-// attendee with neither is not in attendees and is counted in raw.attendees_unnamed; its raw entry is kept only when
-// it states an over-long address. raw.attendees holds the stored codes, attendeeIdentity and attendeeIdNamespace,
-// aligned with attendees but for those entries. It returns the attendees (at most maxList), their total and whether
-// they were cut.
+// readAddress reads attendeeEmail into a and entry: TEXT within 1 KiB is the address; longer is not kept (an
+// identifier is never cut) and entry states address_state "too-long", address_len and address_sha256 (F27); a cell of
+// another class or an unreadable one keeps its stored value in entry (when it has one), is listed in unknown_columns
+// and states address_state "undecided" (fix round 1, I3). It reports whether the address is undecided: such a row is
+// not one with "neither address nor name".
+func readAddress(c cells, a *calendar.Attendee, entry map[string]any) bool {
+	col := c.c.At("attendeeEmail")
+	b, k := textCellOf(c.row, col)
+	switch k {
+	case rowrun.CellValue:
+		switch {
+		case len(b) == 0:
+		case len(b) > maxID:
+			entry["address_state"] = stateTooLong
+			entry["address_len"] = int64(len(b))
+			entry["address_sha256"] = sha256Hex(b)
+		default:
+			a.Address = validText(b)
+		}
+	case rowrun.CellOther, rowrun.CellUnknown:
+		rowrun.Flag(c.unknown, c.row, c.prefix+"attendeeEmail", col, k)
+		storeCell(c, entry, "attendeeEmail")
+		entry["address_state"] = stateUndecided
+		return true
+	}
+	return false
+}
+
+// attendeesOf joins the event's Attendees (spec 7.3): attendeeEmail is the address (readAddress), attendeeName the
+// name (cleaned at 4 KiB; an altered name puts "attendees" in raw.text_flags), the codes labelled by the contract.
+// raw.attendees holds each attendee's stored codes, attendeeIdentity, attendeeIdNamespace and address state, strictly
+// parallel to attendees (spec 7.3 "aligned by order"; fix round 1, I2). A row with no name and no address is not an
+// attendee: with neither (an over-long address counts as none, F27) it is counted in raw.attendees_unnamed; its entry,
+// when it states an address (over-long or undecided), goes to raw.attendees_unnamed_entries (at most maxList, with
+// _total and _truncated). It returns the attendees (at most maxList), their total and whether they were cut.
 func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]calendar.Attendee, *int64, bool, error) {
 	rows, undecided, err := childRows(m, tableAttendees, id, r.raw)
 	if err != nil || undecided {
 		return nil, nil, false, err
 	}
 	var (
-		out     []calendar.Attendee
-		rawList []any
-		named   int
-		unnamed int64
+		list                  []calendar.Attendee
+		rawList, unnamedList  []any
+		named, unnamedEntries int
+		unnamed               int64
 	)
 	for _, row := range rows {
 		c := childCells(m, r, tableAttendees, row, "attendeeEmail", "attendeeName", "attendeeRelationship", "attendeeType",
 			"attendeeStatus", "attendeeIdentity", "attendeeIdNamespace")
 		var a calendar.Attendee
 		entry := map[string]any{}
-		if b, ok := c.text("attendeeEmail"); ok && len(b) > 0 {
-			if len(b) > maxID {
-				entry["address_state"] = stateTooLong
-				entry["address_len"] = int64(len(b))
-				entry["address_sha256"] = sha256Hex(b)
-			} else {
-				a.Address = validText(b)
-			}
-		}
+		addrUndecided := readAddress(c, &a, entry)
 		if b, ok := c.text("attendeeName"); ok && len(b) > 0 {
 			cl := common.CleanText(b, maxTitle)
 			if len(cl.Flags) > 0 {
@@ -140,23 +200,23 @@ func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]cale
 		a.Role = childCode(c, "attendeeRelationship", "attendeeRelationship", entry)
 		a.Type = childCode(c, "attendeeType", "attendeeType", entry)
 		a.Status = childCode(c, "attendeeStatus", "attendeeStatus", entry)
-		for _, n := range []string{"attendeeIdentity", "attendeeIdNamespace"} {
-			if v, ok := c.stored(n); ok {
-				entry[n] = v
-			}
-		}
+		storeCell(c, entry, "attendeeIdentity")
+		storeCell(c, entry, "attendeeIdNamespace")
 		if a.Address == "" && a.Name == "" {
-			unnamed++
-			if _, long := entry["address_state"]; long && len(rawList) < maxList {
-				rawList = append(rawList, entry)
+			if !addrUndecided {
+				unnamed++
+			}
+			if _, stated := entry["address_state"]; stated {
+				unnamedEntries++
+				if len(unnamedList) < maxList {
+					unnamedList = append(unnamedList, entry)
+				}
 			}
 			continue
 		}
 		named++
-		if len(out) < maxList {
-			out = append(out, a)
-		}
-		if len(rawList) < maxList {
+		if len(list) < maxList {
+			list = append(list, a)
 			rawList = append(rawList, entry)
 		}
 	}
@@ -166,8 +226,9 @@ func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]cale
 	if unnamed > 0 {
 		r.raw["attendees_unnamed"] = unnamed
 	}
+	putList(r.raw, "attendees_unnamed_entries", unnamedList, unnamedEntries)
 	total, cut := capCount(named)
-	return out, total, cut, nil
+	return list, total, cut, nil
 }
 
 // remindersOf joins the event's Reminders (spec 7.3): before_s = minutes x 60 for minutes >= 0; -1 (the provider's
@@ -200,9 +261,7 @@ func remindersOf(m parse.MapContext, id int64, r cells) ([]calendar.Reminder, *i
 			rowrun.Flag(r.unknown, row, c.prefix+"minutes", col, k)
 		}
 		entry := map[string]any{}
-		if v, ok := c.stored("minutes"); ok {
-			entry["minutes"] = v
-		}
+		storeCell(c, entry, "minutes")
 		rem.Method = childCode(c, "method", "Reminders.method", entry)
 		if rem.BeforeS == nil && rem.Method == "" {
 			continue
@@ -220,16 +279,21 @@ func remindersOf(m parse.MapContext, id int64, r cells) ([]calendar.Reminder, *i
 	return out, total, cut, nil
 }
 
-// The CalendarAlerts columns raw.alerts states as stored (spec 7.3), and the raw times of EventsRawTimes.
-var (
-	alertCols    = []string{"begin", "end", "alarmTime", "creationTime", "receivedTime", "notifyTime", "state"}
-	rawTimesCols = []string{"dtstart2445", "dtend2445", "originalInstanceTime2445", "lastDate2445"}
-)
+// alertCols are the CalendarAlerts columns raw.alerts states as stored (spec 7.3). A fresh slice per call.
+func alertCols() []string {
+	return []string{"begin", "end", "alarmTime", "creationTime", "receivedTime", "notifyTime", "state"}
+}
+
+// rawTimesCols are the RFC 2445 strings of EventsRawTimes raw.raw_times states as stored. A fresh slice per call.
+func rawTimesCols() []string {
+	return []string{"dtstart2445", "dtend2445", "originalInstanceTime2445", "lastDate2445"}
+}
 
 // rawChildren keeps the raw-only child tables (spec 7.3, Q8): raw.alerts (each column as stored, a defined state with
 // its state_label; a fired alert is not a record), raw.extended_properties (the name as an identifier, never cut; the
-// value cleaned and cut at 4 KiB with value_flags), each at most maxList with _total and _truncated, and raw.raw_times
-// (the first EventsRawTimes row's four RFC 2445 strings as stored).
+// value cleaned and cut at 4 KiB with value_flags), each at most maxList with _total and _truncated (the entries of the
+// first maxList rows only), and raw.raw_times (the first EventsRawTimes row's four RFC 2445 strings as stored; more
+// than one row states raw_times_total, fix round 1, M5). Every entry holds scalars only (putEntry).
 func rawChildren(m parse.MapContext, id int64, r cells) error {
 	if err := alertsOf(m, id, r); err != nil {
 		return err
@@ -241,15 +305,16 @@ func rawChildren(m parse.MapContext, id int64, r cells) error {
 	if err != nil || undecided || len(rows) == 0 {
 		return err
 	}
-	c := childCells(m, r, tableRawTimes, rows[0], rawTimesCols...)
+	c := childCells(m, r, tableRawTimes, rows[0], rawTimesCols()...)
 	entry := map[string]any{}
-	for _, n := range rawTimesCols {
-		if v, ok := c.stored(n); ok {
-			entry[n] = v
-		}
+	for _, n := range rawTimesCols() {
+		storeCell(c, entry, n)
 	}
 	if len(entry) > 0 {
 		r.raw["raw_times"] = entry
+	}
+	if len(rows) > 1 { // the provider keeps one row per event (UNIQUE event_id): more is stated, never dropped silently
+		r.raw["raw_times_total"] = int64(len(rows))
 	}
 	return nil
 }
@@ -261,12 +326,10 @@ func alertsOf(m parse.MapContext, id int64, r cells) error {
 	}
 	var list []any
 	for _, row := range rows[:min(len(rows), maxList)] {
-		c := childCells(m, r, tableAlerts, row, alertCols...)
+		c := childCells(m, r, tableAlerts, row, alertCols()...)
 		entry := map[string]any{}
-		for _, n := range alertCols {
-			if v, ok := c.stored(n); ok {
-				entry[n] = v
-			}
+		for _, n := range alertCols() {
+			storeCell(c, entry, n)
 		}
 		if v, ok := entry["state"].(int64); ok {
 			if l, ok := lookupEnum("CalendarAlerts.state", v); ok {
@@ -292,8 +355,8 @@ func propertiesOf(m parse.MapContext, id int64, r cells) error {
 			if s, ok := ident(entry, "name", b, maxID); ok {
 				entry["name"] = s
 			}
-		} else if v, ok := c.stored("name"); ok {
-			entry["name"] = v
+		} else {
+			storeCell(c, entry, "name")
 		}
 		if b, k := textCellOf(row, c.c.At("value")); k == rowrun.CellValue {
 			cl := common.CleanText(b, maxProp)
@@ -301,8 +364,8 @@ func propertiesOf(m parse.MapContext, id int64, r cells) error {
 			if len(cl.Flags) > 0 {
 				entry["value_flags"] = strings.Join(cl.Flags, ",")
 			}
-		} else if v, ok := c.stored("value"); ok {
-			entry["value"] = v
+		} else {
+			storeCell(c, entry, "value")
 		}
 		list = append(list, entry)
 	}
@@ -326,7 +389,7 @@ func putList(raw map[string]any, key string, list []any, n int) {
 // every child state key is "not-joined-recovered" (4I3-P4, B2).
 func readChildren(m parse.MapContext, row parse.Row, e *env, r cells, flags textFlags, ev *calendar.Event) error {
 	if e == nil {
-		for _, k := range childStateKeys {
+		for _, k := range childStateKeys() {
 			r.raw[k] = notJoinedRecovered
 		}
 		return nil
