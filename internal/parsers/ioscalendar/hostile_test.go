@@ -153,6 +153,12 @@ func TestIOSCalendarHostileTexts(t *testing.T) {
 	s.event(3, map[string]any{"summary": rtl})
 	s.event(4, map[string]any{"url": big})
 	s.event(5, map[string]any{"summary": big})
+	// final review M2: event 6's organizer and its one attendee share an Identity whose name is cut at 4 KiB
+	longName := strings.Repeat("N", 5<<10)
+	s.add("Identity", 1, map[string]any{"display_name": longName})
+	s.event(6, map[string]any{"organizer_id": int64(1)})
+	s.add("Participant", 1, map[string]any{"item_id": int64(9), "identity_id": int64(1), "email": "org@example.test"})
+	s.add("Participant", 2, map[string]any{"item_id": int64(6), "identity_id": int64(1), "email": "att@example.test"})
 	recs := byRowid(t, parseBuilt(t, s.bytes(), false))
 	if r := recs[3]; r.Payload["title"] != rtl || !strings.Contains(r.Summary, "<U+202E>") || rawOf(r)["text_flags"] != nil {
 		t.Errorf("row 3: title %q, summary %q, text_flags %v; want the RTL text kept as stored and the override shown in the summary", r.Payload["title"], r.Summary, rawOf(r)["text_flags"])
@@ -178,6 +184,23 @@ func TestIOSCalendarHostileTexts(t *testing.T) {
 	r5 := recs[5]
 	if title, _ := r5.Payload["title"].(string); title != big[:4<<10] || !sameJSON(t, r5.Payload["truncated_fields"], []any{"title"}) || rawOf(r5)["text_flags"] != "title" {
 		t.Errorf("row 5: title of %d bytes, truncated_fields %v, text_flags %v; want 4096 R, [title], title", len(title), r5.Payload["truncated_fields"], rawOf(r5)["text_flags"])
+	}
+	// final review M2 (C4, C6, B8): a cut attendee or organizer name is named in truncated_fields, its total beside the
+	// entry (raw.attendees[i].name_total_bytes, raw.organizer_name_total_bytes)
+	r6 := recs[6]
+	raw6 := rawOf(r6)
+	org, _ := r6.Payload["organizer"].(map[string]any)
+	att, _ := r6.Payload["attendees"].([]any)
+	ra, _ := raw6["attendees"].([]any)
+	if len(att) != 1 || len(ra) != 1 {
+		t.Fatalf("row 6: %d attendees, %d raw entries; want 1 and 1", len(att), len(ra))
+	}
+	attName, _ := att[0].(map[string]any)["name"].(string)
+	orgName, _ := org["name"].(string)
+	if len(attName) != 4<<10 || len(orgName) != 4<<10 || !sameJSON(t, r6.Payload["truncated_fields"], []any{"attendees", "organizer"}) ||
+		ra[0].(map[string]any)["name_total_bytes"] != int64(len(longName)) || raw6["organizer_name_total_bytes"] != int64(len(longName)) {
+		t.Errorf("row 6: names of %d and %d bytes, truncated_fields %v, raw.attendees[0] name_total_bytes %#v, organizer_name_total_bytes %#v; want 4096, 4096, [attendees organizer], %d, %d",
+			len(attName), len(orgName), r6.Payload["truncated_fields"], ra[0].(map[string]any)["name_total_bytes"], raw6["organizer_name_total_bytes"], len(longName), len(longName))
 	}
 }
 

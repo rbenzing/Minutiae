@@ -12,14 +12,17 @@ import (
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 )
 
-// The caps of spec 4.1 and 9: free texts are cut (and say so), identifiers never.
+// The caps of spec 4.1 and 9: free texts are cut (and say so), identifiers never; maxStored bounds a value kept in
+// raw only as stored (a raw-only column, a code of another class), which is never cut either (final review I2, as
+// ios.calendar).
 const (
 	maxTitle    = 4 << 10   // title and location text
 	maxBody     = 256 << 10 // the description
 	maxZone     = 256       // eventTimezone, eventEndTimezone
-	maxID       = 1 << 10   // uid2445, _sync_id, original_sync_id, organizer
+	maxID       = 1 << 10   // uid2445, _sync_id, original_sync_id, organizer, the calendar's account and owner
 	maxRule     = 16 << 10  // rrule, rdate, exrule, exdate
 	maxSyncData = 1 << 10   // sync_data1..10, raw only
+	maxStored   = 16 << 10  // a TEXT or BLOB kept in raw as stored
 )
 
 const stateTooLong = "too-long"
@@ -87,38 +90,75 @@ func (r cells) ident(name string, limit int) string {
 	return s
 }
 
-// stored is the stored value of a cell of any class as raw keeps it (C1): an INTEGER as itself, else storedOther; a
-// non-finite REAL (a stored NaN, an infinity) in its display form "NaN", "+Inf" or "-Inf", also listed in unknown as
-// type-mismatch, never dropped (task 9 fix round 1b, A1); an unreadable cell is listed in unknown and gives nothing, a
-// NULL or a missing column nothing.
-func (r cells) stored(name string) (any, bool) {
+// stored is the stored value of a cell of any class as raw keeps it (C1): an INTEGER as itself, else storedOther (a
+// TEXT or BLOB over maxStored is reported through over, never kept nor cut); a non-finite REAL (a stored NaN, an
+// infinity) in its display form "NaN", "+Inf" or "-Inf", also listed in unknown as type-mismatch, never dropped (task 9
+// fix round 1b, A1); an unreadable cell is listed in unknown and gives nothing, a NULL or a missing column nothing.
+func (r cells) stored(name string) (v any, over []byte, ok bool) {
 	col := r.c.At(name)
 	if col < 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	if nanCell(r.row, col) {
 		flagCell(r.unknown, r.row, r.prefix+name, col, rowrun.CellOther)
-		return "NaN", true
+		return "NaN", nil, true
 	}
 	if !rowrun.StateOf(r.row, col).Known() {
 		flagCell(r.unknown, r.row, r.prefix+name, col, rowrun.CellUnknown)
-		return nil, false
+		return nil, nil, false
 	}
 	if r.row.IsNull(col) {
-		return nil, false
+		return nil, nil, false
 	}
 	if f, ok := r.row.Float(col); ok && math.IsInf(f, 0) {
 		listUnknown(r.unknown, r.prefix+name, "type-mismatch")
 		if f > 0 {
-			return "+Inf", true
+			return "+Inf", nil, true
 		}
-		return "-Inf", true
+		return "-Inf", nil, true
 	}
 	if v, ok := r.row.Int(col); ok {
-		return v, true
+		return v, nil, true
 	}
 	return storedOther(r.row, col)
 }
+
+// keepTop states the stored value of column name in r.raw under its own name, as raw keeps a value (a BLOB as
+// {"blob_b64": ...}, C1); a value over maxStored states <name>_state "too-long", <name>_len and <name>_sha256 instead
+// (final review I2, as ios.calendar).
+func (r cells) keepTop(name string) {
+	v, over, ok := r.stored(name)
+	putStored(r.raw, name, v, over, ok, putTop)
+}
+
+// keep states the stored value of column name in a child entry dst under key (putEntry), or its over-long state.
+func (r cells) keep(dst map[string]any, key, name string) {
+	v, over, ok := r.stored(name)
+	putStored(dst, key, v, over, ok, putEntry)
+}
+
+// keepOther states a readable cell of another class (storedOther) in dst under key through put, or its over-long
+// state; an unreadable cell, a NaN or an infinity states nothing (the caller lists it in unknown).
+func keepOther(dst map[string]any, key string, row parse.Row, col int, put func(map[string]any, string, any)) {
+	v, over, ok := storedOther(row, col)
+	putStored(dst, key, v, over, ok, put)
+}
+
+// putStored states a stored value (ok) through put, or a TEXT or BLOB over maxStored (over) as <key>_state
+// "too-long", <key>_len (of the stored bytes) and <key>_sha256 (of the stored bytes): never kept, never cut.
+func putStored(dst map[string]any, key string, v any, over []byte, ok bool, put func(map[string]any, string, any)) {
+	switch {
+	case over != nil:
+		dst[key+"_state"] = stateTooLong
+		dst[key+"_len"] = int64(len(over))
+		dst[key+"_sha256"] = sha256Hex(over)
+	case ok:
+		put(dst, key, v)
+	}
+}
+
+// putTop keeps a stored value v in dst under key as it is (a top-level raw map may hold a BLOB's {"blob_b64": ...}).
+func putTop(dst map[string]any, key string, v any) { dst[key] = v }
 
 // flagCell lists in unknown (payload.raw.unknown_columns) a column that exists but holds no usable value, as
 // rowrun.Flag does ("type-mismatch" for a value of another class, the decoder's state name for an unknown cell), but
@@ -190,4 +230,11 @@ func undecidedJoin(raw map[string]any, table string) {
 	cur = append(cur, table)
 	slices.SortFunc(cur, func(a, b any) int { return strings.Compare(a.(string), b.(string)) })
 	raw["join_undecided"] = cur
+}
+
+// markTruncated names field in truncated once (a list field whose items are cut, final review M2).
+func markTruncated(truncated *[]string, field string) {
+	if !slices.Contains(*truncated, field) {
+		*truncated = append(*truncated, field)
+	}
 }

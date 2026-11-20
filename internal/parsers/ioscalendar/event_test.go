@@ -166,7 +166,20 @@ func TestCalendarCapsAreCountedNeverSilent(t *testing.T) {
 		s.add("Recurrence", i, map[string]any{"owner_id": int64(1), "frequency": int64(1), "interval": i})
 		s.add("ExceptionDate", i, map[string]any{"owner_id": int64(1), "date": float64(cD + i*cDay)})
 	}
-	r := byRowid(t, parseBuilt(t, s.bytes(), false))[1]
+	// final review I2 (as android.calendar): a cell of another class over maxStored (16 KiB) is never kept nor cut,
+	// wherever raw keeps a stored value: its state, length and SHA-256 stand in its place
+	over := strings.Repeat("u", 20<<10)
+	s.add("Location", 1, map[string]any{"title": "L", "latitude": over, "longitude": 13.4})
+	s.event(2, map[string]any{"all_day": over, "location_id": int64(1)})
+	recs := byRowid(t, parseBuilt(t, s.bytes(), false))
+	raw2 := rawOf(recs[2])
+	for _, k := range []string{"all_day", "latitude"} {
+		if _, kept := raw2[k]; kept || raw2[k+"_state"] != "too-long" || raw2[k+"_len"] != int64(len(over)) || raw2[k+"_sha256"] != sha(over) {
+			t.Errorf("row 2: raw.%s kept %v, state %#v, len %#v, sha256 %#v; want absent, too-long, %d and the hash",
+				k, kept, raw2[k+"_state"], raw2[k+"_len"], raw2[k+"_sha256"], len(over))
+		}
+	}
+	r := recs[1]
 	raw := rawOf(r)
 	for _, l := range []struct {
 		label string

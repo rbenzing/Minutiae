@@ -160,17 +160,15 @@ func coordinate(c cells, col string, limit float64) *float64 {
 		c.raw[col+"_state"] = stateOutOfRange
 	case rowrun.CellOther, rowrun.CellUnknown:
 		flag(c.unknown, c.row, c.prefix+col, i, k)
-		if v, ok := storedOther(c.row, i); ok {
-			c.raw[col] = v
-		}
+		keepOther(c.raw, col, c.row, i)
 	}
 	return nil
 }
 
 // calendarOf joins the item's Calendar and its Store (spec 8.2): {id, title, account: {name: Store.name}}, Store.type
-// in raw.store_type as stored; a store_id naming no Store row is raw.store_state "no-Store-row". The title is a free
-// text (calendar_title in text_flags and truncated_fields); the Store name is an identifier (calendar_account_state
-// "too-long" with its length and SHA-256 over 1 KiB).
+// in raw.store_type as stored; a store_id naming no Store row is raw.store_state "no-Store-row", or "zero-key" when
+// it is stored as 0 (B13). The title is a free text (calendar_title in text_flags and truncated_fields); the Store
+// name is an identifier (calendar_account_state "too-long" with its length and SHA-256 over 1 KiB).
 func (x *item) calendarOf() (*calendar.CalendarRef, error) {
 	row, id, err := x.getBy("calendar_id", tableCalendar, "calendar_state")
 	if err != nil || row == nil {
@@ -212,9 +210,10 @@ func (x *item) getByOf(c cells, keyCol, table, stateKey string) (parse.Row, int6
 // person is one Participant row read as a person (spec 8.2): address = Participant.email, else Identity.address;
 // name = Identity.display_name. Its states go to entry: address_state ("too-long" with address_len and
 // address_sha256, F27; "undecided" with the stored email when the email cannot be read), name_state "undecided" (the
-// stored display_name kept), identity_state ("no-Identity-row", "zero-key" for an identity_id of 0 naming no row (B13),
-// or "undecided" when the identity key or join cannot be decided). undecided is true when the address or the name is unknown: such a participant is never one with "neither
-// address nor name".
+// stored display_name kept), name_total_bytes for a name cut at 4 KiB (final review M2), identity_state
+// ("no-Identity-row", "zero-key" for an identity_id of 0 naming no row (B13), or "undecided" when the identity key or
+// join cannot be decided). undecided is true when the address or the name is unknown: such a participant is never one
+// with "neither address nor name".
 type person struct {
 	calendar.Person
 	undecided bool
@@ -292,6 +291,10 @@ func (x *item) personOf(row parse.Row, entry map[string]any, field string) (pers
 			cl := common.CleanText(b, maxTitle)
 			if len(cl.Flags) > 0 {
 				x.flags[field] = true
+			}
+			if cl.Truncated { // named in truncated_fields, its total beside the entry (final review M2, B8)
+				x.truncated = append(x.truncated, field)
+				entry["name_total_bytes"] = int64(cl.TotalBytes)
 			}
 			p.Name = cl.Text
 		}

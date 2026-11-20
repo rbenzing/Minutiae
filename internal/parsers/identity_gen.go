@@ -8,8 +8,8 @@ type identity struct{ Package, Hash string }
 
 // generated maps "name@version" to the identity of the parser.
 var generated = map[string]identity{
-	"android.calendar.recover@1.0.0":          {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalendar", Hash: "src1:sha256:d4d4fc223d94eec051ff3ba15d7befb319eda72fe127bffe81c714b267c97e88"},
-	"android.calendar@1.0.0":                  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalendar", Hash: "src1:sha256:1d184f8a1fa8cc6714dfe3aef38f4dfcb1052549e81c36d68d8b04624d920d04"},
+	"android.calendar.recover@1.0.1":          {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalendar", Hash: "src1:sha256:baaced777e5f66bcf0dda69e12d625632c443b5898ad961e8466d0be576bab90"},
+	"android.calendar@1.0.1":                  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalendar", Hash: "src1:sha256:23778d12c411cc11a8d4fe2784ed63e607b60a109aa336e048f569686fffaa90"},
 	"android.calllog.recover@1.0.6":           {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:82752985810825331e57fcf1c3aff7d745ef806fa6bb3b9d3437e9374b9602b3"},
 	"android.calllog@1.0.6":                   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:22ceee8aca66535fe582f33fe569dc24cdf599332262b410ca59e09af5756cd1"},
 	"android.contacts.recover@1.0.5":          {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:9562382204fde88a5d2d1f82162ec1b29aec36e7fc324ce492d66a04ff773cea"},
@@ -24,8 +24,8 @@ var generated = map[string]identity{
 	"chromium.history@1.0.3":                  {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:22157bf925dc60c36ce8cd5b2b6e1295ee26c684ebca7229ce176beb4ab75c24"},
 	"ios.addressbook.recover@1.0.1":           {Package: "github.com/rbenzing/minutiae/internal/parsers/iosaddressbook", Hash: "src1:sha256:c86d42ced7790ffe922e6a3dc81bc9a7eab5efe91c3116ba2dc04038a9b08898"},
 	"ios.addressbook@1.0.1":                   {Package: "github.com/rbenzing/minutiae/internal/parsers/iosaddressbook", Hash: "src1:sha256:9f2ffa8b8ae44f183f9b919c5751479ecd66ad826c36189e96d4c5ae7a93967d"},
-	"ios.calendar.recover@1.0.3":              {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalendar", Hash: "src1:sha256:df4ce7459ee9acbf35224716a5029f27243dacccb04fd40e9fbd12bd5c8adc5e"},
-	"ios.calendar@1.0.3":                      {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalendar", Hash: "src1:sha256:30620163adeab278f6e2a7a4f17e2c6180f70297ab988597a49cab29730887fc"},
+	"ios.calendar.recover@1.0.4":              {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalendar", Hash: "src1:sha256:c4866eb85fc48a0688673795fc8414242fbbdea8791566a4bb5dca9bb68daa0a"},
+	"ios.calendar@1.0.4":                      {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalendar", Hash: "src1:sha256:edeadce9f8f17c7e5b96cad11ea4a50f2fc99b4311c9ab29de33b4411f07c849"},
 	"ios.calls.recover@1.0.3":                 {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalls", Hash: "src1:sha256:e10a601feaaad195130c978374dec8ce7a44d42f769c65c55922bf1d7277f298"},
 	"ios.calls@1.0.3":                         {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalls", Hash: "src1:sha256:e565b4d2f3f21aaf2a2901885296d5319bddde3778c7b854a257db036000d18d"},
 	"ios.sms.recover@1.0.2":                   {Package: "github.com/rbenzing/minutiae/internal/parsers/iossms", Hash: "src1:sha256:bb9e160a6243670c8ce67388651c21492c8401d4c6173c3a5c29e97b8d5664aa"},

@@ -1,6 +1,7 @@
 package androidcalendar_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -155,6 +156,7 @@ func TestAndroidCalendarUnreadableJoinTableIsNotEmpty(t *testing.T) {
 func TestAndroidCalendarHostileTexts(t *testing.T) {
 	const rtl = "\xe2\x80\xaeRTL \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d" // U+202E (right-to-left override), then Hebrew
 	big := strings.Repeat("R", 1<<20)
+	longName := strings.Repeat("N", 5<<10)
 	db, _ := buildDB(t, dbSpec{events: []row{
 		{1, map[string]any{"title": "a\x00b"}},
 		{2, map[string]any{"title": string([]byte{'x', 0xff, 0xfe, 'y'})}},
@@ -162,7 +164,12 @@ func TestAndroidCalendarHostileTexts(t *testing.T) {
 		{4, map[string]any{"rrule": big}},
 		{5, map[string]any{"dtend": nil, "duration": "P" + strings.Repeat("1", 1<<20) + "S"}},
 		{6, map[string]any{"eventLocation": big}},
-	}, calendars: []row{{1, nil}}})
+		{7, nil},
+		{8, nil},
+	}, calendars: []row{{1, nil}}, children: map[string][]row{"Attendees": {
+		{1, map[string]any{"event_id": int64(7), "attendeeEmail": "n@example.test", "attendeeName": longName}},
+		{2, map[string]any{"event_id": int64(8), "attendeeEmail": string(bytes.Repeat([]byte{0xff}, 1<<10)), "attendeeName": "X"}},
+	}}})
 	p := parseBuilt(t, db, false)
 	if r := p.rec(t, 3); r.Payload["title"] != rtl || !strings.Contains(r.Summary, "<U+202E>") {
 		t.Errorf("row 3: title %q, summary %q; want the RTL text kept as stored and the override shown in the summary", r.Payload["title"], r.Summary)
@@ -195,6 +202,46 @@ func TestAndroidCalendarHostileTexts(t *testing.T) {
 	if text, _ := loc["text"].(string); len(text) != 4<<10 || !strings.Contains(fmt.Sprint(r6.Payload["truncated_fields"]), "location") {
 		t.Errorf("row 6: location of %d bytes, truncated_fields %v; want 4096 and location", len(text), r6.Payload["truncated_fields"])
 	}
+	// final review M2 (C4, C6, B8): a cut attendee name is named in truncated_fields, its total in the entry
+	r7 := p.rec(t, 7)
+	att, _ := r7.Payload["attendees"].([]any)
+	ra, _ := rawOf(r7)["attendees"].([]any)
+	if len(att) != 1 || len(ra) != 1 {
+		t.Fatalf("row 7: %d attendees, %d raw entries; want 1 and 1", len(att), len(ra))
+	}
+	if name, _ := att[0].(map[string]any)["name"].(string); len(name) != 4<<10 || !sameStrings(r7.Payload["truncated_fields"], "attendees") ||
+		ra[0].(map[string]any)["name_total_bytes"] != int64(len(longName)) {
+		t.Errorf("row 7: name of %d bytes, truncated_fields %v, raw.attendees[0] name_total_bytes %#v; want 4096, [attendees], %d",
+			len(name), r7.Payload["truncated_fields"], ra[0].(map[string]any)["name_total_bytes"], len(longName))
+	}
+	// final review M1 (C5): an address within 1 KiB as stored whose invalid bytes grow past it as U+FFFD is too long,
+	// as every identifier (cleanWithin)
+	r8 := p.rec(t, 8)
+	att, _ = r8.Payload["attendees"].([]any)
+	ra, _ = rawOf(r8)["attendees"].([]any)
+	if len(att) != 1 || len(ra) != 1 {
+		t.Fatalf("row 8: %d attendees, %d raw entries; want 1 and 1", len(att), len(ra))
+	}
+	addr := string(bytes.Repeat([]byte{0xff}, 1<<10))
+	if e := ra[0].(map[string]any); att[0].(map[string]any)["address"] != nil || e["address_state"] != "too-long" ||
+		e["address_len"] != int64(1<<10) || e["address_sha256"] != sum(addr) {
+		t.Errorf("row 8: address %.20v, raw.attendees[0] %v; want no address and too-long, 1024 and the hash", att[0].(map[string]any)["address"], e)
+	}
+}
+
+// sameStrings says v (a []string or a []any of strings) is exactly want.
+func sameStrings(v any, want ...string) bool {
+	var got []string
+	switch s := v.(type) {
+	case []string:
+		got = s
+	case []any:
+		for _, x := range s {
+			str, _ := x.(string)
+			got = append(got, str)
+		}
+	}
+	return slices.Equal(got, want)
 }
 
 // Spec 2: a code the contract does not define (a future provider's) is "unknown" with the stored code in raw; never

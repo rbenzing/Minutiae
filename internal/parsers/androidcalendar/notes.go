@@ -224,13 +224,13 @@ func noteValue(row sqlitedb.Row, col int) (string, bool) {
 	if b, ok := row.Text(col); ok {
 		return noteText(b), true
 	}
-	if f, ok := storedOther(row, col); ok {
-		switch v := f.(type) {
-		case float64:
+	if b, ok := row.Blob(col); ok {
+		// only the bytes a note can show are encoded: the note is cut within maxNote bytes, base64 grows 3 bytes to 4
+		return noteText([]byte("blob_b64:" + base64(b[:min(len(b), maxNote)]))), true
+	}
+	if f, _, ok := storedOther(row, col); ok {
+		if v, ok := f.(float64); ok {
 			return strconv.FormatFloat(v, 'g', -1, 64), true
-		case map[string]any:
-			s, _ := v["blob_b64"].(string)
-			return noteText([]byte("blob_b64:" + s)), true
 		}
 	}
 	return noteUnreadable, true

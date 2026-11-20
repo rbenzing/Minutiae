@@ -77,7 +77,7 @@ func TestMetaIsValid(t *testing.T) {
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "android.calendar" || m.Version != "1.0.0" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
+	if m.Name != "android.calendar" || m.Version != "1.0.1" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
 		t.Errorf("meta %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformAndroid {
@@ -354,5 +354,16 @@ allDay INTEGER NOT NULL DEFAULT 0, title TEXT)`)
 	res = parseAt(t, remoteOther, fixtureFiles(t, "calendar-noevents"))
 	if res.Err != nil || len(res.Records) != 0 || res.Notes["not_applicable"] == "" {
 		t.Errorf("calendar-noevents at %s: Parse err %v, %d records, notes %v", remoteOther, res.Err, len(res.Records), res.Notes)
+	}
+	// final review I1 (B4, 4I3-P5): elsewhere the band applies only to a database that has Events; a --scan candidate
+	// of another kind (user version 0 or 700, no Events) beside a -wal is not applicable, never a failed job
+	for _, v := range []int32{0, 700} {
+		b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: v})
+		b.CreateTable("notes", `CREATE TABLE notes (_id INTEGER PRIMARY KEY, body TEXT)`).Insert(1, nil, "x")
+		res = parseAt(t, remoteOther, map[string][]byte{"db": b.Bytes(), "wal": {}})
+		if res.Err != nil || len(res.Records) != 0 || res.Notes["not_applicable"] == "" {
+			t.Errorf("user version %d, no Events, an empty -wal at %s: Parse err %v, %d records, notes %v; want not-applicable",
+				v, remoteOther, res.Err, len(res.Records), res.Notes)
+		}
 	}
 }

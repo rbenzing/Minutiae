@@ -249,7 +249,10 @@ def times_of(r, raw, unknown):
     else:
         timing = "unknown"
         raw["timing_state"] = "all-day-undecided"
-        raw["all_day"] = jv(ad)
+        if A.len_over(ad):  # over maxStored: never kept nor cut (final review I2)
+            A.over_state(raw, "all_day", ad)
+        else:
+            raw["all_day"] = jv(ad)
         if ad is not None and not is_int(ad):
             unknown["CalendarItem.all_day"] = "type-mismatch"
     for col, z in (("start_tz", stz), ("end_tz", etz)):
@@ -319,10 +322,11 @@ def miss_state(table, key):
     return "zero-key" if key == 0 else "no-%s-row" % table
 
 
-def person_of(p, env, tf, field):
-    """(address, name, identity_state) of a Participant row: address = email else Identity.address, name =
-    Identity.display_name (spec 8.2); an altered name puts field (attendees or organizer) in raw.text_flags."""
-    addr = name = None
+def person_of(p, env, tf, field, truncated):
+    """(address, name, identity_state, name_total) of a Participant row: address = email else Identity.address, name =
+    Identity.display_name (spec 8.2); an altered name puts field (attendees or organizer) in raw.text_flags, a cut one
+    also in truncated_fields with its stored length as name_total (final review M2)."""
+    addr = name = total = None
     email = p.get("email")
     if email is not None:
         assert is_text(email) and len(email) <= MAX_ID, "an unreadable or over-long address is not restated"
@@ -345,8 +349,11 @@ def person_of(p, env, tf, field):
                 c = C.clean(n, MAX_TITLE)
                 if c.flags:
                     tf.add(field)
+                if c.truncated:
+                    truncated.append(field)
+                    total = c.total
                 name = c.text or None
-    return addr, name, state
+    return addr, name, state, total
 
 
 def expect_item(r, env, file="any"):
@@ -469,7 +476,7 @@ def expect_item(r, env, file="any"):
     # organizer (Get Participant, Get Identity)
     org = get_join(raw, unknown, env, "organizer_state", "Participant", "organizer_id", r.get("organizer_id"))
     if org is not None:
-        addr, name, state = person_of(org, env, tf, "organizer")
+        addr, name, state, total = person_of(org, env, tf, "organizer", truncated)
         o = {}
         if addr:
             o["address"] = addr
@@ -479,12 +486,14 @@ def expect_item(r, env, file="any"):
             p["organizer"] = o
         if state:  # the Identity link has its own key; organizer_state is the organizer_id link only (Task 12 fix 2, I2)
             raw["organizer_identity_state"] = state
+        if total is not None:
+            raw["organizer_name_total_bytes"] = total
     # the four Match joins by owner: an empty match is no children and states nothing (F15)
     if env is None:
         for k in ("participants_state", "recurrence_state", "exception_dates_state", "alarms_state"):
             raw[k] = "not-joined-recovered"
     else:
-        children(p, raw, tf, env, rid)
+        children(p, raw, tf, env, rid, truncated)
     if tf:
         raw["text_flags"] = ",".join(sorted(tf))
     if truncated:
@@ -497,14 +506,16 @@ def expect_item(r, env, file="any"):
             "body": body, "payload": p}
 
 
-def children(p, raw, tf, env, rid):
+def children(p, raw, tf, env, rid, truncated):
     att, att_raw, unnamed, unnamed_raw = [], [], 0, []
     for t in sorted(env.undecided):
         assert t == "Participant", "an undecided Match other than Participant is not part of the scenario (not restated)"
         raw["join_undecided"] = [t]
     for x in ([] if "Participant" in env.undecided else env.match("Participant", rid)):
-        addr, name, state = person_of(x, env, tf, "attendees")
+        addr, name, state, total = person_of(x, env, tf, "attendees", truncated)
         codes = entry_of(x, ("role", "type", "status"))
+        if total is not None:
+            codes["name_total_bytes"] = total
         for col in ("role", "type", "status"):
             assert x.get(col) is None or is_int(x[col]), "a wrongly typed participant code is not restated"
         if state:

@@ -16,7 +16,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.calendar"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // The errors of Parse, wrapped with %w.
@@ -284,7 +284,9 @@ func requiredEvents() []string {
 	return out
 }
 
-// checkLiveView opens the live view once: its user version must be in the band; an Events table must have its
+// checkLiveView opens the live view once: its user version must be in the band (at the provider path always,
+// elsewhere only when Events exists: a database of another kind is not applicable whatever its version, final review
+// I1); an Events table must have its
 // required columns and _id as the rowid alias (Probe deferred these checks beside a companion), and then the join
 // tables are checked (the guard). At the provider path Events must exist: it is absent only when the schema was read
 // whole and the census saw no table of that name; otherwise its presence is unknown (ErrSchemaIncomplete), and a
@@ -297,11 +299,15 @@ func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, o
 	}
 	defer db.Release()
 	v := db.Info().Header.UserVersion
-	if !inBand(v) {
+	provider := classifyPlace(in.Primary.Logical) == placeProvider
+	if provider && !inBand(v) {
 		return nil, v, fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)
 	}
-	provider := classifyPlace(in.Primary.Logical) == placeProvider
 	t, err := db.Table(ctx, tableEvents, requiredEvents(), nil)
+	if !provider && !errors.Is(err, sqlitedb.ErrNoSuchTable) && !inBand(v) {
+		// elsewhere the band applies to a database with Events only (final review I1, B4, 4I3-P5)
+		return nil, v, fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)
+	}
 	switch {
 	case err == nil:
 		if i := t.Col("_id"); i < 0 || !t.Cols()[i].RowidAlias {

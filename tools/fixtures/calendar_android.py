@@ -51,6 +51,7 @@ MAX_RULE = 16 << 10  # each recurrence text
 MAX_DURATION = 64
 MAX_PROP = 4 << 10  # an extended property's value (spec 7.3)
 MAX_SYNC_DATA = 1 << 10  # sync_data1..10, raw only
+MAX_STORED = 16 << 10  # a TEXT or BLOB kept in raw as stored (final review I2, as ios.calendar)
 MAX_LIST = 1000
 
 # The AOSP platform contract (CalendarContract.java at android-14.0.0_r1; lines in CROSSCHECK.md).
@@ -119,6 +120,24 @@ def jv(v):
     if isinstance(v, bytes):
         return go_text(v)
     return v
+
+
+def len_over(v):
+    """A TEXT or BLOB cell over MAX_STORED: raw never keeps it, never cuts it (final review I2, as ios.calendar)."""
+    return isinstance(v, bytes) and len(v) > MAX_STORED
+
+
+def over_state(dst, key, v):
+    dst[key + "_state"], dst[key + "_len"], dst[key + "_sha256"] = "too-long", len(v), hashlib.sha256(bytes(v)).hexdigest()
+    return dst
+
+
+def keep_top(dst, key, v):
+    """A stored value kept in raw as jv states it (C1); one over MAX_STORED by its state, length and SHA-256."""
+    if len_over(v):
+        return over_state(dst, key, v)
+    dst[key] = jv(v)
+    return dst
 
 
 def utc(ms):
@@ -215,6 +234,16 @@ def ident(raw, unknown, col, v, limit):
     return s or None
 
 
+def account_ident(raw, key, v):
+    """A Calendars account field (TEXT) as an identifier: over MAX_ID as cleaned, absent with raw.<key>_state too-long,
+    <key>_len and <key>_sha256 of the stored bytes (final review I2)."""
+    s = go_text(v)
+    if len(s.encode("utf-8")) > MAX_ID:
+        raw[key + "_state"], raw[key + "_len"], raw[key + "_sha256"] = "too-long", len(v), hashlib.sha256(v).hexdigest()
+        return None
+    return s or None
+
+
 def free_text(raw, tf, field, v, limit, truncated, unknown, col):
     """A cleaned free text (C4): altered or cut -> listed in raw.text_flags; cut -> truncated_fields; invalid UTF-8 or NUL
     -> raw.<field>_raw_b64 (or _raw_sha256 when large). A cell of another type is listed in unknown_columns as
@@ -277,7 +306,7 @@ def times_of(r, raw, unknown):
     if timing is None:
         timing = "unknown"
         raw["timing_state"] = "undecided"
-        raw["allDay"] = jv(ad)
+        keep_top(raw, "allDay", ad)
         if ad is not None and not is_int(ad):
             unknown["Events.allDay"] = "type-mismatch"
     start_ms = instant(raw, "dtstart", r.get("dtstart"), unknown)
@@ -372,7 +401,7 @@ def labelled(raw, col, v, table, unknown, keep_raw=True):
         return table[v]
     if not is_int(v):
         unknown["Events." + col] = "type-mismatch"
-    raw[col] = jv(v)
+    keep_top(raw, col, v)
     return "unknown"
 
 
@@ -399,7 +428,7 @@ def expect_event(r, env, remote, file="any"):
         # a cell of another type is listed and kept as stored in every case, whether or not an end depends on it
         # (spec 5.4, C1; Task 4 fix round 1, I1)
         unknown["Events.duration"] = "type-mismatch"
-        raw["duration"] = jv(dv)
+        keep_top(raw, "duration", dv)
     if is_text(dv) and dv:
         if len(go_text(dv).encode("utf-8")) > MAX_DURATION:  # as the payload carries it
             # unparsed in every case, also with no start or an unknown timing (coordinator ruling, Task 4)
@@ -443,6 +472,8 @@ def expect_event(r, env, remote, file="any"):
         a = ident(raw, unknown, "organizer", org, MAX_ID)
         if a:
             p["organizer"] = {"address": a}
+    elif org is not None and len_over(org):  # a BLOB over MAX_STORED: too-long, never kept (final review I2)
+        keep_top(raw, "organizer", org)
     elif org is not None:
         raw["organizer"] = jv(org)
         raw["organizer_state"] = "not-text"  # NUMERIC affinity: the written text is not recoverable
@@ -498,16 +529,25 @@ def expect_event(r, env, remote, file="any"):
                 title = free_text(raw, tf, "calendar_title", t, MAX_TITLE, truncated, unknown, "calendar_displayName")
                 if title:
                     cp["title"] = title
+            # the account and the owner are identifiers (1 KiB, never cut), stated as ios.calendar states Store.name
+            # (final review I2)
             acct = {}
-            for col, key in (("account_type", "type"), ("account_name", "name")):
-                if is_text(cal.get(col)) and cal.get(col):
-                    acct[key] = go_text(cal[col])
+            for col, key, rkey in (("account_type", "type", "calendar_account_type"), ("account_name", "name", "calendar_account")):
+                if is_text(cal.get(col)):
+                    v = account_ident(raw, rkey, cal[col])
+                    if v:
+                        acct[key] = v
             if acct:
                 cp["account"] = acct
-            if is_text(cal.get("ownerAccount")) and cal.get("ownerAccount"):
-                cp["owner"] = go_text(cal["ownerAccount"])
+            if is_text(cal.get("ownerAccount")):
+                v = account_ident(raw, "calendar_owner", cal["ownerAccount"])
+                if v:
+                    cp["owner"] = v
             p["calendar"] = cp
-            rc = {k: jv(cal[k]) for k in CAL_RAW if cal.get(k) is not None}
+            rc = {}
+            for k in CAL_RAW:
+                if cal.get(k) is not None:
+                    keep_top(rc, k, cal[k])
             if rc:
                 raw["calendar"] = rc
             cal_deleted = flag(raw, unknown, "Calendars.deleted", cal.get("deleted"), "deleted_via_state")
@@ -522,7 +562,7 @@ def expect_event(r, env, remote, file="any"):
             if is_int(dirty):
                 raw["dirty"] = dirty
     if r.get("mutators") is not None:
-        raw["mutators"] = jv(r["mutators"])
+        keep_top(raw, "mutators", r["mutators"])
     if last_synced == 1:
         raw["last_synced"] = 1
     matches = []
@@ -542,7 +582,7 @@ def expect_event(r, env, remote, file="any"):
     # raw only, as stored
     for col in AS_STORED_INT + AS_STORED_TEXT:
         if r.get(col) is not None:
-            raw[col] = jv(r[col])
+            keep_top(raw, col, r[col])
     if r.get("lastDate") is not None:
         instant(raw, "lastDate", r["lastDate"], unknown)
     for i in range(1, 11):
@@ -554,13 +594,13 @@ def expect_event(r, env, remote, file="any"):
             raw[col] = C.clean(v, MAX_SYNC_DATA).text
             raw[col + "_len"], raw[col + "_sha256"] = len(v), hashlib.sha256(v).hexdigest()
         else:
-            raw[col] = jv(v)
+            keep_top(raw, col, v)
     # children (spec 7.3; plan Task 5)
     if env is None:
         for k in ("attendees_state", "reminders_state", "alerts_state", "extended_properties_state", "raw_times_state"):
             raw[k] = "not-joined-recovered"
     else:
-        children(p, raw, tf, unknown, env, rid)
+        children(p, raw, tf, unknown, env, rid, truncated)
     if tf:
         raw["text_flags"] = ",".join(sorted(tf))
     if truncated:
@@ -576,6 +616,8 @@ def expect_event(r, env, remote, file="any"):
 def put_entry(entry, key, v):
     """A stored value in a child entry (level 4: scalars only, B8): a BLOB is the sibling scalar <key>_blob_b64
     (Task 5 fix round 1, C1)."""
+    if len_over(v):
+        return over_state(entry, key, v)
     j = jv(v)
     if isinstance(j, dict):
         entry[key + "_blob_b64"] = j["blob_b64"]
@@ -599,13 +641,13 @@ def capped(items, key, holder):
     return items
 
 
-def children(p, raw, tf, unknown, env, rid):
+def children(p, raw, tf, unknown, env, rid, truncated):
     att, att_raw, unnamed, unnamed_raw = [], [], 0, []
     rows = sorted(env.children["Attendees"].get(rid, []), key=lambda x: x["rowid"])
     for a in rows:
         e, extra, undecided = {}, {}, False
         addr = a.get("attendeeEmail")
-        if is_text(addr) and addr and len(addr) <= MAX_ID:
+        if is_text(addr) and addr and len(go_text(addr).encode("utf-8")) <= MAX_ID:  # as cleaned (final review M1)
             e["address"] = go_text(addr)
         elif is_text(addr) and addr:  # C5: never cut, never dropped silently (F27, fix round 1, M4)
             extra = {"address_state": "too-long", "address_len": len(addr), "address_sha256": hashlib.sha256(addr).hexdigest()}
@@ -618,6 +660,10 @@ def children(p, raw, tf, unknown, env, rid):
             c = C.clean(name, MAX_TITLE)
             if c.flags:
                 tf.add("attendees")
+            if c.truncated:  # named in truncated_fields, its total in the entry (final review M2, B8)
+                if "attendees" not in truncated:
+                    truncated.append("attendees")
+                extra = dict(extra, name_total_bytes=c.total)
             if c.text:
                 e["name"] = c.text
         elif name is not None and not is_text(name):  # kept as stored, its name undecided, as the address (ruling h)

@@ -173,9 +173,7 @@ func readTiming(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) strin
 		raw["allDay"] = nil
 	default:
 		flagCell(unknown, row, unknownPrefix+"allDay", col, k)
-		if v, ok := storedOther(row, col); ok {
-			raw["allDay"] = v // C1: a readable value of another class is kept as stored (ruling D6)
-		}
+		keepOther(raw, "allDay", row, col, putTop) // C1: a readable value of another class is kept as stored (ruling D6)
 	}
 	raw["timing_state"] = stateUndecided
 	return calendar.TimingUnknown
@@ -261,21 +259,28 @@ func readMillisIfStored(row parse.Row, c rowrun.Cols, name string, raw, unknown 
 
 // storedOther is a readable cell of another storage class as raw keeps it (C1): TEXT as its string with each byte
 // that is not valid UTF-8 replaced by U+FFFD, a finite REAL as its number, a BLOB as {"blob_b64": ...}. It is false
-// for an unreadable cell and for a NaN or an infinity (no stored value JSON can hold).
-func storedOther(row parse.Row, col int) (any, bool) {
+// for an unreadable cell and for a NaN or an infinity (no stored value JSON can hold). A TEXT or BLOB over maxStored
+// is not kept: its stored bytes are returned as over (ok false), for putStored to state, never cut (final review I2).
+func storedOther(row parse.Row, col int) (v any, over []byte, ok bool) {
 	if col < 0 || !rowrun.StateOf(row, col).Known() || nanCell(row, col) {
-		return nil, false
+		return nil, nil, false
 	}
 	if b, ok := row.Text(col); ok {
-		return validText(b), true
+		if len(b) > maxStored {
+			return nil, b, false
+		}
+		return validText(b), nil, true
 	}
 	if f, ok := row.Float(col); ok && !math.IsNaN(f) && !math.IsInf(f, 0) {
-		return f, true
+		return f, nil, true
 	}
 	if b, ok := row.Blob(col); ok {
-		return map[string]any{"blob_b64": base64(b)}, true
+		if len(b) > maxStored {
+			return nil, b, false
+		}
+		return map[string]any{"blob_b64": base64(b)}, nil, true
 	}
-	return nil, false
+	return nil, nil, false
 }
 
 // validText is b as a string, each byte that does not start a valid UTF-8 sequence replaced by U+FFFD.

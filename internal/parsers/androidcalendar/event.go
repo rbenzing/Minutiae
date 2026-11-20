@@ -129,9 +129,7 @@ func mapEvent(m parse.MapContext, row parse.Row, e *env, names []string) ([]reco
 	evDeleted := readFlag(row, r.c.At("deleted"), unknownPrefix+"deleted", unknown, true)
 	lastSynced := readFlag(row, r.c.At("lastSynced"), unknownPrefix+"lastSynced", unknown, false)
 	readDirty(r)
-	if v, ok := r.stored("mutators"); ok {
-		raw["mutators"] = v
-	}
+	r.keepTop("mutators")
 	if lastSynced.set() {
 		raw["last_synced"] = int64(1)
 	}
@@ -139,7 +137,7 @@ func mapEvent(m parse.MapContext, row parse.Row, e *env, names []string) ([]reco
 	ev.Deleted = d.record(raw)
 
 	readRawOnly(r)
-	if err := readChildren(m, row, e, r, flags, &ev); err != nil {
+	if err := readChildren(m, row, e, r, flags, &truncated, &ev); err != nil {
 		return nil, err
 	}
 	flags.write(raw)
@@ -173,9 +171,7 @@ func readDuration(r cells, ev *calendar.Event) {
 	case rowrun.CellOther, rowrun.CellUnknown:
 		// listed and kept as stored whether or not an end depends on it (fix round 1, I1; the key is readTimes' own)
 		flagCell(r.unknown, r.row, r.prefix+"duration", col, k)
-		if v, ok := r.stored("duration"); ok {
-			r.raw["duration"] = v
-		}
+		r.keepTop("duration")
 		return
 	case rowrun.CellValue:
 	default:
@@ -234,9 +230,7 @@ func readCode(r cells, col string, keepRaw bool) string {
 		return labelUnknown
 	}
 	flagCell(r.unknown, r.row, r.prefix+col, i, k)
-	if s, ok := storedOther(r.row, i); ok {
-		r.raw[col] = s
-	}
+	keepOther(r.raw, col, r.row, i, putTop)
 	return labelUnknown
 }
 
@@ -252,10 +246,13 @@ func readOrganizer(r cells, ev *calendar.Event) {
 			ev.Organizer = &calendar.Person{Address: s}
 		}
 	case rowrun.CellOther:
-		if v, ok := r.stored("organizer"); ok {
+		switch v, over, ok := r.stored("organizer"); {
+		case over != nil: // a BLOB over maxStored: too-long with its length and SHA-256, never kept (final review I2)
+			putStored(r.raw, "organizer", nil, over, false, putTop)
+		case ok:
 			r.raw["organizer"] = v
 			r.raw["organizer_state"] = stateNotText
-		} else {
+		default:
 			flagCell(r.unknown, r.row, r.prefix+"organizer", col, k)
 		}
 	case rowrun.CellUnknown:
@@ -381,24 +378,24 @@ func readCalendar(m parse.MapContext, r cells, e *env, ev *calendar.Event, flags
 		// a free text: cut and named (calendar_title in text_flags and truncated_fields), never silently (task 9 fix I1)
 		ref.Title = freeText(r.raw, flags, truncated, "calendar_title", b, maxTitle)
 	}
+	// the account and the owner are identifiers: never cut, over 1 KiB stated by their length and SHA-256 in raw as
+	// ios.calendar states Store.name (calendar_account_state "too-long", final review I2)
 	var acct calendar.Account
 	if b, ok := cr.text("account_type"); ok {
-		acct.Type = validText(b)
+		acct.Type, _ = ident(r.raw, "calendar_account_type", b, maxID)
 	}
 	if b, ok := cr.text("account_name"); ok {
-		acct.Name = validText(b)
+		acct.Name, _ = ident(r.raw, "calendar_account", b, maxID)
 	}
 	if acct != (calendar.Account{}) {
 		ref.Account = &acct
 	}
 	if b, ok := cr.text("ownerAccount"); ok {
-		ref.Owner = validText(b)
+		ref.Owner, _ = ident(r.raw, "calendar_owner", b, maxID)
 	}
 	ev.Calendar = &ref
 	for _, n := range calendarRaw() {
-		if v, ok := cr.stored(n); ok {
-			cr.raw[n] = v
-		}
+		cr.keepTop(n)
 	}
 	if len(cr.raw) > 0 {
 		r.raw["calendar"] = cr.raw
@@ -431,9 +428,7 @@ func readDirty(r cells) {
 // status, and sync_data1..10 (a text over 1 KiB cut there, with its length and SHA-256).
 func readRawOnly(r cells) {
 	for _, n := range asStored {
-		if v, ok := r.stored(n); ok {
-			r.raw[n] = v
-		}
+		r.keepTop(n)
 	}
 	if _, k := intCellOf(r.row, r.c.At("lastDate")); k != rowrun.CellNull && k != rowrun.CellMissing {
 		readMillis(r.row, r.c, "lastDate", r.raw, r.unknown)
@@ -447,8 +442,6 @@ func readRawOnly(r cells) {
 			r.raw[n+"_sha256"] = sha256Hex(b)
 			continue
 		}
-		if v, ok := r.stored(n); ok {
-			r.raw[n] = v
-		}
+		r.keepTop(n)
 	}
 }

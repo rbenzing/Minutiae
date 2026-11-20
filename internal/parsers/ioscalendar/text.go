@@ -131,14 +131,7 @@ func (r cells) stored(name string) (v any, over []byte, ok bool) {
 	if v, ok := r.row.Int(col); ok {
 		return v, nil, true
 	}
-	if b, ok := r.row.Text(col); ok && len(b) > maxStored {
-		return nil, b, false
-	}
-	if b, ok := r.row.Blob(col); ok && len(b) > maxStored {
-		return nil, b, false
-	}
-	v, ok = storedOther(r.row, col)
-	return v, nil, ok
+	return storedOther(r.row, col)
 }
 
 // keep states the stored value of column name in dst under key (putEntry): a value over maxStored states
@@ -147,12 +140,31 @@ func (r cells) keep(dst map[string]any, key, name string) {
 	v, over, ok := r.stored(name)
 	switch {
 	case over != nil:
-		dst[key+"_state"] = stateTooLong
-		dst[key+"_len"] = int64(len(over))
-		dst[key+"_sha256"] = sha256Hex(over)
+		stateOver(dst, key, over)
 	case ok:
 		putEntry(dst, key, v)
 	}
+}
+
+// keepOther states a readable cell of another class (storedOther) in dst under key as it is (a top-level raw map may
+// hold a BLOB's {"blob_b64": ...}); a TEXT or BLOB over maxStored states its over-long state instead (final review I2).
+// An unreadable cell, a NaN or an infinity states nothing (the caller lists it in unknown).
+func keepOther(dst map[string]any, key string, row parse.Row, col int) {
+	v, over, ok := storedOther(row, col)
+	switch {
+	case over != nil:
+		stateOver(dst, key, over)
+	case ok:
+		dst[key] = v
+	}
+}
+
+// stateOver states a TEXT or BLOB over maxStored, never kept nor cut: <key>_state "too-long", <key>_len and
+// <key>_sha256 of the stored bytes.
+func stateOver(dst map[string]any, key string, b []byte) {
+	dst[key+"_state"] = stateTooLong
+	dst[key+"_len"] = int64(len(b))
+	dst[key+"_sha256"] = sha256Hex(b)
 }
 
 // keepTop states the stored value of column name in raw under its own name, as raw keeps a value at its top level

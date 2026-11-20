@@ -110,9 +110,7 @@ func putEntry(entry map[string]any, key string, v any) {
 
 // storeCell keeps the stored value of column name of c in entry under the same name (putEntry), if it has one.
 func storeCell(c cells, entry map[string]any, name string) {
-	if v, ok := c.stored(name); ok {
-		putEntry(entry, name, v)
-	}
+	c.keep(entry, name, name)
 }
 
 // childCode maps a stored child code of col by the contract's column enum (spec 2): the stored value is kept in entry
@@ -132,30 +130,30 @@ func childCode(c cells, col, enum string, entry map[string]any) string {
 		return labelUnknown
 	}
 	flagCell(c.unknown, c.row, c.prefix+col, i, k)
-	if s, ok := storedOther(c.row, i); ok {
-		putEntry(entry, col, s)
-	}
+	keepOther(entry, col, c.row, i, putEntry)
 	return labelUnknown
 }
 
-// readAddress reads attendeeEmail into a and entry: TEXT within 1 KiB is the address; longer is not kept (an
-// identifier is never cut) and entry states address_state "too-long", address_len and address_sha256 (F27); a cell of
-// another class or an unreadable one keeps its stored value in entry (when it has one), is listed in unknown_columns
-// and states address_state "undecided" (fix round 1, I3). It reports whether the address is undecided: such a row is
-// not one with "neither address nor name".
+// readAddress reads attendeeEmail into a and entry: TEXT within 1 KiB as cleaned (cleanWithin) is the address; longer
+// is not kept (an identifier is never cut) and entry states address_state "too-long", address_len and address_sha256
+// (F27); a cell of another class or an unreadable one keeps its stored value in entry (when it has one), is listed in
+// unknown_columns and states address_state "undecided" (fix round 1, I3). It reports whether the address is
+// undecided: such a row is not one with "neither address nor name".
 func readAddress(c cells, a *calendar.Attendee, entry map[string]any) bool {
 	col := c.c.At("attendeeEmail")
 	b, k := textCellOf(c.row, col)
 	switch k {
 	case rowrun.CellValue:
-		switch {
-		case len(b) == 0:
-		case len(b) > maxID:
+		if len(b) == 0 {
+			break
+		}
+		// the limit holds for the text the payload would carry, as ident's (final review M1)
+		if s, ok := cleanWithin(b, maxID); ok {
+			a.Address = s
+		} else {
 			entry["address_state"] = stateTooLong
 			entry["address_len"] = int64(len(b))
 			entry["address_sha256"] = sha256Hex(b)
-		default:
-			a.Address = validText(b)
 		}
 	case rowrun.CellOther, rowrun.CellUnknown:
 		flagCell(c.unknown, c.row, c.prefix+"attendeeEmail", col, k)
@@ -167,10 +165,11 @@ func readAddress(c cells, a *calendar.Attendee, entry map[string]any) bool {
 }
 
 // readName reads attendeeName into a: TEXT is the name, cleaned at 4 KiB (an altered name puts "attendees" in
-// raw.text_flags); a cell of another class or an unreadable one is listed in unknown_columns, keeps its stored value in
-// entry (when it has one) and states name_state "undecided", as readAddress does (coordinator ruling h). It reports
-// whether the name is undecided: such a row is not one with "neither address nor name".
-func readName(c cells, a *calendar.Attendee, entry map[string]any, flags textFlags) bool {
+// raw.text_flags; a cut one also in truncated_fields, with its total in entry.name_total_bytes, final review M2); a
+// cell of another class or an unreadable one is listed in unknown_columns, keeps its stored value in entry (when it
+// has one) and states name_state "undecided", as readAddress does (coordinator ruling h). It reports whether the name
+// is undecided: such a row is not one with "neither address nor name".
+func readName(c cells, a *calendar.Attendee, entry map[string]any, flags textFlags, truncated *[]string) bool {
 	col := c.c.At("attendeeName")
 	b, k := textCellOf(c.row, col)
 	switch k {
@@ -179,6 +178,10 @@ func readName(c cells, a *calendar.Attendee, entry map[string]any, flags textFla
 			cl := common.CleanText(b, maxTitle)
 			if len(cl.Flags) > 0 {
 				flags["attendees"] = true
+			}
+			if cl.Truncated {
+				markTruncated(truncated, "attendees")
+				entry["name_total_bytes"] = int64(cl.TotalBytes)
 			}
 			a.Name = cl.Text
 		}
@@ -199,7 +202,7 @@ func readName(c cells, a *calendar.Attendee, entry map[string]any, flags textFla
 // "neither", ruling h) it is counted in raw.attendees_unnamed; its entry, when it states an address (over-long or
 // undecided) or an undecided name, goes to raw.attendees_unnamed_entries (at most maxList, with
 // _total and _truncated). It returns the attendees (at most maxList), their total and whether they were cut.
-func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]calendar.Attendee, *int64, bool, error) {
+func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags, truncated *[]string) ([]calendar.Attendee, *int64, bool, error) {
 	rows, undecided, err := childRows(m, tableAttendees, id, r.raw)
 	if err != nil || undecided {
 		return nil, nil, false, err
@@ -216,7 +219,7 @@ func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]cale
 		var a calendar.Attendee
 		entry := map[string]any{}
 		addrUndecided := readAddress(c, &a, entry)
-		nameUndecided := readName(c, &a, entry, flags)
+		nameUndecided := readName(c, &a, entry, flags, truncated)
 		a.Role = childCode(c, "attendeeRelationship", "attendeeRelationship", entry)
 		a.Type = childCode(c, "attendeeType", "attendeeType", entry)
 		a.Status = childCode(c, "attendeeStatus", "attendeeStatus", entry)
@@ -407,7 +410,7 @@ func putList(raw map[string]any, key string, list []any, n int) {
 
 // readChildren states the event's children (spec 7.3): with a nil env (the typed recovery pass) no join is made and
 // every child state key is "not-joined-recovered" (4I3-P4, B2).
-func readChildren(m parse.MapContext, row parse.Row, e *env, r cells, flags textFlags, ev *calendar.Event) error {
+func readChildren(m parse.MapContext, row parse.Row, e *env, r cells, flags textFlags, truncated *[]string, ev *calendar.Event) error {
 	if e == nil {
 		for _, k := range childStateKeys() {
 			r.raw[k] = notJoinedRecovered
@@ -422,7 +425,7 @@ func readChildren(m parse.MapContext, row parse.Row, e *env, r cells, flags text
 		return nil
 	}
 	var err error
-	if ev.Attendees, ev.AttendeesTotal, ev.AttendeesTruncated, err = attendeesOf(m, id, r, flags); err != nil {
+	if ev.Attendees, ev.AttendeesTotal, ev.AttendeesTruncated, err = attendeesOf(m, id, r, flags, truncated); err != nil {
 		return err
 	}
 	if ev.Reminders, ev.RemindersTotal, ev.RemindersTruncated, err = remindersOf(m, id, r); err != nil {

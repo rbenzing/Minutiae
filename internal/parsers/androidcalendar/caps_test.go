@@ -1,6 +1,8 @@
 package androidcalendar_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,10 +34,23 @@ func TestCalendarCapsAreCountedNeverSilent(t *testing.T) {
 		return map[string]any{"begin": tD, "end": tD + tH, "alarmTime": tD - i, "state": int64(0)}
 	})
 	add("ExtendedProperties", 1100, func(int64) map[string]any { return map[string]any{"name": "n", "value": "v"} })
+	// final review I2: event 3 holds raw-only cells over 16 KiB (as stored, and of another class) and an attendee with
+	// such cells; its calendar 2 holds account fields over 1 KiB
+	over := strings.Repeat("u", 20<<10)
+	children["Attendees"] = append(children["Attendees"], row{20001, map[string]any{
+		"event_id": int64(3), "attendeeEmail": "b@example.test", "attendeeIdentity": over, "attendeeRelationship": over,
+	}})
+	longID := strings.Repeat("c", 2<<10)
 	title := strings.Repeat("t", 5<<10)
 	desc := strings.Repeat("d", 4<<20)
 	db, _ := buildDB(t, dbSpec{
-		events: []row{{1, map[string]any{"title": title, "description": desc}}, {2, nil}}, calendars: []row{{1, nil}}, children: children,
+		events: []row{
+			{1, map[string]any{"title": title, "description": desc}},
+			{2, nil},
+			{3, map[string]any{"calendar_id": int64(2), "customAppUri": over, "mutators": over, "eventStatus": over}},
+		},
+		calendars: []row{{1, nil}, {2, map[string]any{"account_type": longID, "account_name": longID, "ownerAccount": longID, "name": over}}},
+		children:  children,
 	})
 	p := parseBuilt(t, db, false)
 	r := p.rec(t, 1)
@@ -76,5 +91,47 @@ func TestCalendarCapsAreCountedNeverSilent(t *testing.T) {
 		raw2["attendees_unnamed_entries_truncated"] != true || raw2["attendees_unnamed"] != int64(1001) {
 		t.Errorf("row 2: raw.attendees_unnamed_entries %d kept, total %#v, truncated %#v, attendees_unnamed %#v; want 1000, 1001, true, 1001",
 			len(got), raw2["attendees_unnamed_entries_total"], raw2["attendees_unnamed_entries_truncated"], raw2["attendees_unnamed"])
+	}
+	// final review I2 (spec 9, as ios.calendar's maxStored): a raw-only TEXT over 16 KiB is never kept nor cut: its
+	// <key>_state "too-long", <key>_len and <key>_sha256 stand in its place, at the top of raw, in raw.calendar and in a
+	// child entry; the account fields are identifiers (1 KiB, never cut), stated as ios.calendar states Store.name
+	h := sha256.Sum256([]byte(over))
+	overSum := hex.EncodeToString(h[:])
+	h = sha256.Sum256([]byte(longID))
+	idSum := hex.EncodeToString(h[:])
+	r3 := p.rec(t, 3)
+	raw3 := rawOf(r3)
+	calRaw, _ := raw3["calendar"].(map[string]any)
+	ra, _ := raw3["attendees"].([]any)
+	var entry map[string]any
+	if len(ra) == 1 {
+		entry, _ = ra[0].(map[string]any)
+	}
+	for _, c := range []struct {
+		label string
+		m     map[string]any
+		key   string
+		n     int
+		sum   string
+	}{
+		{"raw", raw3, "customAppUri", len(over), overSum},
+		{"raw", raw3, "mutators", len(over), overSum},
+		{"raw", raw3, "eventStatus", len(over), overSum},
+		{"raw.calendar", calRaw, "name", len(over), overSum},
+		{"raw.attendees[0]", entry, "attendeeIdentity", len(over), overSum},
+		{"raw.attendees[0]", entry, "attendeeRelationship", len(over), overSum},
+		{"raw", raw3, "calendar_account", len(longID), idSum},
+		{"raw", raw3, "calendar_account_type", len(longID), idSum},
+		{"raw", raw3, "calendar_owner", len(longID), idSum},
+	} {
+		if _, kept := c.m[c.key]; kept || c.m[c.key+"_state"] != "too-long" || c.m[c.key+"_len"] != int64(c.n) || c.m[c.key+"_sha256"] != c.sum {
+			t.Errorf("row 3: %s.%s kept %v, state %#v, len %#v, sha256 %#v; want absent, too-long, %d and the hash",
+				c.label, c.key, kept, c.m[c.key+"_state"], c.m[c.key+"_len"], c.m[c.key+"_sha256"], c.n)
+		}
+	}
+	if cal, _ := r3.Payload["calendar"].(map[string]any); cal["account"] != nil || cal["owner"] != nil || cal["id"] != "2" {
+		_, acct := cal["account"]
+		_, owner := cal["owner"]
+		t.Errorf("row 3: calendar id %v, account stated %v, owner stated %v; want id 2 and no account or owner", cal["id"], acct, owner)
 	}
 }
