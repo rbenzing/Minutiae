@@ -15,7 +15,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.calendar"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // The errors of Parse, wrapped with %w.
@@ -79,19 +79,61 @@ const (
 )
 
 // reqs is what Probe needs of the schema (spec 8.1): CalendarItem identifying with ROWID as the rowid alias; the
-// join tables optional, each with ROWID as the alias where the mapping reads it by key (Get).
+// join tables optional. Whether a join table read by key (Get) is keyed by its rowid is checked after rowrun.Probe
+// (probeGetKeys), because a table that declares no column named ROWID is keyed by its implicit rowid, which rowrun's
+// alias check does not accept (the real store's Identity, plan 4I3 Task 12).
 func reqs() []rowrun.Req {
 	return []rowrun.Req{
 		{Table: tableItem, Need: []string{"ROWID", "start_date", "start_tz", "all_day", "calendar_id"}, Alias: "ROWID"},
-		{Table: "Calendar", Alias: "ROWID", Optional: true},
-		{Table: "Store", Alias: "ROWID", Optional: true},
-		{Table: "Location", Alias: "ROWID", Optional: true},
-		{Table: "Participant", Alias: "ROWID", Optional: true},
-		{Table: "Identity", Alias: "ROWID", Optional: true},
+		{Table: "Calendar", Optional: true},
+		{Table: "Store", Optional: true},
+		{Table: "Location", Optional: true},
+		{Table: "Participant", Optional: true},
+		{Table: "Identity", Optional: true},
 		{Table: "Alarm", Optional: true},
 		{Table: "Recurrence", Optional: true},
 		{Table: "ExceptionDate", Optional: true},
 	}
+}
+
+// probe is rowrun.Probe with reqs, then, when it found the schema applicable from the main file, the key check of
+// each present join table read by key (probeGetKeys).
+func probe(ctx context.Context, in *parse.Input) (parse.Applicability, error) {
+	got, err := rowrun.Probe(ctx, in, reqs())
+	if err != nil || got.Status != parse.Applicable || got.Reason == reasonDeferred {
+		return got, err
+	}
+	return probeGetKeys(ctx, in, got)
+}
+
+// probeGetKeys refuses (unsupported-schema) a present join table read by key that is not keyed by its rowid
+// (rowidKeyed): a Get would attach another row with no marker. The main file only: Probe calls it with no companion.
+func probeGetKeys(ctx context.Context, in *parse.Input, ok parse.Applicability) (parse.Applicability, error) {
+	db, err := sqlitedb.Open(ctx, sqlitedb.Files{DB: in.Primary.R, DBSize: in.Primary.Size}, in.Budget)
+	if err != nil {
+		return parse.Applicability{}, err
+	}
+	defer db.Release()
+	for _, jt := range joinTables() {
+		if jt.Alias == "" {
+			continue
+		}
+		t, err := db.Table(ctx, jt.Table, nil, nil)
+		switch {
+		case errors.Is(err, sqlitedb.ErrNoSuchTable):
+			continue
+		case err != nil:
+			return parse.Applicability{}, err
+		}
+		switch why := rowidKeyed(t, jt.Alias); {
+		case why == "":
+		case t.WithoutRowid():
+			return parse.Applicability{Status: parse.UnsupportedSchema, Reason: "table " + t.Name() + " is WITHOUT ROWID: it has no rowid to join by"}, nil
+		default: // rowrun's wording for the same finding
+			return parse.Applicability{Status: parse.UnsupportedSchema, Reason: "column " + jt.Alias + " of table " + t.Name() + " is not the rowid alias"}, nil
+		}
+	}
+	return ok, nil
 }
 
 // Probe decides from the main file only (4I3-P5, B4, spec 8.1). At the system path the path names the store, so every
@@ -105,7 +147,7 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 		return parse.Applicability{}, rowrun.ErrNilInput
 	}
 	if classifyPlace(in.Primary.Logical) != placeSystem {
-		return rowrun.Probe(ctx, in, reqs())
+		return probe(ctx, in)
 	}
 	loud := func(reason string) parse.Applicability {
 		return parse.Applicability{Status: parse.UnsupportedSchema, Reason: reason}
@@ -146,7 +188,7 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 		}
 		return loud(reasonNoItem), nil
 	}
-	got, err := rowrun.Probe(ctx, in, reqs())
+	got, err := probe(ctx, in)
 	if err != nil {
 		return got, err
 	}

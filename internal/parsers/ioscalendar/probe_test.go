@@ -192,7 +192,7 @@ func TestMetaIsValid(t *testing.T) {
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "ios.calendar" || m.Version != "1.0.0" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
+	if m.Name != "ios.calendar" || m.Version != "1.0.1" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
 		t.Errorf("meta %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformIOS {
@@ -352,4 +352,44 @@ func highEntropy(n int) []byte {
 		sum = sha256.Sum256(sum[:])
 	}
 	return out[:n]
+}
+
+// Plan 4I3 Task 12 (the real-data run, finding a): a join table read by key whose definition has no column named
+// ROWID (the real store's Identity) is keyed by its implicit rowid, which is what a Get reads, so it is neither refused
+// by Probe nor guarded at Parse; a column named ROWID that is not the rowid alias, or a WITHOUT ROWID table, still is.
+func TestIOSCalendarJoinTableWithoutARowidColumnIsKeyedByItsRowid(t *testing.T) {
+	implicit := func() *built {
+		s := newBuilt("Identity")
+		s.table("Identity", "display_name TEXT, address TEXT", false) // the real store's declaration: no ROWID column
+		s.add("Identity", 1, map[string]any{"display_name": "Ann", "address": "mailto:ann@example.test"})
+		s.add("Participant", 4, map[string]any{"identity_id": int64(1)})
+		s.event(1, map[string]any{"organizer_id": int64(4)})
+		return s
+	}
+	db := implicit().bytes()
+	if got := probeAt(t, map[string][]byte{"db": db}, true); got.Status != parse.Applicable {
+		t.Errorf("Identity without a ROWID column: Probe = %+v, want applicable", got)
+	}
+	for _, deferred := range []bool{false, true} {
+		res := parseBuilt(t, db, deferred)
+		r := byRowid(t, res)[1]
+		if !sameJSON(t, r.Payload["organizer"], map[string]any{"name": "Ann", "address": "mailto:ann@example.test"}) || rawOf(r)["join_undecided"] != nil {
+			t.Errorf("deferred %v: organizer %v, join_undecided %v; want the identity joined by its rowid", deferred, r.Payload["organizer"], rawOf(r)["join_undecided"])
+		}
+		if _, ok := res.Notes["join_undecided.Identity"]; ok {
+			t.Errorf("deferred %v: note join_undecided.Identity = %q, want none", deferred, res.Notes["join_undecided.Identity"])
+		}
+	}
+
+	// a WITHOUT ROWID Identity has no rowid to Get by: refused at the system path, guarded when deferred
+	s := newBuilt("Identity")
+	s.tabs["Identity"] = s.b.CreateTableWithoutRowid("Identity", "CREATE TABLE Identity (address TEXT PRIMARY KEY, display_name TEXT) WITHOUT ROWID", 1)
+	s.event(1, nil)
+	db = s.bytes()
+	if got := probeAt(t, map[string][]byte{"db": db}, true); got.Status != parse.UnsupportedSchema || !strings.Contains(got.Reason, "Identity") {
+		t.Errorf("WITHOUT ROWID Identity: Probe = %+v, want unsupported-schema naming it", got)
+	}
+	if res := parseBuilt(t, db, true); !strings.Contains(res.Notes["join_undecided.Identity"], "rowid") {
+		t.Errorf("WITHOUT ROWID Identity, deferred: note join_undecided.Identity = %q", res.Notes["join_undecided.Identity"])
+	}
 }

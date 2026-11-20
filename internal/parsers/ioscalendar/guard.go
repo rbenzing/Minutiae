@@ -51,6 +51,20 @@ func joinTables() []rowrun.Req {
 	}
 }
 
+// rowidKeyed says why a join table read by key (Get, by rowid) is not keyed by its rowid, "" when it is: a WITHOUT
+// ROWID table has no rowid; a column named alias (ROWID) that is not the rowid alias shadows it, so the stored keys
+// may name that column and not the rowid. A table that declares no column of that name is keyed by its implicit rowid,
+// which is what alias names in SQL and what a Get reads (the real store's Identity, plan 4I3 Task 12).
+func rowidKeyed(t *sqlitedb.Table, alias string) string {
+	if t.WithoutRowid() {
+		return "the table is WITHOUT ROWID: it has no rowid to join by"
+	}
+	if i := t.Col(alias); i >= 0 && !t.Cols()[i].RowidAlias {
+		return "column " + alias + " is not the rowid alias"
+	}
+	return ""
+}
+
 // joinKind is the kind of a join through a table: by ROWID (Get) or by an owner column (Match). The guard holds each
 // kind apart (fix round 1, m5): a Participant without item_id leaves the organizer's Get by ROWID decided.
 type joinKind uint8
@@ -175,8 +189,8 @@ func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, pa
 		if jt.Alias == "" {
 			continue
 		}
-		if i := t.Col(jt.Alias); i < 0 || !t.Cols()[i].RowidAlias {
-			g.add(jt.Table, joinGet, "column "+jt.Alias+" is not the rowid alias")
+		if why := rowidKeyed(t, jt.Alias); why != "" {
+			g.add(jt.Table, joinGet, why)
 		}
 	}
 	for _, table := range g.order {
