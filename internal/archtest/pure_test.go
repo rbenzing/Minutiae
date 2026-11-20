@@ -327,10 +327,14 @@ var stdAllow = map[string]classSet{
 // stdAllow. android.whatsapp.msgstore records the SHA-256 of a view's SQL in a note (plan 4I-R4 h), so that the
 // examiner can recognise the app's own view text without the parser ever reading it as code. ios.whatsapp.chats
 // records the length and SHA-256 of the blobs it never decodes (plan 4I2, spec 8). android.calendar records the length
-// and SHA-256 of an identifier it never cuts (plan 4I3, spec 9: ident in text.go is the first use, F11). Every other
-// parser is without a digest, so the parser class as a whole stays without crypto/sha256.
+// and SHA-256 of an identifier it never cuts (plan 4I3, spec 9: ident in text.go is the first use, F11), and so does
+// ios.calendar (plan 4I3 Task 9: ident in its text.go, also the length and SHA-256 of external_rep, which it never
+// decodes). Every other parser is without a digest, so the parser class as a whole stays without crypto/sha256.
 var stdDirAllow = map[string]map[string]bool{
-	"crypto/sha256": {"internal/parsers/androidwhatsapp": true, "internal/parsers/ioswhatsapp": true, "internal/parsers/androidcalendar": true},
+	"crypto/sha256": {
+		"internal/parsers/androidwhatsapp": true, "internal/parsers/ioswhatsapp": true, "internal/parsers/androidcalendar": true,
+		"internal/parsers/ioscalendar": true,
+	},
 }
 
 func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {

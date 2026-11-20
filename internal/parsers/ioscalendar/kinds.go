@@ -82,8 +82,8 @@ func countKinds(ctx context.Context, db *sqlitedb.DB) (kinds, error) {
 }
 
 // note writes the notes of the kinds (4I3-P10): entity_type = absent when the column is absent; else
-// entity_type_values ("<value>:<rows>" by value, then other:<rows>) when any row holds a value, and non_event_rows
-// (the rows of the task kind, each a warning and no record) when there is one.
+// entity_type_values ("<value>:<rows>" by value, then other:<rows>; "none" when no row holds an INTEGER value), and
+// non_event_rows (the rows of the task kind, each a warning and no record) when there is one.
 func (k kinds) note(out parse.Emitter) {
 	if k.Absent {
 		out.Note("entity_type", "absent")
@@ -101,9 +101,10 @@ func (k kinds) note(out parse.Emitter) {
 	if k.Other > 0 {
 		entries = append(entries, "other:"+strconv.FormatInt(k.Other, 10))
 	}
-	if len(entries) > 0 {
-		out.Note("entity_type_values", noteList(entries))
+	if len(entries) == 0 {
+		entries = append(entries, "none") // the column exists but no row holds an INTEGER kind (Task 8 review M1)
 	}
+	out.Note("entity_type_values", noteList(entries))
 	if n := k.Values[kindTask]; n > 0 {
 		out.Note("non_event_rows", strconv.FormatInt(n, 10))
 	}

@@ -65,12 +65,29 @@ func (r item) vals() []any {
 	return out
 }
 
-// goStore is a Go-built Calendar.sqlitedb whose CalendarItem holds rows.
+// goStore is a Go-built Calendar.sqlitedb whose CalendarItem holds rows, beside the snapshot's other tables, empty
+// (so no join is undecided).
 func goStore(rows ...item) []byte {
+	return goItems(true, rows...)
+}
+
+// goItemsOnly is a Go-built Calendar.sqlitedb whose one table is CalendarItem: every join is undecided.
+func goItemsOnly(rows ...item) []byte {
+	return goItems(false, rows...)
+}
+
+func goItems(joins bool, rows ...item) []byte {
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
 	tb := b.CreateTable("CalendarItem", itemDDL)
 	for _, r := range rows {
 		tb.Insert(r.id, r.vals()...)
+	}
+	if joins {
+		for _, td := range snapshotTables() {
+			if td[0] != "CalendarItem" {
+				b.CreateTable(td[0], "CREATE TABLE "+td[0]+" (ROWID INTEGER PRIMARY KEY, "+td[1]+")")
+			}
+		}
 	}
 	return b.Bytes()
 }
@@ -301,6 +318,28 @@ func TestIOSCalendarProbeByPlace(t *testing.T) {
 	res = parseAt(t, map[string][]byte{"db": damaged, "wal": {}}, true)
 	if !errors.Is(res.Err, ioscalendar.ErrSchemaIncomplete) || errors.Is(res.Err, ioscalendar.ErrNoCalendarItemTable) || len(res.Records) != 0 {
 		t.Errorf("damaged schema: Parse err %v, %d records; want ErrSchemaIncomplete and none", res.Err, len(res.Records))
+	}
+
+	// Task 8 review M2 (a): a present join table read by key (Get) must have ROWID as its rowid alias, else the store
+	// is refused loudly at the system path
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	b.CreateTable("CalendarItem", itemDDL)
+	b.CreateTable("Calendar", `CREATE TABLE Calendar (ROWID INTEGER, title TEXT, store_id INTEGER)`)
+	if got := probeAt(t, map[string][]byte{"db": b.Bytes()}, true); got.Status != parse.UnsupportedSchema || !strings.Contains(got.Reason, "Calendar") || !strings.Contains(got.Reason, "alias") {
+		t.Errorf("Calendar without its alias at the system path: Probe = %+v", got)
+	}
+
+	// Task 8 review M2 (b): a CalendarItem the census sees but that cannot be opened (a virtual table: the reader
+	// cannot read it) is an error that names it, never "absent" and never "unknown", even when another schema entry
+	// is lost (the schema is then read in part)
+	b = sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	b.CreateTable("Aaa", `CREATE TABLE Aaa (v INTEGER)`)
+	b.AddSchemaRow("table", "CalendarItem", "CalendarItem", int64(0), "CREATE VIRTUAL TABLE CalendarItem USING fts5(summary)")
+	lost := b.Bytes()
+	lost[108], lost[109] = 0xff, 0xff // the first schema cell (Aaa) points outside page 1
+	res = parseAt(t, map[string][]byte{"db": lost, "wal": {}}, true)
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "CalendarItem") || errors.Is(res.Err, ioscalendar.ErrNoCalendarItemTable) || errors.Is(res.Err, ioscalendar.ErrSchemaIncomplete) || len(res.Records) != 0 {
+		t.Errorf("an unopenable CalendarItem the census sees: Parse err %v, %d records", res.Err, len(res.Records))
 	}
 }
 

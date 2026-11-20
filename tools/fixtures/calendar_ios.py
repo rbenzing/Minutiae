@@ -10,7 +10,7 @@ no-public-source, CROSSCHECK.md there): every table, column, type, join column, 
 marker, the Cocoa-seconds storage and the all-day midnight convention are memory, so these fixtures prove that the
 parser reads the remembered layout and nothing about a real database. The oracle reads the stored values back from the
 engine on a COPY of the finished files and states the expected parser output literally, from spec 5, 6.2, 6.4 and 8.2
-of plan 4I3, the builder-check rulings B1, B2, B5, B6 and B8, and the plan's state vocabularies. It is a second reading
+of plan 4I3, the builder-check rulings B1, B2, B5, B6, B8 and B10, and the plan's state vocabularies. It is a second reading
 of the spec, not independent of the design: it shares no code with the Go parser, but both follow the same text. A
 branch the scenario never reaches is not restated: the oracle stops with an AssertionError there instead of guessing.
 
@@ -231,7 +231,7 @@ def zone_class(raw, unknown, col, z, state_prefix):
 
 
 def times_of(r, raw, unknown):
-    """Spec 5, 8.2, B1, B5, B6: (timing, start, end, start_date, end_date, times)."""
+    """Spec 5, 8.2, B1, B5, B6, B10: (timing, start, end, start_date, end_date, times)."""
     ad = r.get("all_day")
     stz, etz = r.get("start_tz"), r.get("end_tz")
     if is_int(ad) and ad == 1:
@@ -266,9 +266,11 @@ def times_of(r, raw, unknown):
         if start is None:
             raw["end_state"] = "no-start"  # B5, before any other end rule
         else:
-            end_class = "all_day" if timing == "all_day" else zone_class(raw, {}, "end_tz", etz, "end-tz")[0]
-            if end_class != timing:
-                raw["end_state"] = "timing-mismatch"  # B6: also an end_tz whose class is undecidable
+            end_class, end_why = ("all_day", "") if timing == "all_day" else zone_class(raw, {}, "end_tz", etz, "end-tz")
+            if end_why in ("end-tz-unreadable", "end-tz-too-long"):
+                raw["end_state"] = "end-zone-undecided"  # B10: an end zone that cannot be read has no class
+            elif end_class != timing:
+                raw["end_state"] = "timing-mismatch"  # B6: two decided classes (a NULL or empty end_tz is absent)
             elif eiso is not None:
                 if ev < sv:
                     raw["end_state"] = "end-before-start"
@@ -307,9 +309,9 @@ def get_join(raw, unknown, env, state_key, table, key_col, key):
     return row
 
 
-def person_of(p, env, tf):
+def person_of(p, env, tf, field):
     """(address, name, identity_state) of a Participant row: address = email else Identity.address, name =
-    Identity.display_name (spec 8.2)."""
+    Identity.display_name (spec 8.2); an altered name puts field (attendees or organizer) in raw.text_flags."""
     addr = name = None
     email = p.get("email")
     if email is not None:
@@ -332,7 +334,7 @@ def person_of(p, env, tf):
                 assert is_text(n), "an unreadable name is not restated"
                 c = C.clean(n, MAX_TITLE)
                 if c.flags:
-                    tf.add("attendees")
+                    tf.add(field)
                 name = c.text or None
     return addr, name, state
 
@@ -366,6 +368,8 @@ def expect_item(r, env, file="any"):
             v = ident(raw, unknown, col, z, MAX_ZONE)
             if v:
                 p[key] = v
+        elif z is not None and not is_text(z):
+            unknown["CalendarItem." + col] = "type-mismatch"  # B10: an unreadable zone is listed whatever the timing
     title = free_text(raw, tf, "title", r.get("summary"), MAX_TITLE, truncated, unknown, "summary")
     if title:
         p["title"] = title
@@ -451,7 +455,7 @@ def expect_item(r, env, file="any"):
     # organizer (Get Participant, Get Identity)
     org = get_join(raw, unknown, env, "organizer_state", "Participant", "organizer_id", r.get("organizer_id"))
     if org is not None:
-        addr, name, state = person_of(org, env, tf)
+        addr, name, state = person_of(org, env, tf, "organizer")
         o = {}
         if addr:
             o["address"] = addr
@@ -483,7 +487,7 @@ def expect_item(r, env, file="any"):
 def children(p, raw, tf, env, rid):
     att, att_raw, unnamed, unnamed_raw = [], [], 0, []
     for x in env.match("Participant", rid):
-        addr, name, state = person_of(x, env, tf)
+        addr, name, state = person_of(x, env, tf, "attendees")
         codes = entry_of(x, ("role", "type", "status"))
         for col in ("role", "type", "status"):
             assert x.get(col) is None or is_int(x[col]), "a wrongly typed participant code is not restated"
@@ -681,9 +685,13 @@ def oracle(files, variant, ddl=DDL, refused=False):
         notes["entity_type"] = "absent"
     else:
         assert len(kinds) <= 16, "more than 16 kinds is not part of the scenario"
-        notes["entity_type_values"] = ",".join("%d:%d" % (k, kinds[k]) for k in sorted(kinds))
+        # Task 8 review M1: the column exists, so the note is always written, "none" when no row holds an INTEGER kind
+        notes["entity_type_values"] = ",".join("%d:%d" % (k, kinds[k]) for k in sorted(kinds)) or "none"
         if kinds.get(3):  # a zero count is not stated
             notes["non_event_rows"] = str(kinds[3])
+    unmapped_rows = sum(1 for r in view["CalendarItem"] if is_int(r.get("entity_type")) and r["entity_type"] == 3)
+    if unmapped_rows:  # rowrun's count of the rows the mapping refused (the non-event rows)
+        notes["unmapped_rows.CalendarItem"] = str(unmapped_rows)
     tables = byte_order({jv(m["name"]) for m in view["sqlite_master"] if m["type"] == b"table"})
     notes["tables"] = ",".join(tables)
     unmapped = [t for t in tables if t not in MAPPED_TABLES]
@@ -738,8 +746,8 @@ def variant_core(work):
     if b"Only in the WAL, uncommitted" not in files["wal"]:
         raise SystemExit("calendar-ios: row 28 did not reach the WAL (no spill)")
     exp = oracle(files, "calendar-ios")
-    # the reader's warning about the uncommitted frames comes before the row warnings (4I2 PF13a)
-    exp["warnings"].insert(0, {"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
+    # 4I2 PF13a: the row warnings raised during rowrun.Run come first, then the reader warnings Run forwards at its end
+    exp["warnings"].append({"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
     return files, exp
 
 

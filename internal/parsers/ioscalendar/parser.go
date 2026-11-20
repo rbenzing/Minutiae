@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/census"
@@ -50,8 +48,9 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings is the typed pass's mapping; it arrives with the full CalendarItem mapping (plan 4I3 Task 9).
-func (Parser) Mappings() []parse.TableMapping { return nil }
+// Mappings is the typed pass's mapping: CalendarItem with no Parse context, so a recovered row joins no table and says
+// so (4I3-P4, B2).
+func (Parser) Mappings() []parse.TableMapping { return []parse.TableMapping{eventMappingWith(nil)} }
 
 // The reasons of Probe (byte-exact, plan 4I3 "Probe reasons").
 const (
@@ -190,11 +189,12 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 	return f, nil
 }
 
-// Parse opens the live view once to count the item kinds of CalendarItem and state them (4I3-P10); at the system
-// path a live view without CalendarItem fails the job (ErrNoCalendarItemTable only when the schema was read whole,
-// else ErrSchemaIncomplete). It then maps CalendarItem, a step that is Identifying elsewhere (a database of another
-// kind is not applicable there). rowrun.Run warns for at most 1,000 rows; Parse states the rest of the non-event rows
-// in one warning and in the note warnings_dropped (spec 8.2, 9, 4I-R9).
+// Parse checks the live view before any mapping runs (checkLiveView: the item kinds and their notes, CalendarItem's
+// rowid alias, the join tables) and states the store (writeNotes), then maps CalendarItem, a step that is Identifying
+// elsewhere (a database of another kind is not applicable there), reading through the join guard. Records pass
+// through a counting emitter: the mapping cannot warn, so after rowrun.Run Parse warns once per table with an
+// undecided join (4I3-P9, B9); rowrun.Run warns for at most 1,000 rows, and Parse states the rest of the non-event
+// rows in one warning and in the note warnings_dropped (spec 8.2, 9, 4I-R9).
 func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	if in == nil || out == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
@@ -203,13 +203,24 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	if err != nil {
 		return err
 	}
-	if err := stateKinds(ctx, in, files, out); err != nil {
+	g, err := checkLiveView(ctx, in, files, out)
+	if err != nil {
 		return err
 	}
-	cw := &rowWarnCounter{Emitter: out}
-	step := rowrun.Step{Mapping: eventMappingWith(&env{}), Identifying: classifyPlace(in.Primary.Logical) == placeOther}
-	rep, err := rowrun.Run(ctx, in, cw, []rowrun.Step{step})
-	if werr := cw.stateDropped(ctx, rep); err == nil {
+	e := &env{}
+	if g != nil {
+		e.Guard = *g
+		if err := writeNotes(ctx, files, in.Budget, out); err != nil {
+			return fmt.Errorf("ios.calendar: %w", err)
+		}
+	}
+	ce := newCountingEmitter(out)
+	step := rowrun.Step{Mapping: eventMappingWith(e), Identifying: classifyPlace(in.Primary.Logical) == placeOther}
+	rep, err := rowrun.Run(ctx, in, ce, []rowrun.Step{step})
+	if werr := ce.warnJoins(ctx); err == nil {
+		err = werr
+	}
+	if werr := ce.stateDropped(ctx, rep); err == nil {
 		err = werr
 	}
 	if err != nil {
@@ -218,31 +229,55 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	return nil
 }
 
-// stateKinds counts the item kinds of the live view's CalendarItem and writes their notes. At the system path any
-// failure is read against the schema census (itemAbsence); elsewhere a live view without CalendarItem is left to the
-// identifying step and any other failure fails the job.
-func stateKinds(ctx context.Context, in *parse.Input, files sqlitedb.Files, out parse.Emitter) error {
+// requiredItem are the identifying columns of CalendarItem (spec 8.1).
+func requiredItem() []string {
+	var out []string
+	for _, c := range itemSpecs() {
+		if c.Required {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+// checkLiveView opens the live view once. It counts the item kinds of CalendarItem and states them (4I3-P10); at the
+// system path any failure to read CalendarItem is read against the schema census (itemAbsence); elsewhere a live view
+// without CalendarItem is left to the identifying step (nil guard) and any other failure fails the job. A CalendarItem
+// must have its required columns and ROWID as the rowid alias (Probe deferred these checks beside a companion; the
+// source ids and every join depend on it); then the join tables are checked (the guard).
+func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, out parse.Emitter) (*joinGuard, error) {
 	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
-		return fmt.Errorf("ios.calendar: %w", err)
+		return nil, fmt.Errorf("ios.calendar: %w", err)
 	}
+	defer db.Release()
 	k, err := countKinds(ctx, db)
-	db.Release()
 	switch {
 	case err == nil:
-		k.note(out)
-		return nil
 	case classifyPlace(in.Primary.Logical) == placeSystem:
+		rep, cerr := census.Take(ctx, files, in.Budget, nil)
+		if cerr != nil {
+			return nil, fmt.Errorf("ios.calendar: %s: %w (the schema census failed: %w)", tableItem, err, cerr)
+		}
+		return nil, itemAbsence(err, rep)
 	case errors.Is(err, sqlitedb.ErrNoSuchTable):
-		return nil // a database of another kind: the identifying step states it
+		return nil, nil // a database of another kind: the identifying step states it
 	default:
-		return fmt.Errorf("ios.calendar: %s: %w", tableItem, err)
+		return nil, fmt.Errorf("ios.calendar: %s: %w", tableItem, err)
 	}
-	rep, cerr := census.Take(ctx, files, in.Budget, nil)
-	if cerr != nil {
-		return fmt.Errorf("ios.calendar: %s: %w (the schema census failed: %w)", tableItem, err, cerr)
+	k.note(out)
+	t, err := db.Table(ctx, tableItem, requiredItem(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("ios.calendar: %s: %w", tableItem, err)
 	}
-	return itemAbsence(err, rep)
+	if i := t.Col("ROWID"); i < 0 || !t.Cols()[i].RowidAlias {
+		return nil, fmt.Errorf("ios.calendar: %w", &sqlitedb.UnsupportedSchemaError{Table: tableItem, Reason: "column ROWID is not the rowid alias"})
+	}
+	partial := func() (bool, error) {
+		rep, err := census.Take(ctx, files, in.Budget, nil)
+		return rep.SchemaSkipped > 0, err
+	}
+	return checkJoinSchema(ctx, db, out, partial)
 }
 
 // itemAbsence reads err, a failure to read CalendarItem at the system path, against the schema census: a census that
@@ -259,50 +294,4 @@ func itemAbsence(err error, rep census.Report) error {
 		return ErrNoCalendarItemTable
 	}
 	return fmt.Errorf("ios.calendar: %s: %w", tableItem, err)
-}
-
-// rowWarnCounter counts the row warnings rowrun.Run states (locator sqlite:table=...) and holds back its own note
-// warnings_dropped (the reader warnings past its cap), so that Parse writes one total.
-type rowWarnCounter struct {
-	parse.Emitter
-	rowWarned  int64
-	runDropped int64
-}
-
-// Warn counts a row warning and passes every warning on.
-func (c *rowWarnCounter) Warn(ctx context.Context, locator, reason string) error {
-	if strings.HasPrefix(locator, "sqlite:table=") {
-		c.rowWarned++
-	}
-	return c.Emitter.Warn(ctx, locator, reason)
-}
-
-// Note holds back rowrun.Run's warnings_dropped.
-func (c *rowWarnCounter) Note(key, value string) {
-	if key == "warnings_dropped" {
-		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
-			c.runDropped += n
-			return
-		}
-	}
-	c.Emitter.Note(key, value)
-}
-
-// stateDropped states the CalendarItem rows rowrun.Run did not warn for (its cap of 1,000 warnings per run): one
-// warning naming their number (spec 8.2, 9), and the note warnings_dropped with every warning dropped.
-func (c *rowWarnCounter) stateDropped(ctx context.Context, rep rowrun.Report) error {
-	var unmapped int64
-	for _, tr := range rep.Tables {
-		if tr.Table == tableItem {
-			unmapped += tr.Unmapped
-		}
-	}
-	rows := max(unmapped-c.rowWarned, 0)
-	if total := rows + c.runDropped; total > 0 {
-		c.Emitter.Note("warnings_dropped", strconv.FormatInt(total, 10))
-	}
-	if rows == 0 {
-		return nil
-	}
-	return c.Emitter.Warn(ctx, "sqlite:table="+tableItem, strconv.FormatInt(rows, 10)+" more CalendarItem row warnings dropped after the cap of 1000")
 }

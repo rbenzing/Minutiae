@@ -68,7 +68,8 @@ func TestIOSCalendarNonEventRowsAreCountedWarnings(t *testing.T) {
 			t.Errorf("row %d: raw %v", id, raw)
 		}
 	}
-	if _, has := res.Notes["entity_type_values"]; has {
+	// Task 8 review M1: the column exists, so the note is always written: "none" when no INTEGER kind was counted
+	if res.Notes["entity_type_values"] != "none" {
 		t.Errorf("wrongly typed kinds: entity_type_values %q, want none (no INTEGER value)", res.Notes["entity_type_values"])
 	}
 
@@ -92,6 +93,26 @@ func TestIOSCalendarNonEventRowsAreCountedWarnings(t *testing.T) {
 	}
 	if res.Notes["warnings_dropped"] != "500" || res.Notes["non_event_rows"] != "1500" || res.Notes["entity_type_values"] != "3:1500" {
 		t.Errorf("1,500 tasks: notes %v", res.Notes)
+	}
+
+	// Task 8 review M4: the dropped rows are counted by the reason of rowrun's row warnings, so another warning at a
+	// sqlite:table= locator (here the counted join warnings of a store without its join tables) changes nothing
+	rows = append(rows, item{1501, nil})
+	res = parseAt(t, map[string][]byte{"db": goItemsOnly(rows...)}, true)
+	n, summary, other := 0, 0, 0
+	for _, w := range res.Warnings {
+		switch {
+		case w.Reason == reasonNotEvent:
+			n++
+		case strings.Contains(w.Reason, "500") && strings.Contains(w.Reason, "dropped"):
+			summary++
+		case strings.HasPrefix(w.Locator, "sqlite:table=") && strings.HasPrefix(w.Reason, "calendar-join-undecided"):
+			other++
+		}
+	}
+	if res.Err != nil || len(res.Records) != 1 || n != 1000 || summary != 1 || other == 0 || res.Notes["warnings_dropped"] != "500" {
+		t.Errorf("1,500 tasks and one event without join tables: err %v, %d records, %d row warnings, %d summaries, %d join warnings, warnings_dropped %q",
+			res.Err, len(res.Records), n, summary, other, res.Notes["warnings_dropped"])
 	}
 
 	// at most 16 distinct values are named, 2 and 3 always among them; the rest is "other"

@@ -24,6 +24,7 @@ const (
 	stateTZAbsent       = "start-tz-absent"
 	stateTZTooLong      = "start-tz-too-long"
 	stateTZUnreadable   = "start-tz-unreadable"
+	stateEndZoneUndec   = "end-zone-undecided"
 )
 
 // What readTimes reads (from memory, spec 8.2): the all_day flags, the floating marker of start_tz and end_tz, the
@@ -119,9 +120,10 @@ func readCocoa(row parse.Row, c rowrun.Cols, name string, nullStated bool, raw, 
 
 // readTimes reads the timing and the times of a CalendarItem row (spec 5, 8.2, B1, B5, B6). The class of the start is
 // all_day 1 → all-day; all_day 0 → the class of start_tz (zoneClass); anything else unknown timing with
-// raw.timing_state and no time. The end of an all-day record is all-day; any other end takes the class of end_tz, and
-// a class that differs from the start's gives no end (B6). No readable start gives no end (B5, before every other end
-// rule). An unreadable start or end leaves what depends on it undecided: no time and no state that claims an absence.
+// raw.timing_state and no time. The end of an all-day record is all-day; any other end takes the class of end_tz: an
+// end_tz that cannot be read or is over 256 bytes as cleaned has no class, so no end, end_state "end-zone-undecided"
+// (B10); a decided class that differs from the start's gives no end, "timing-mismatch" (B6, a NULL or empty end_tz
+// included: NULL is a stated absence). No readable start gives no end (B5, before every other end rule). An unreadable start or end leaves what depends on it undecided: no time and no state that claims an absence.
 func readTimes(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) eventTimes {
 	et := eventTimes{Timing: readTiming(row, c, raw, unknown)}
 	start := readCocoa(row, c, "start_date", true, raw, unknown)
@@ -139,13 +141,16 @@ func readTimes(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) eventT
 		raw["end_state"] = stateNoStart // B5, before any other end rule
 		return et
 	}
-	endClass := calendar.TimingAllDay
+	endClass, endWhy := calendar.TimingAllDay, ""
 	if et.Timing != calendar.TimingAllDay {
-		endClass, _ = zoneClass(row, c, "end_tz", unknown)
+		endClass, endWhy = zoneClass(row, c, "end_tz", unknown)
 	}
 	switch {
+	case endWhy == stateTZUnreadable || endWhy == stateTZTooLong:
+		raw["end_state"] = stateEndZoneUndec // B10: an end zone that cannot be read has no class, so no end
+		return et
 	case endClass != et.Timing:
-		raw["end_state"] = stateMismatch // B6: also an end_tz whose class cannot be decided (Task 7 ruling)
+		raw["end_state"] = stateMismatch // B6: two decided classes that differ (a NULL or empty end_tz is absent)
 		return et
 	case end.kind == rowrun.CellNull || end.kind == rowrun.CellMissing:
 		raw["end_state"] = stateNoneStored
@@ -210,7 +215,7 @@ func readTiming(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) strin
 // for any other non-empty TEXT of at most maxZone bytes as cleaned (an invalid byte grows to the three bytes of
 // U+FFFD), else unknown with the start-tz state: absent (NULL, empty, a missing column), too-long, or unreadable (a
 // cell of another class or one the reader could not read, listed in unknown_columns). The text is measured, never
-// copied: a hostile cell over the cap costs nothing.
+// copied: a hostile cell over the cap costs nothing. readTimes reads the same states of end_tz (B6, B10).
 func zoneClass(row parse.Row, c rowrun.Cols, name string, unknown map[string]any) (class, state string) {
 	col := c.At(name)
 	b, k := textCellOf(row, col)

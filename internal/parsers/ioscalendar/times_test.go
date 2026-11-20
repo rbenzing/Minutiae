@@ -260,9 +260,10 @@ func TestIOSCalendarDifferentZonesOfOneClassKeepTheEnd(t *testing.T) {
 	}
 }
 
-// B6 (CORE row 15, Task 7 ruling): an end zone whose timing class differs from the start's gives no end,
-// raw.end_state "timing-mismatch"; a NULL or empty end_tz on a timed event is such a mismatch; an all-day record's
-// end is all-day whatever its end_tz (B6 applies only when all_day is 0).
+// B6 (CORE row 15, Task 7 ruling) and B10: an end zone whose timing class differs from the start's gives no end,
+// raw.end_state "timing-mismatch"; a NULL or empty end_tz on a timed event is such a mismatch (NULL is a stated
+// absence); an end zone that cannot be read or is over 256 bytes is no class at all: "end-zone-undecided" (B10); an
+// all-day record's end is all-day whatever its end_tz (B6 applies only when all_day is 0).
 func TestIOSCalendarTimingMismatchHasNoEnd(t *testing.T) {
 	recs := byRowid(t, parseVariant(t, "calendar-ios"))
 	check(t, "row 15", recs[15], want{timing: "timed", start: "2023-11-14T22:13:20Z", raw: map[string]any{"end_state": "timing-mismatch", "end_tz": "_float"}})
@@ -277,7 +278,7 @@ func TestIOSCalendarTimingMismatchHasNoEnd(t *testing.T) {
 	check(t, "timed, end_tz empty", got[2], want{timing: "timed", start: "2023-11-14T22:13:20Z", raw: map[string]any{"end_state": "timing-mismatch"}})
 	check(t, "floating, zoned end", got[3], want{timing: "floating", start: "2023-11-14T22:13:20", raw: map[string]any{"end_state": "timing-mismatch"}})
 	check(t, "all-day, zoned end", got[4], want{timing: "all_day", start: "2023-11-15T00:00:00", end: "2023-11-16T00:00:00", sdate: "2023-11-15", edate: "2023-11-16", raw: map[string]any{"end_state": nil}})
-	check(t, "timed, end zone over 256 bytes", got[5], want{timing: "timed", start: "2023-11-14T22:13:20Z", raw: map[string]any{"end_state": "timing-mismatch"}})
+	check(t, "timed, end zone over 256 bytes", got[5], want{timing: "timed", start: "2023-11-14T22:13:20Z", raw: map[string]any{"end_state": "end-zone-undecided", "end_tz_state": "too-long"}})
 }
 
 // Spec 5.4 (CORE rows 1, 18, 19): Cocoa seconds are read as stored, REAL or INTEGER, never through the unit guess of
@@ -352,7 +353,7 @@ func TestCalendarUnreadableCellsAreUndecided(t *testing.T) {
 		{5, "creation_date", want{timing: "timed", start: "2023-11-14T22:13:20Z", end: "2023-11-14T23:13:20Z"}, []string{"creation_date", "last_modified"}},
 		{6, "start_date", want{timing: "timed", raw: map[string]any{"end_state": "no-start"}}, []string{"start_date"}},
 		{7, "start_tz", want{timing: "unknown", raw: map[string]any{"timing_state": "start-tz-unreadable"}}, []string{"start_tz"}},
-		{8, "end_tz", want{timing: "timed", start: "2023-11-14T22:13:20Z", raw: map[string]any{"end_state": "timing-mismatch"}}, []string{"end_tz"}},
+		{8, "end_tz", want{timing: "timed", start: "2023-11-14T22:13:20Z", raw: map[string]any{"end_state": "end-zone-undecided"}}, []string{"end_tz"}}, // B10
 	}
 	for _, c := range cases {
 		r := got[c.id]

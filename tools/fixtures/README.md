@@ -3422,14 +3422,17 @@ time, has no zone suffix); `internal/parsers/ioscalendar/oracle_facts_test.go` (
 checks it against facts written from the spec. A branch the scenario never reaches is not restated: the generator stops
 with an `AssertionError` there instead of guessing. Every record is a file `any` row with no stated source path, so one
 oracle serves a backup and an extraction alike. Notes of the oracle: `tables`, `unmapped_tables`, `occurrence_cache_rows`,
-`change_tables`, `entity_type_values` and `non_event_rows` (a zero count is not stated), or `entity_type` `absent`; the
-`schema.CalendarItem` note is left to the parser task (its order is the mapping's). A recovered row joins nothing (B2):
+`change_tables`, `entity_type_values` (`none` when the column exists and no row holds an INTEGER kind) and
+`non_event_rows` (a zero count is not stated), or `entity_type` `absent`, and rowrun's `unmapped_rows.CalendarItem` (the
+non-event rows); the `schema.CalendarItem` and `unmapped_columns.<table>` notes are left to the parser task (their order is
+the mapping's), and `TestIOSCalendarMatchesOracle` reads the oracle's notes as a subset in exactly those two cases. An
+`end_tz` that cannot be read or is over 256 bytes on a timed or floating start is `end-zone-undecided` (B10). A recovered row joins nothing (B2):
 the Get joins whose key is stored (`location_state`, `calendar_state`, `organizer_state`) and the four Match joins
 (`participants_state`, `recurrence_state`, `exception_dates_state`, `alarms_state`) are `not-joined-recovered`.
 
 | Variant (`internal/parsers/ioscalendar/testdata/`) | Placed as | Holds |
 |---|---|---|
-| `calendar-ios` | backup, `HomeDomain` `Library/Calendar/Calendar.sqlitedb`, with `-wal` | the CORE-iOS scenario (rows 1 to 26: timed with a zone, floating, all-day at and off midnight, a 23:59:59 all-day end, a NULL `start_tz`, an exception, a series with two rules and two exception dates, participants and identities, alarms, a task row 11, `entity_type` NULL and 7, two zones of one class, a timing mismatch, coordinates out of range, dangling keys, the edge rows), three `OccurrenceCache` and two `CalendarItemChanges` rows; row 27 in a committed WAL frame, row 28 in an uncommitted one (the dying writer also fills a scratch table so the row's leaf spills; never a record). The warnings: the reader's `wal-frames-not-applied`, then the non-event row 11 |
+| `calendar-ios` | backup, `HomeDomain` `Library/Calendar/Calendar.sqlitedb`, with `-wal` | the CORE-iOS scenario (rows 1 to 26: timed with a zone, floating, all-day at and off midnight, a 23:59:59 all-day end, a NULL `start_tz`, an exception, a series with two rules and two exception dates, participants and identities, alarms, a task row 11, `entity_type` NULL and 7, two zones of one class, a timing mismatch, coordinates out of range, dangling keys, the edge rows), three `OccurrenceCache` and two `CalendarItemChanges` rows; row 27 in a committed WAL frame, row 28 in an uncommitted one (the dying writer also fills a scratch table so the row's leaf spills; never a record). The warnings (4I2 PF13a): the non-event row 11 raised during the run, then the reader's `wal-frames-not-applied` forwarded at its end |
 | `calendar-ios-extract` | extraction, `/private/var/mobile/Library/Calendar/Calendar.sqlitedb` (logical `ios:HomeDomain/Library/Calendar/Calendar.sqlitedb`) | rows 1 to 3 |
 | `calendar-ios-noentitytype` | backup | rows 1 to 3 in a `CalendarItem` without `entity_type` (note `entity_type` `absent`) |
 | `calendar-ios-oldlayout` | backup | one table `Event(ROWID, summary, start_date)`, no `CalendarItem`: no record |
