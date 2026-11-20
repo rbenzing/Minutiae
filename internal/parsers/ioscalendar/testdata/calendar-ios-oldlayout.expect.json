@@ -1,0 +1,1 @@
+{"ddl":"none: Event(ROWID, summary, start_date) written by the generator","extra_files":[],"family":"calendar-ios","generator":{"files":{"db":"76d9a600585f28448418522d55439efea76108defc70b33e99b54e8dc479965f"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"calendar-ios-oldlayout","warnings":[]}

@@ -1293,6 +1293,7 @@ var purityRequired = []string{
 	"internal/parsers/ioswacalls",
 	"internal/parsers/ioswacontacts",
 	"internal/parsers/androidcalendar",
+	"internal/parsers/ioscalendar",
 	"internal/carve",
 }
 
@@ -1966,6 +1967,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/parsers/androidcalllog":    pcParser,
 		"internal/parsers/androidcontacts":   pcParser,
 		"internal/parsers/androidcalendar":   pcParser,
+		"internal/parsers/ioscalendar":       pcParser,
 		"internal/parsers/androidwhatsapp":   pcParser,
 		"internal/parsers/androidwacontacts": pcParser,
 		"internal/parsers/ioswhatsapp":       pcParser,

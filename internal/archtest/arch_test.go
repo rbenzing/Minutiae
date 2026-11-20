@@ -90,6 +90,7 @@ var allowed = map[string][]string{
 	"internal/parsers/androidmms":          {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/message"},
 	"internal/parsers/androidcalllog":      {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common"},
 	"internal/parsers/androidcalendar":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/census", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/calendar", "internal/recordtypes/common"},
+	"internal/parsers/ioscalendar":         {},
 	"internal/parsers/androidcontacts":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},
 	"internal/parsers/chromium":            {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web"},
 	"internal/parsers/androidwhatsapp":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/census", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/decode/wajid", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common", "internal/recordtypes/message"},
