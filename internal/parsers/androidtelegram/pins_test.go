@@ -9,7 +9,7 @@ var fixturePins = map[string]string{
 	"telegram-deleted.db":           "c3c73c04d2fcece42f52b97e1631ccb4e56c8d17978907cb563d19aeb781c576",
 	"telegram-deleted.wal":          "91a413fc57d99162a562d5ac009d8bda08d1772bfcf68f3b7799c72f8d8e9b6f",
 	"telegram-hostile.db":           "e3d0b1f6199477f5fe19b4a87528e5e24f80f7c626533a2daa878b114c08454d",
-	"telegram-layers.db":            "f91bccdda86b8e1af1ca217be216e169c6dfbaed47852ecb7218fa6a8a197ecc",
+	"telegram-layers.db":            "9d422b15d3c9cf9f15a4e0166489ca713894ed46955fab4e64aa88053da39ca2",
 	"telegram-nomessages.db":        "15969aca2129d996aa94cccaae585a51dc26566d4c69dd6e353b781f4ed7f495",
 	"telegram-oldversion.db":        "e4f8165bb8eeb240f9d90c4709c5b39a7f9a9ca9e068df95363beb48fb19c237",
 	"telegram-otherversion.db":      "7fc06aaa267d6d023be97deda88e42ccadcd8cdb8c6507fcca6bd47f963187e4",

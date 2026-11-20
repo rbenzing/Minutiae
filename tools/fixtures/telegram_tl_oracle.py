@@ -352,10 +352,29 @@ def self_test():
     check("vector past end", decode(ent + le(VECTOR) + le(3), "Message")["stop"]["kind"] == "truncated")
     old = le(0x22EB6ABA) + le(1) + le(2) + le(0x9DB1BC6D) + le(3) + le(0x12345678)
     check("bad bool", decode(old, "Message")["stop"]["kind"] == "malformed")
-    # TL_messageMediaEmpty is opaque in the table: the decode stops at it with its id
-    media = le(0x7600B9D3) + le(1 << 9) + le(0) + le(7) + peer_user + le(1) + b"\x00\x00\x00\x00" + le(0x3DED6320)
-    s = decode(media, "Message")["stop"]
-    check("opaque", s["kind"] == "opaque" and s["path"] == "media" and s["id"] == 0x3DED6320)
+    # TL_messageMediaDice is opaque in the table: the decode stops at it with its id
+    head = le(0x7600B9D3) + le(1 << 9) + le(0) + le(7) + peer_user + le(1) + b"\x00\x00\x00\x00"
+    s = decode(head + le(0x08CBEC07), "Message")["stop"]
+    check("opaque", s["kind"] == "opaque" and s["path"] == "media" and s["id"] == 0x08CBEC07)
+    # TL_messageMediaEmpty reads no field: it is full with an empty field list and read whole (ruling M3)
+    media = head + le(0x3DED6320)
+    r = decode(media, "Message")
+    check("empty media read whole", r["stop"] is None and r["end"] == len(media) and r["fields"][-1]["path"] == "media"
+          and r["fields"][-1]["id"] == 0x3DED6320)
+    # the depth and steps caps (Task 5 review M1), with the bounds lowered for the test: the nested peer_id object is
+    # depth 2 and the fourth value read (flags, flags2, id, then peer_id)
+    global MAX_DEPTH, MAX_STEPS
+    saved = MAX_DEPTH, MAX_STEPS
+    try:
+        MAX_DEPTH = 1
+        s = decode(msg, "Message")["stop"]
+        check("depth cap", s["kind"] == "cap" and s["path"] == "peer_id" and s["offset"] == 16)
+        MAX_DEPTH, MAX_STEPS = saved[0], 3
+        r = decode(msg, "Message")
+        check("steps cap", r["stop"]["kind"] == "cap" and r["stop"]["path"] == "peer_id" and len(r["fields"]) == 3)
+    finally:
+        MAX_DEPTH, MAX_STEPS = saved
+    check("caps restored", decode(msg, "Message")["stop"] is None)
     print("ok")
     return 0
 

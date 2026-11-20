@@ -222,6 +222,17 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	want("R58", strings.Contains(flags, "unknown-flag-bits") && msg(58).body() == "Flagged")
 	// F22 and the Task 5 ruling: the second secret document stops at the same place
 	want("R59", msg(59).raw["data_state"] == "partial" && msg(59).raw["data_stop_path"] == "media.document.thumbs" && msg(59).rawObj("media")["key_present"] == nil)
+	// coordinator ruling M3 (Task 5 review): TL_messageMediaEmpty reads no field, so it is full and read whole; the
+	// secret rows that carry it decode with no stop, and v181 counts 8 undecoded message blobs (7 partial), not 11
+	for _, n := range []int64{8, 10, 57} {
+		_, stopped := msg(n).raw["data_stop_kind"]
+		want(fmt.Sprintf("M3 R%d", n), msg(n).raw["data_state"] == "decoded" && !stopped && msg(n).raw["trailer_state"] == "none")
+	}
+	undecoded := false
+	for _, w := range parsertest.LoadFixture(t, "testdata", "telegram-v181").Expect.Warnings {
+		undecoded = undecoded || w.Contains == "telegram-blob-undecoded: messages_v2.data: 8 records (partial:7,unknown-constructor:1)"
+	}
+	want("M3 count", undecoded)
 	// F18
 	want("U5 U6 U9", user(1000005).warned && user(1000006).warned && user(1000009).raw["data_state"] == "unknown-constructor")
 	// Review Focus 3: a present but empty name part is absent
@@ -255,4 +266,23 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	want("P4", p4.raw["mid_state"] == "undecided")
 	_, p5State := p5.raw["mid_state"]
 	want("P5", !p5State && p5.body() == "Hello Ann here")
+
+	// spec ruling T7 (Task 5 review M1): the oracle's stop rules on telegram-hostile. A string whose 0xFE prefix
+	// declares 0xFFFFFF bytes past the end of the blob is truncated, never a cap (the framing cannot declare one above
+	// MaxString), stopped at the length prefix of message (offset 44); a vector count of 0x7FFFFFFF is above MaxVector
+	// and is a cap, stopped at entities.
+	hostile := oracleRecords(t, "telegram-hostile")["messages_v2"]
+	hostileMsg := func(rowid int64) rec {
+		t.Helper()
+		e, ok := hostile[rowid]
+		if !ok || e.r.Type != "message" {
+			t.Fatalf("telegram-hostile: no messages_v2 message record for rowid %d", rowid)
+		}
+		return e
+	}
+	h13, h14 := hostileMsg(2013), hostileMsg(2014)
+	want("H2013", num(h13.raw["mid"]) == "2013" && h13.raw["data_state"] == "cap" && h13.raw["data_stop_kind"] == "cap" &&
+		h13.raw["data_stop_path"] == "entities" && num(h13.raw["data_stop_offset"]) == "64")
+	want("H2014", num(h14.raw["mid"]) == "2014" && h14.raw["data_state"] == "truncated" && h14.raw["data_stop_kind"] == "truncated" &&
+		h14.raw["data_stop_path"] == "message" && num(h14.raw["data_stop_offset"]) == "44")
 }

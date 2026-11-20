@@ -3446,7 +3446,8 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
 
 - Telegram facts (plan 4I4): `schemas/telegram-android/constructors.tsv` (the TL constructor table: header
   `type id class body pin source fields`, one row per constructor ID with its class, its body `full`, `prefix` or
-  `opaque`, its pin and `<File>.java:<line>`, and its field order in the 4I4-P4 notation) and `facts.tsv` (the other
+  `opaque` (a constructor that reads no field, such as `TL_messageMediaEmpty`, is `full` with an empty field
+  list, Task 5 review ruling M3), its pin and `<File>.java:<line>`, and its field order in the 4I4-P4 notation) and `facts.tsv` (the other
   pinned facts: the message write verbs, the time units, the dialog-id predicates and cast, the v85 line, the v64
   `messages` columns and the class of every inline id, each with `key value pin source note`), checked by
   `TestTelegramFactsCiteTheirSource` (`internal/archtest`). Their source is the app repository

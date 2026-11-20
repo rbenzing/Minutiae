@@ -111,7 +111,7 @@ MessageMedia	0x29632a36	TL_messageMediaUnsupported_old	opaque	A-HEAD	TLRPC.java:
 MessageMedia	0x2ec0533f	TL_messageMediaVenue	full	A-HEAD	TLRPC.java:7491	geo:GeoPoint title:str address:str provider:str venue_id:str venue_type:str
 MessageMedia	0x2fda2204	TL_messageMediaDocument_old	opaque	A-HEAD	TLRPC.java:7804	
 MessageMedia	0x3d8ce53d	TL_messageMediaPhoto_layer68	opaque	A-HEAD	TLRPC.java:8108	
-MessageMedia	0x3ded6320	TL_messageMediaEmpty	opaque	A-HEAD	TLRPC.java:7483	
+MessageMedia	0x3ded6320	TL_messageMediaEmpty	full	A-HEAD	TLRPC.java:7483	
 MessageMedia	0x3f7ee58b	TL_messageMediaDice_layer220	opaque	A-HEAD	TLRPC.java:8230	
 MessageMedia	0x4bd6e798	TL_messageMediaPoll_layer223	opaque	A-HEAD	TLRPC.java:7926	
 MessageMedia	0x4cf4d72d	TL_messageMediaDocument_layer187	opaque	A-HEAD	TLRPC.java:7698	
@@ -131,7 +131,7 @@ MessageMedia	0x7c4414d3	TL_messageMediaDocument_layer74	opaque	A-HEAD	TLRPC.java
 MessageMedia	0x84551347	TL_messageMediaInvoice_layer145	opaque	A-HEAD	TLRPC.java:7434	
 MessageMedia	0x8a53b014	TL_messageMediaToDo	opaque	A-HEAD	TLRPC.java:66764	
 MessageMedia	0x9cb070d7	TL_messageMediaDocument_layer159	opaque	A-HEAD	TLRPC.java:7739	
-MessageMedia	0x9f84f49e	TL_messageMediaUnsupported	opaque	A-HEAD	TLRPC.java:7475	
+MessageMedia	0x9f84f49e	TL_messageMediaUnsupported	full	A-HEAD	TLRPC.java:7475	
 MessageMedia	0xa2d24290	TL_messageMediaVideo_old	opaque	A-HEAD	TLRPC.java:7541	
 MessageMedia	0xa32dd600	TL_messageMediaWebPage_layer165	opaque	A-HEAD	TLRPC.java:8294	
 MessageMedia	0xa831bf37	TL_messageMediaWidget_layer233	opaque	A-HEAD	TLRPC.java:66851	
@@ -182,7 +182,7 @@ GeoPoint	0xb2a2f663	TL_geoPoint	full	A-HEAD	TLRPC.java:5121	flags:# _long:dbl la
 WebPage	0x211a1788	TL_webPageEmpty	opaque	A-HEAD	TLRPC.java:20333	
 WebPage	0x5f07b4bc	TL_webPage_layer104	opaque	A-HEAD	TLRPC.java:20149	
 WebPage	0x7311ca11	TL_webPageNotModified	opaque	A-HEAD	TLRPC.java:20431	
-WebPage	0x85849473	TL_webPageNotModified_layer110	opaque	A-HEAD	TLRPC.java:20418	
+WebPage	0x85849473	TL_webPageNotModified_layer110	full	A-HEAD	TLRPC.java:20418	
 WebPage	0xa31ea0b5	TL_webPage_old	opaque	A-HEAD	TLRPC.java:20248	
 WebPage	0xb0d13e47	TL_webPagePending	opaque	A-HEAD	TLRPC.java:20395	
 WebPage	0xc586da1c	TL_webPagePending_layer165	opaque	A-HEAD	TLRPC.java:20380	

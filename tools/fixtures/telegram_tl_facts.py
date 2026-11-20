@@ -49,7 +49,8 @@ HEADER = "type\tid\tclass\tbody\tpin\tsource\tfields"
 # The TL types of the table, in output order, and how each row's body is chosen (plan 4I4 Task 1).
 #   all-full:    every constructor of the switch, full body.
 #   only:        only the listed IDs (full); the type's other constructors are not in the table.
-#   some-full:   the listed classes full, every other constructor of the switch opaque.
+#   some-full:   the listed classes full, every other constructor of the switch opaque, except one whose readParams
+#                reads nothing: it is read whole, so it is full with an empty field list (Task 5 review ruling M3).
 #   prefix:      every constructor up to its last needed field (spec Q2, T6), full when that is the body.
 SELECTION = [
     ("Message", "all-full", None),
@@ -159,6 +160,10 @@ the body is the one the selection of plan 4I4 Task 1 asks for, and the fields eq
 row: a proper prefix of it, up to the last needed field, spec Q2/T6). At A-HEAD every ID each type's switch reads is a
 row; at the three older pins every ID the pinned types' switches read is a row (membership).
 
+- A constructor of a type read only in part (`some-full`: MessageMedia, Photo, Document, WebPage) whose `readParams`
+  reads nothing, for example `TL_messageMediaEmpty` `0x3ded6320`, is `full` with an empty field list, never `opaque`:
+  its id is the whole object, so a decode reads it whole (Task 5 review, coordinator ruling M3). Every other
+  constructor of those types outside the selection stays `opaque`.
 - MessageMedia holds 52 rows, not the 50 of spec §6.6 (recon §3.6 counted classes in `TLRPC.java`): the A-HEAD switch
   also reads two app-local IDs, `0xc79aee1d` `MessageMediaStoryFull` and `0xc79aee1f` `MessageMediaStoryFull_old`
   (`ui/Stories/`, also read at A-11.4.2). They are `opaque` rows.
@@ -690,7 +695,7 @@ def build_rows(src, pin, skip=None):
             if skip is not None and cid in skip:
                 continue
             body, fields = "full", ""
-            if mode == "some-full" and c.name not in arg:
+            if mode == "some-full" and c.name not in arg and not reads_nothing(src, c):
                 body = "opaque"
             else:
                 try:
@@ -710,6 +715,15 @@ def build_rows(src, pin, skip=None):
                 fields = " ".join(items)
             rows.append([typ, "0x%08x" % cid, c.name, body, pin, row_source(src, typ, cid, case_line, c), fields])
     return rows, manual
+
+
+def reads_nothing(src, c):
+    """The class reads no field (an empty reduced body): read whole, so never opaque (ruling M3). A class the reduction
+    cannot read (MANUAL) is not known to read nothing."""
+    try:
+        return reduce_class(src, c) == []
+    except Manual:
+        return False
 
 
 def sha256(path):
@@ -749,7 +763,7 @@ def verify_row(src, r, ids):
         return "MISMATCH (source %s)" % source
     mode = {t: m for t, m, _ in SELECTION}[r[0]]
     arg = {t: a for t, _, a in SELECTION}[r[0]]
-    if (mode == "some-full" and c.name not in arg) != (r[3] == "opaque"):
+    if (mode == "some-full" and c.name not in arg and not reads_nothing(src, c)) != (r[3] == "opaque"):
         return "MISMATCH (body %s against the selection)" % r[3]
     if r[3] == "opaque":
         return "verified"

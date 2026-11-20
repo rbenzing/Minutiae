@@ -37,6 +37,10 @@ the body is the one the selection of plan 4I4 Task 1 asks for, and the fields eq
 row: a proper prefix of it, up to the last needed field, spec Q2/T6). At A-HEAD every ID each type's switch reads is a
 row; at the three older pins every ID the pinned types' switches read is a row (membership).
 
+- A constructor of a type read only in part (`some-full`: MessageMedia, Photo, Document, WebPage) whose `readParams`
+  reads nothing, for example `TL_messageMediaEmpty` `0x3ded6320`, is `full` with an empty field list, never `opaque`:
+  its id is the whole object, so a decode reads it whole (Task 5 review, coordinator ruling M3). Every other
+  constructor of those types outside the selection stays `opaque`.
 - MessageMedia holds 52 rows, not the 50 of spec §6.6 (recon §3.6 counted classes in `TLRPC.java`): the A-HEAD switch
   also reads two app-local IDs, `0xc79aee1d` `MessageMediaStoryFull` and `0xc79aee1f` `MessageMediaStoryFull_old`
   (`ui/Stories/`, also read at A-11.4.2). They are `opaque` rows.
@@ -102,7 +106,7 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `constructors.tsv` | 6d9a97f4c4760b7895851000f28f31c3c7aa922194f6fd50cff04ca2695b6c0f |
 | `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
@@ -407,7 +411,7 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `constructors.tsv` | 6d9a97f4c4760b7895851000f28f31c3c7aa922194f6fd50cff04ca2695b6c0f |
 | `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
@@ -663,7 +667,7 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `constructors.tsv` | 6d9a97f4c4760b7895851000f28f31c3c7aa922194f6fd50cff04ca2695b6c0f |
 | `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
@@ -867,7 +871,7 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `constructors.tsv` | 6d9a97f4c4760b7895851000f28f31c3c7aa922194f6fd50cff04ca2695b6c0f |
 | `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):

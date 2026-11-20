@@ -241,6 +241,13 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 			t.Errorf("required id %s: class %q, want %q", id, r[2], class)
 		}
 	}
+	// coordinator ruling M3 (Task 5 review): a constructor that reads no field is read whole, so it is full with an
+	// empty field list, never opaque
+	for _, id := range []string{"0x3ded6320", "0x9f84f49e", "0x85849473"} {
+		if r, ok := byID[id]; !ok || r[3] != "full" || r[6] != "" {
+			t.Errorf("constructor %s: %v, want a full row with an empty field list (ruling M3)", id, r)
+		}
+	}
 
 	// facts.tsv: the fixed keys at their pins, the value domains, and the wrapper rows (T5, F25).
 	have := map[string]bool{}

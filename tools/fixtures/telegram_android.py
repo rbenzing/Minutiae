@@ -1415,7 +1415,9 @@ def layers_rows():
         ent = mandatory(r, "MessageEntity", 0, "")
         ent.update({k: 1 for k in ("length",) if k in ent})
         rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "entity " + r.cls, frm=pu(ANN), entities=[ent]))))
-    media = [r for r in ordered if r.typ == "MessageMedia" and r.body == "full"] + [tab[0x9F84F49E]]
+    # every full media wrapper (TL_messageMediaEmpty and TL_messageMediaUnsupported among them since ruling M3: a
+    # constructor that reads no field is full) and one opaque one, TL_messageMediaUnsupported_old
+    media = [r for r in ordered if r.typ == "MessageMedia" and r.body == "full"] + [tab[0x29632A36]]
     for i, r in enumerate(media):
         rid = 1501 + i
         rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "media " + r.cls, frm=pu(ANN), media=mandatory(r, "MessageMedia", rid, "")))))
