@@ -286,8 +286,9 @@ func (s signature) why() string {
 
 // readSignature reads the signature: a message table (messages_v2 or messages) with the signature columns and users with
 // uid and data (spec 8.1). A table that lacks a column is absent for the signature; a table not found is absent only when
-// the schema was read whole (partial is asked only then); a table that exists and cannot be read leaves its part
-// undecided, never absent. Budget, context and I/O errors are returned.
+// the schema was read whole; in a schema read in part a table not found or not readable is undecided without a table
+// reason (partial is asked only for those); a table that exists and cannot be read in a schema read whole leaves its
+// part undecided with its damage, never absent. Budget, context and I/O errors are returned.
 func readSignature(ctx context.Context, db *sqlitedb.DB, partial func() (bool, error)) (signature, error) {
 	var s signature
 	var part *bool
@@ -299,7 +300,7 @@ func readSignature(ctx context.Context, db *sqlitedb.DB, partial func() (bool, e
 			return sigPresent, nil
 		case errors.As(err, &us) && len(us.Missing) > 0:
 			return sigAbsent, nil
-		case errors.Is(err, sqlitedb.ErrNoSuchTable):
+		case errors.Is(err, sqlitedb.ErrNoSuchTable), dataDamage(err):
 			if part == nil {
 				p, perr := partial()
 				if perr != nil {
@@ -307,11 +308,14 @@ func readSignature(ctx context.Context, db *sqlitedb.DB, partial func() (bool, e
 				}
 				part = &p
 			}
-			if *part {
+			switch {
+			case *part:
+				// in a schema read in part the engine reports a table it did not see as corrupt, not absent: either
+				// way the table is unknown, stated as the schema read in part (review I1)
 				return sigUndecided, nil
+			case errors.Is(err, sqlitedb.ErrNoSuchTable):
+				return sigAbsent, nil
 			}
-			return sigAbsent, nil
-		case dataDamage(err):
 			if s.damage == nil {
 				s.damage, s.damageTable = fmt.Errorf("table %s could not be read: %w", table, err), table
 			}
@@ -384,9 +388,9 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	if err != nil {
 		return err
 	}
-	if lv == nil {
-		out.Note("not_applicable", reasonNotTelegram)
-		return out.Warn(ctx, "sqlite:schema", "not applicable at parse time: "+reasonNotTelegram)
+	if lv.NotApplicable != "" {
+		out.Note("not_applicable", lv.NotApplicable)
+		return out.Warn(ctx, "sqlite:schema", "not applicable at parse time: "+lv.NotApplicable)
 	}
 	_, account := classifyPlace(in.Primary.Logical)
 	if err := writeNotes(ctx, files, in.Budget, out, *lv, account, databaseUser(in.Primary.Logical)); err != nil {
@@ -404,11 +408,15 @@ type liveView struct {
 	Guard              *joinGuard
 	Version            int32
 	HasMessages, HasV2 bool
+	// NotApplicable is why a live view away from the app path is not applicable ("" when it is): no signature
+	// ("not a Telegram cache4.db"), or a signature that is undecided, stated as undecided (review I1).
+	NotApplicable string
 }
 
 // checkLiveView opens the live view once (4I4-P8). At the app path the user version must be in the band first (the
 // loud rule) and the signature must be present: absent is ErrNoMessageTable, unknown in a schema read in part
-// ErrSchemaIncomplete. Elsewhere a live view without the signature is of another kind (nil, nil: not applicable), and
+// ErrSchemaIncomplete. Elsewhere a live view without the signature is of another kind (NotApplicable "not a Telegram
+// cache4.db"), an undecided signature is not applicable with its undecided reason (review I1), and
 // the band applies only once the signature is present (4I3 final review I1). Then the version's layout table must exist
 // (ErrNoMessageTable naming it), every mapped table present must have its required columns and rowid alias, and the
 // join tables are checked (the guard).
@@ -441,14 +449,17 @@ func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, o
 		return nil, fmt.Errorf("android.telegram: %w", err)
 	}
 	switch {
-	case sig.state == sigUndecided && sig.damage != nil:
+	case sig.state == sigUndecided && app && sig.damage != nil:
 		return nil, fmt.Errorf("android.telegram: %w", sig.damage)
 	case sig.state == sigUndecided && app:
 		return nil, ErrSchemaIncomplete
-	case sig.state != sigPresent && app:
+	case sig.state == sigAbsent && app:
 		return nil, ErrNoMessageTable
-	case sig.state != sigPresent:
-		return nil, nil // a database of another kind (a schema read in part elsewhere, as androidcalendar)
+	case sig.state == sigUndecided:
+		// elsewhere an undecided signature is not applicable with its own reason, never the decided absence (review I1)
+		return &liveView{NotApplicable: sig.why()}, nil
+	case sig.state == sigAbsent:
+		return &liveView{NotApplicable: reasonNotTelegram}, nil // a database of another kind
 	}
 	if !inBand(v) {
 		return nil, fmt.Errorf("%w (user version %d)", ErrUnsupportedVersion, v)

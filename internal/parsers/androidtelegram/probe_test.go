@@ -1,6 +1,7 @@
 package androidtelegram_test
 
 import (
+	"crypto/sha256"
 	"errors"
 	"strings"
 	"testing"
@@ -321,6 +322,123 @@ func TestTelegramOtherKindElsewhereIsNotApplicable(t *testing.T) {
 		}
 		if _, has := res.Notes["database_version"]; has {
 			t.Errorf("%s: the store notes are stated for a database of another kind (%v)", name, res.Notes)
+		}
+	}
+}
+
+// notApplicableAs says the run stated not-applicable with exactly this reason, in rowrun's form, and no record.
+func notApplicableAs(t *testing.T, name string, res parsertest.Result, reason string) {
+	t.Helper()
+	if res.Err != nil || len(res.Records) != 0 {
+		t.Errorf("%s: Parse err %v, %d records; want not-applicable", name, res.Err, len(res.Records))
+	}
+	if got := res.Notes["not_applicable"]; got != reason {
+		t.Errorf("%s: note not_applicable = %q, want %q", name, got, reason)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		found = found || (w.Locator == "sqlite:schema" && w.Reason == "not applicable at parse time: "+reason)
+	}
+	if !found {
+		t.Errorf("%s: warnings %v, want the not-applicable warning %q", name, res.Warnings, reason)
+	}
+}
+
+// highEntropy is n deterministic bytes that look encrypted (a SHA-256 chain).
+func highEntropy(n int) []byte {
+	var out []byte
+	sum := sha256.Sum256([]byte("android.telegram"))
+	for len(out) < n {
+		out = append(out, sum[:]...)
+		sum = sha256.Sum256(sum[:])
+	}
+	return out[:n]
+}
+
+// partialSchema is a Go-built v181 database with the signature tables whose first schema cell pointer points outside
+// page 1: the schema is read only in part, and a signature table is not in what was read.
+func partialSchema() []byte {
+	db := goBuilt(181, table{"messages_v2", ddlV2}, table{"users", ddlUsers})
+	db[108], db[109] = 0xff, 0xff
+	return db
+}
+
+// virtualV2 is a Go-built v181 database whose messages_v2 is a virtual table (it exists and cannot be read).
+func virtualV2() []byte {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 181})
+	b.CreateTable("users", ddlUsers)
+	b.AddSchemaRow("table", "messages_v2", "messages_v2", int64(0), "CREATE VIRTUAL TABLE messages_v2 USING fts4(data)")
+	return b.Bytes()
+}
+
+// Task 6 review (I1, M2): the Probe and Parse matrix beyond the brief's rows. An undecided signature (a schema read in
+// part, a signature table that cannot be read) is never stated as "not a Telegram cache4.db": unknown is never absent.
+// With the signature present elsewhere, the band and the layout fail Parse after a deferral. The app path is loud for
+// a non-database beside a companion and Encrypted for an encrypted file; an account<x> that is not digits is still the
+// app path, with the account undecided.
+func TestTelegramProbeAndParseMatrix(t *testing.T) {
+	const schemaUnread = "the schema could not be read whole and no Telegram message table was found in what was read"
+	partial := partialSchema()
+	if got := probeAt(t, remoteOther, dbOnly(partial)); got.Status != parse.NotApplicable || got.Reason != schemaUnread {
+		t.Errorf("a schema read in part at %s: Probe = %+v", remoteOther, got)
+	}
+	if got := probeAt(t, remoteApp, dbOnly(partial)); got.Status != parse.UnsupportedSchema || got.Reason != schemaUnread {
+		t.Errorf("a schema read in part at the app path: Probe = %+v", got)
+	}
+	// I1: elsewhere Parse states the undecided reason, never the decided absence
+	notApplicableAs(t, "a schema read in part with a -wal elsewhere", parseAt(t, remoteOther, withWAL(partial)), schemaUnread)
+	res := parseAt(t, remoteApp, withWAL(partial))
+	if !errors.Is(res.Err, androidtelegram.ErrSchemaIncomplete) || errors.Is(res.Err, androidtelegram.ErrNoMessageTable) || len(res.Records) != 0 {
+		t.Errorf("a schema read in part with a -wal at the app path: Parse err %v; want ErrSchemaIncomplete", res.Err)
+	}
+	virtual := virtualV2()
+	const v2Unread = "table messages_v2 could not be read"
+	if got := probeAt(t, remoteOther, dbOnly(virtual)); got.Status != parse.NotApplicable || got.Reason != v2Unread {
+		t.Errorf("a virtual messages_v2 at %s: Probe = %+v", remoteOther, got)
+	}
+	if got := probeAt(t, remoteApp, dbOnly(virtual)); got.Status != parse.UnsupportedSchema || got.Reason != v2Unread {
+		t.Errorf("a virtual messages_v2 at the app path: Probe = %+v", got)
+	}
+	notApplicableAs(t, "a virtual messages_v2 with a -wal elsewhere", parseAt(t, remoteOther, withWAL(virtual)), v2Unread)
+	res = parseAt(t, remoteApp, withWAL(virtual))
+	if res.Err == nil || errors.Is(res.Err, androidtelegram.ErrNoMessageTable) || len(res.Records) != 0 {
+		t.Errorf("a virtual messages_v2 with a -wal at the app path: Parse err %v; want the table's error", res.Err)
+	}
+
+	// the signature present elsewhere: the band, then the layout, after a deferral
+	if res := parseAt(t, remoteOther, withWAL(goBuilt(200, v2Tables()...))); !errors.Is(res.Err, androidtelegram.ErrUnsupportedVersion) || len(res.Records) != 0 {
+		t.Errorf("version 200 with the signature and a -wal elsewhere: Parse err %v", res.Err)
+	}
+	only1 := goBuilt(90, table{"messages", ddlV1}, table{"users", ddlUsers})
+	if res := parseAt(t, remoteOther, withWAL(only1)); !errors.Is(res.Err, androidtelegram.ErrNoMessageTable) || !strings.Contains(res.Err.Error(), "needs table messages_v2") {
+		t.Errorf("version 90 with messages only and a -wal elsewhere: Parse err %v", res.Err)
+	}
+
+	// not SQLite beside a companion, and an encrypted file
+	text := []byte(strings.Repeat("not a database. ", 7)[:100])
+	if got := probeAt(t, remoteApp, withWAL(text)); got.Status != parse.UnsupportedSchema || got.Reason != "the main file is not a database but a -wal or -journal companion exists" {
+		t.Errorf("text with a companion at the app path: Probe = %+v", got)
+	}
+	if got := probeAt(t, remoteOther, withWAL(text)); got.Status != parse.NotApplicable {
+		t.Errorf("text with a companion at %s: Probe = %+v", remoteOther, got)
+	}
+	enc := dbOnly(highEntropy(8192))
+	if got := probeAt(t, remoteApp, enc); got.Status != parse.Encrypted || got.Reason != "the file looks encrypted" {
+		t.Errorf("encrypted at the app path: Probe = %+v", got)
+	}
+	if got := probeAt(t, remoteOther, enc); got.Status != parse.NotApplicable {
+		t.Errorf("encrypted at %s: Probe = %+v", remoteOther, got)
+	}
+
+	// 4I4-P7, F34: an account<x> that is not 1 to 6 digits is the app path with the account undecided
+	for _, dir := range []string{"accountX", "account1234567"} {
+		remote := "/data/user/0/org.telegram.messenger/files/" + dir + "/cache4.db"
+		if got := probeAt(t, remote, dbOnly(goBuilt(70, table{"messages", ddlV1}))); got.Status != parse.UnsupportedSchema || got.Reason != reasonNoTable {
+			t.Errorf("%s: Probe = %+v, want the app path's loud refusal", dir, got)
+		}
+		res := parseAt(t, remote, fixtureFiles(t, "telegram-v181"))
+		if res.Err != nil || res.Notes["account"] != "undecided" {
+			t.Errorf("%s: Parse err %v, note account = %q, want undecided", dir, res.Err, res.Notes["account"])
 		}
 	}
 }
