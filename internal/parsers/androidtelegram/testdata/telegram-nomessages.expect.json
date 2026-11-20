@@ -1,0 +1,1 @@
+{"ddl":"v181.sql","extra_files":[],"family":"telegram-android","generator":{"files":{"db":"15969aca2129d996aa94cccaae585a51dc26566d4c69dd6e353b781f4ed7f495"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"telegram-nomessages","warnings":[]}

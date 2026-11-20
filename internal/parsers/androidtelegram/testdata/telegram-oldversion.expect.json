@@ -1,0 +1,1 @@
+{"ddl":"v64.sql","extra_files":[],"family":"telegram-android","generator":{"files":{"db":"e4f8165bb8eeb240f9d90c4709c5b39a7f9a9ca9e068df95363beb48fb19c237"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"telegram-oldversion","warnings":[]}

@@ -3509,3 +3509,36 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   unless the value gives `flags`/`flags2`; a `_raw` value replaces any field's bytes (hostile blobs); a `secret` field
   accepts only bytes that start with an obviously synthetic marker. `py -3 -I tools/fixtures/telegram_tl_encode.py
   --self-test` prints `ok` (the framing, the boxed bool, the empty vector, a Peer, a Message round trip, flag handling).
+  Task 5 tightened it: a string or bytes value of 2^24 bytes or more raises `ValueError` (never cut); `i32`/`i64`
+  fields take the signed range only and the unsigned range is for flags words and ids alone (both pinned by the
+  self-test).
+- Telegram fixtures (plan 4I4 Task 5): `telegram_android.py` (family `telegram-android`) writes twelve variants into
+  `internal/parsers/androidtelegram/testdata`:
+
+  ```
+  py -3 -I tools/fixtures/telephony_gen.py --family telegram-android --out internal/parsers/androidtelegram/testdata \
+      --pins-go internal/parsers/androidtelegram/pins_test.go --pins-package androidtelegram_test
+  py -3 -I tools/fixtures/telephony_gen.py --family telegram-android --recover-oracle --out internal/parsers/androidtelegram/testdata --variant telegram-deleted
+  py -3 -I tools/fixtures/telephony_gen.py --family telegram-android --check      # one "wrote" line per variant, nothing kept
+  py -3 -I tools/fixtures/telegram_tl_oracle.py --self-test                         # prints ok
+  ```
+
+  Variants: `telegram-v181` (the CORE scenario R1-R59, U1-U10, C1-C5, two `enc_chats` rows; R51 in a committed WAL
+  frame, R52 in an uncommitted one), `telegram-v159`, `telegram-v84` (old-layer blobs), `telegram-v84-upgraded-v181`
+  (short records written before the `ALTER`s), `telegram-v64` (the pre-84 `messages` rows P1-P6), `telegram-both` (both
+  generations), `telegram-otherversion` (182) and `telegram-oldversion` (63) and `telegram-nomessages` (refused: no
+  record), `telegram-layers` (one row per Message, forward header, peer, reply header and entity ID, each full media
+  wrapper and one opaque one, one `users` row per User ID and one `chats` row per Chat ID), `telegram-hostile` (unknown
+  top ID, R31 cut at every field offset, bad bool, bad vector, a capped count, a long string past the end, a 255
+  prefix, non-zero padding, NULL/REAL/NaN/TEXT `uid`, NULL `mid`, REAL `date`, TEXT `data`, `out` 7) and
+  `telegram-deleted` (rows deleted in the WAL, an edit and a rewrite by `REPLACE INTO`, with its typed recovery
+  oracle). Only `telegram-v181` and `telegram-deleted` keep a `-wal`; every database is written with
+  `secure_delete = ON` and WAL as the app writes. A NaN cell is written as a REAL marker whose bytes are then replaced
+  (SQLite never stores a NaN); a TEXT `uid` is written while the column has no declared type and the declaration is
+  restored. Secret fields hold the synthetic marker plus a SHA-256 chain of the scenario seed; the `enc_chats` key
+  columns hold SHA-256 chains of their seeds (the targets of the key-material test). The independent TL oracle
+  `telegram_tl_oracle.py` reads `constructors.tsv` with `csv` and imports only standard modules
+  (`TestTLOracleIsIndependent`); the generator decodes every blob with it and restates the mapping rules of the spec
+  in Python, over the values read back from the engine on a copy of the finished files. The oracle, the encoder and the
+  Go table derive from the same facts; their independent check is the cross-check against the app source. Not part of
+  `gen.sh all`; no Docker.

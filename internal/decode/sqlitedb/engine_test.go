@@ -139,7 +139,7 @@ func TestSQLiteDBMatchesEngine(t *testing.T) {
 	// directories through os, so the Go test cache tracks them. The files that are not SQLite are named here.
 	notSQLite := map[string]bool{"android-crypt14": true, "android-crypt15": true, "android-backup-notsqlite": true, "wa-crypt15": true}
 	waFixtures, waTables := 0, 0
-	for _, dir := range []string{"../../parsers/androidwhatsapp/testdata", "../../parsers/androidwacontacts/testdata", "../../parsers/ioswhatsapp/testdata", "../../parsers/ioswacalls/testdata", "../../parsers/ioswacontacts/testdata", "../../parsers/androidcalendar/testdata", "../../parsers/ioscalendar/testdata"} {
+	for _, dir := range []string{"../../parsers/androidwhatsapp/testdata", "../../parsers/androidwacontacts/testdata", "../../parsers/ioswhatsapp/testdata", "../../parsers/ioswacalls/testdata", "../../parsers/ioswacontacts/testdata", "../../parsers/androidcalendar/testdata", "../../parsers/ioscalendar/testdata", "../../parsers/androidtelegram/testdata"} {
 		dbs, err := filepath.Glob(filepath.Join(dir, "*.db.gz"))
 		if err != nil {
 			t.Fatal(err)

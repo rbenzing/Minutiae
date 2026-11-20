@@ -104,21 +104,32 @@ def find_row(typ, cls):
 
 
 def i32(v):
-    if not -(1 << 31) <= v < (1 << 32):
+    """A signed int32 value (a field of kind i32 or id32@): the unsigned range is refused (Task 4 review)."""
+    if not -(1 << 31) <= v < (1 << 31):
         raise ValueError("int32 out of range: %r" % (v,))
-    return struct.pack("<I", v & 0xFFFFFFFF)
+    return struct.pack("<i", v)
+
+
+def u32(v):
+    """A 32-bit word written as its bits: a flags word, a constructor id, a boolean or vector id."""
+    if not 0 <= v < (1 << 32):
+        raise ValueError("uint32 out of range: %r" % (v,))
+    return struct.pack("<I", v)
 
 
 def i64(v):
-    if not -(1 << 63) <= v < (1 << 64):
+    """A signed int64 value: the unsigned range is refused (Task 4 review)."""
+    if not -(1 << 63) <= v < (1 << 63):
         raise ValueError("int64 out of range: %r" % (v,))
-    return struct.pack("<Q", v & 0xFFFFFFFFFFFFFFFF)
+    return struct.pack("<q", v)
 
 
 def tl_bytes(data):
     """The canonical string/bytes framing: one length byte up to 253, else 0xFE and 3 LE bytes; zero padding to a
     multiple of 4 counting the prefix."""
     n = len(data)
+    if n >= 1 << 24:
+        raise ValueError("a TL string or bytes value holds at most 16,777,215 bytes, not %d" % n)
     head = bytes([n]) if n <= 253 else b"\xfe" + struct.pack("<I", n)[:3]
     raw = head + data
     return raw + b"\x00" * (-len(raw) % 4)
@@ -139,7 +150,7 @@ def encode_kind(kind, v):
     if kind == "dbl":
         return struct.pack("<d", v)
     if kind == "bool":
-        return i32(BOOL_TRUE if v else BOOL_FALSE)
+        return u32(BOOL_TRUE if v else BOOL_FALSE)
     if kind == "str" or kind == "bytes":
         return tl_bytes(v.encode("utf-8") if isinstance(v, str) else bytes(v))
     if kind == "secret":
@@ -148,13 +159,13 @@ def encode_kind(kind, v):
             raise ValueError("a secret field takes only synthetic bytes (synthetic_secret)")
         return tl_bytes(data)
     if kind == "#":
-        return i32(v)
+        return u32(v)
     if kind in ("vec<i32>", "vec<i64>"):
         pack = i32 if kind == "vec<i32>" else i64
-        return i32(VECTOR_ID) + i32(len(v)) + b"".join(pack(x) for x in v)
+        return u32(VECTOR_ID) + i32(len(v)) + b"".join(pack(x) for x in v)
     if kind.startswith("vec<"):
         elem = kind[4:-1]
-        return i32(VECTOR_ID) + i32(len(v)) + b"".join(encode(elem, x) for x in v)
+        return u32(VECTOR_ID) + i32(len(v)) + b"".join(encode(elem, x) for x in v)
     return encode(kind, v)  # an object: boxed, its constructor first
 
 
@@ -185,7 +196,7 @@ def chunks(row, value):
         if f.kind is None:
             continue
         if f.kind == "#" and f.name in bits:
-            out.append((f.name, i32(bits[f.name] if value.get(f.name) is None else value[f.name])))
+            out.append((f.name, u32(bits[f.name] if value.get(f.name) is None else value[f.name])))
         elif present(f):
             out.append((f.name, encode_kind(f.kind, value[f.name])))
         elif f.gate is None:
@@ -199,7 +210,7 @@ def _start(typ, value):
     if raw is not None:
         return None, bytes(raw)
     row = find_row(typ, value["_"])
-    return row, i32(row[1])
+    return row, u32(row[1])
 
 
 def encode(typ, value):
@@ -284,6 +295,18 @@ def self_test():
     entity = encode("MessageEntity", {"_": "TL_messageEntityFormattedDate", "offset": 0, "length": 3, "date": 9,
                                        "relative": True, "day_of_week": True})
     eq(entity[4:8], i32(1 | 32), "flag-only trues")
+    # Task 4 review, carried into Task 5: a value past the 3-byte framing is refused, never cut; i32 and i64 take the
+    # signed range only, the unsigned range is for the flags words (and ids) alone
+    eq(encode_kind("#", 0xFFFFFFFF), bytes([255] * 4), "unsigned flags word")
+    eq(encode_kind("i32", -1), bytes([255] * 4), "signed int32")
+    for kind, v in (("bytes", bytes(1 << 24)), ("i32", 1 << 31), ("i32", 0xFFFFFFFF), ("id32@user", 1 << 31),
+                    ("i64", 1 << 63), ("i64", 0xFFFFFFFFFFFFFFFF), ("#", -1), ("#", 1 << 32)):
+        try:
+            encode_kind(kind, v)
+        except ValueError:
+            continue
+        raise SystemExit("self-test: %s accepted an out-of-range value" % kind)
+    eq(encode_kind("bytes", bytes((1 << 24) - 1))[:4], bytes([254, 255, 255, 255]), "the largest framed value")
     print("ok")
     return 0
 
