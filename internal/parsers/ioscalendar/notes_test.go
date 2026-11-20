@@ -41,6 +41,20 @@ func TestIOSCalendarNotesStateTheStore(t *testing.T) {
 		}
 	}
 
+	// Task 9 fix round 1, I3: a join table's column its join does not read is stated in rowrun's form
+	s = newBuilt("Location")
+	s.table("Location", "title TEXT, address TEXT, latitude REAL, longitude REAL, altitude REAL, radius REAL", true)
+	s.event(1, nil)
+	res = parseBuilt(t, s.bytes(), false)
+	if res.Notes["unmapped_columns.Location"] != "altitude,radius" {
+		t.Errorf("note unmapped_columns.Location = %q, want altitude,radius", res.Notes["unmapped_columns.Location"])
+	}
+	for _, table := range []string{"Calendar", "Store", "Participant", "Identity", "Recurrence", "ExceptionDate", "Alarm"} {
+		if v, has := res.Notes["unmapped_columns."+table]; has {
+			t.Errorf("note unmapped_columns.%s = %q: the snapshot's columns are all read", table, v)
+		}
+	}
+
 	// no occurrence cache and no change table: neither note is stated (an absent table has no count)
 	s = newBuilt("OccurrenceCache", "CalendarItemChanges")
 	s.event(1, nil)

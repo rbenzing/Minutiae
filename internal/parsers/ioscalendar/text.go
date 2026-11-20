@@ -3,9 +3,11 @@ package ioscalendar
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/cellx"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
@@ -21,7 +23,10 @@ const (
 	maxList   = 1000      // attendees, alarms, recurrence rules, exception dates per event (the telephony list cap)
 )
 
-const stateTooLong = "too-long"
+const (
+	stateTooLong     = "too-long"
+	unknownNonFinite = "non-finite" // unknown_columns: an infinite REAL, kept in raw as "+Inf" or "-Inf"
+)
 
 // ident is an identifier as stored, never cut (spec 9), restated from android.calendar (parsers share no code): within
 // limit it is returned (valid UTF-8, each byte that starts no valid sequence replaced by U+FFFD); over it, nothing is
@@ -71,7 +76,7 @@ type cells struct {
 func (r cells) text(name string) ([]byte, bool) {
 	col := r.c.At(name)
 	b, k := textCellOf(r.row, col)
-	rowrun.Flag(r.unknown, r.row, r.prefix+name, col, k)
+	flag(r.unknown, r.row, r.prefix+name, col, k)
 	return b, k == rowrun.CellValue
 }
 
@@ -94,14 +99,16 @@ func (r cells) key(name string) (v int64, ok, undecided bool) {
 	case rowrun.CellValue:
 		return v, true, false
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(r.unknown, r.row, r.prefix+name, col, k)
+		flag(r.unknown, r.row, r.prefix+name, col, k)
 		return 0, false, true
 	}
 	return 0, false, false
 }
 
 // stored is the stored value of a cell of any class as raw keeps it (C1): an INTEGER as itself, a TEXT or a BLOB of at
-// most maxStored bytes as storedOther does, a finite REAL as its number; an unreadable cell (a stored NaN included) is
+// most maxStored bytes as storedOther does, a finite REAL as its number; a non-finite REAL in its display form
+// ("NaN", "+Inf", "-Inf", as cellx.Number.Raw gives it), also listed in unknown (a stored NaN as type-mismatch, the
+// class the reader reads it as; an infinity as non-finite), never dropped (fix round 1, I2); an unreadable cell is
 // listed in unknown and gives nothing, a NULL or a missing column nothing. A TEXT or BLOB over maxStored is not kept:
 // it is reported through over (its length and SHA-256), never cut.
 func (r cells) stored(name string) (v any, over []byte, ok bool) {
@@ -109,16 +116,20 @@ func (r cells) stored(name string) (v any, over []byte, ok bool) {
 	if col < 0 {
 		return nil, nil, false
 	}
-	if !rowrun.StateOf(r.row, col).Known() || nanCell(r.row, col) {
-		k := rowrun.CellUnknown
-		if nanCell(r.row, col) {
-			k = rowrun.CellOther
-		}
-		rowrun.Flag(r.unknown, r.row, r.prefix+name, col, k)
+	if nanCell(r.row, col) {
+		flag(r.unknown, r.row, r.prefix+name, col, rowrun.CellOther)
+		return "NaN", nil, true
+	}
+	if !rowrun.StateOf(r.row, col).Known() {
+		flag(r.unknown, r.row, r.prefix+name, col, rowrun.CellUnknown)
 		return nil, nil, false
 	}
 	if r.row.IsNull(col) {
 		return nil, nil, false
+	}
+	if f, ok := r.row.Float(col); ok && math.IsInf(f, 0) {
+		listUnknown(r.unknown, r.prefix+name, unknownNonFinite)
+		return cellx.Number{F: f}.Raw(), nil, true
 	}
 	if v, ok := r.row.Int(col); ok {
 		return v, nil, true
@@ -156,6 +167,30 @@ func (r cells) keepTop(name string) {
 		return
 	}
 	r.keep(r.raw, name, name)
+}
+
+// flag lists in unknown (payload.raw.unknown_columns) a column that exists but holds no usable value, as rowrun.Flag
+// does ("type-mismatch" for a value of another class, the decoder's state name for an unknown cell), but never
+// overwrites: the kinds a column shows across the rows of a record (a child table's rows) are comma-joined and sorted,
+// as the plan's vocabulary states (fix round 1).
+func flag(unknown map[string]any, row parse.Row, name string, col int, k rowrun.CellKind) {
+	switch k {
+	case rowrun.CellOther:
+		listUnknown(unknown, name, "type-mismatch")
+	case rowrun.CellUnknown:
+		listUnknown(unknown, name, rowrun.StateOf(row, col).String())
+	}
+}
+
+// listUnknown adds kind to the comma-joined, sorted kinds of unknown[name].
+func listUnknown(unknown map[string]any, name, kind string) {
+	cur, _ := unknown[name].(string)
+	kinds := []string{kind}
+	if cur != "" {
+		kinds = append(strings.Split(cur, ","), kind)
+	}
+	slices.Sort(kinds)
+	unknown[name] = strings.Join(slices.Compact(kinds), ",")
 }
 
 // putEntry keeps a stored value v in dst under key. A child entry is a map inside a raw list (level 4), so it holds

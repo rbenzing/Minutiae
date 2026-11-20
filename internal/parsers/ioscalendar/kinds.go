@@ -151,7 +151,7 @@ func itemKind(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) error {
 	case rowrun.CellNull:
 		raw["entity_type"] = nil
 	default:
-		rowrun.Flag(unknown, row, unknownPrefix+"entity_type", col, k)
+		flag(unknown, row, unknownPrefix+"entity_type", col, k)
 	}
 	raw["item_kind_state"] = stateUndecided
 	return nil

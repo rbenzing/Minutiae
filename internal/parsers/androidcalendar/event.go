@@ -122,7 +122,7 @@ func mapEvent(m parse.MapContext, row parse.Row, e *env, names []string) ([]reco
 	ev.UID = r.ident("uid2445", maxID)
 	ev.SyncID = r.ident("_sync_id", maxID)
 
-	calDeleted, err := readCalendar(m, r, e, &ev)
+	calDeleted, err := readCalendar(m, r, e, &ev, flags, &truncated)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +349,7 @@ func calendarRaw() []string {
 // readCalendar joins the row's calendar (spec 7.3) and returns its deletion flag (B7): a decided Calendars.deleted,
 // "undecided" when the calendar's state cannot be decided (an undecidable key or join, an unreadable or another value),
 // "absent" when no calendar row has the key, "not-joined-recovered" for a recovered row.
-func readCalendar(m parse.MapContext, r cells, e *env, ev *calendar.Event) (flag, error) {
+func readCalendar(m parse.MapContext, r cells, e *env, ev *calendar.Event, flags textFlags, truncated *[]string) (flag, error) {
 	if e == nil {
 		r.raw["calendar_state"] = notJoinedRecovered
 		return flag{State: notJoinedRecovered}, nil
@@ -378,7 +378,8 @@ func readCalendar(m parse.MapContext, r cells, e *env, ev *calendar.Event) (flag
 	}
 	ref := calendar.CalendarRef{ID: strconv.FormatInt(cid, 10)}
 	if b, ok := cr.text("calendar_displayName"); ok && len(b) > 0 {
-		ref.Title = common.CleanText(b, maxTitle).Text
+		// a free text: cut and named (calendar_title in text_flags and truncated_fields), never silently (task 9 fix I1)
+		ref.Title = freeText(r.raw, flags, truncated, "calendar_title", b, maxTitle)
 	}
 	var acct calendar.Account
 	if b, ok := cr.text("account_type"); ok {

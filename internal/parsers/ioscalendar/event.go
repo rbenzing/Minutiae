@@ -181,7 +181,7 @@ func storedCode(r cells, col string) string {
 	case rowrun.CellNull, rowrun.CellMissing:
 		return ""
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(r.unknown, r.row, r.prefix+col, i, k)
+		flag(r.unknown, r.row, r.prefix+col, i, k)
 	}
 	r.keepTop(col)
 	return labelUnknown
@@ -196,10 +196,10 @@ func readExternalRep(r cells) {
 	case col < 0:
 		return
 	case !rowrun.StateOf(r.row, col).Known():
-		rowrun.Flag(r.unknown, r.row, r.prefix+"external_rep", col, rowrun.CellUnknown)
+		flag(r.unknown, r.row, r.prefix+"external_rep", col, rowrun.CellUnknown)
 		return
 	case nanCell(r.row, col):
-		rowrun.Flag(r.unknown, r.row, r.prefix+"external_rep", col, rowrun.CellOther)
+		flag(r.unknown, r.row, r.prefix+"external_rep", col, rowrun.CellOther)
 		return
 	case r.row.IsNull(col):
 		return
@@ -209,7 +209,7 @@ func readExternalRep(r cells) {
 		b, ok = r.row.Text(col)
 	}
 	if !ok {
-		rowrun.Flag(r.unknown, r.row, r.prefix+"external_rep", col, rowrun.CellOther)
+		flag(r.unknown, r.row, r.prefix+"external_rep", col, rowrun.CellOther)
 		return
 	}
 	r.raw["external_rep_len"] = int64(len(b))
@@ -225,7 +225,7 @@ func readException(r cells, ev *calendar.Event) {
 	case k == rowrun.CellValue && oid != 0:
 		ev.ExceptionOf = &calendar.ExceptionOf{EventID: strconv.FormatInt(oid, 10)}
 	case k == rowrun.CellOther || k == rowrun.CellUnknown:
-		rowrun.Flag(r.unknown, r.row, r.prefix+"orig_item_id", col, k)
+		flag(r.unknown, r.row, r.prefix+"orig_item_id", col, k)
 	}
 	r.keepTop("orig_date")
 	if _, stated := r.raw["orig_date"]; stated {

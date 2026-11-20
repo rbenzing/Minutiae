@@ -51,33 +51,41 @@ func joinTables() []rowrun.Req {
 	}
 }
 
-// joinGuard names the join tables that cannot be trusted for a join at parse time: Probe defers its alias checks when
-// a -wal or -journal companion is present (the main file proves nothing then), a Get join is by rowid, so a ROWID
-// that is not the rowid alias would attach the wrong row with no marker, and a Match join needs its owner column.
-// Every join through such a table is undecided, never "absent". Restated from android.calendar: parsers import no
-// other parser package.
+// joinKind is the kind of a join through a table: by ROWID (Get) or by an owner column (Match). The guard holds each
+// kind apart (fix round 1, m5): a Participant without item_id leaves the organizer's Get by ROWID decided.
+type joinKind uint8
+
+const (
+	joinGet joinKind = 1 << iota
+	joinMatch
+	joinBoth = joinGet | joinMatch
+)
+
+// joinGuard names the joins that cannot be trusted at parse time: Probe defers its alias checks when a -wal or
+// -journal companion is present (the main file proves nothing then), a Get join is by rowid, so a ROWID that is not
+// the rowid alias would attach the wrong row with no marker, and a Match join needs its owner column. Every such join
+// is undecided, never "absent". Restated from android.calendar (parsers import no other parser package), per join kind.
 type joinGuard struct {
-	bad   map[string]string // lower-case table name -> why
-	order []string          // the tables in the order they were found
+	bad   map[string]joinKind // lower-case table name -> the guarded kinds
+	why   map[string][]string // lower-case table name -> the reasons, in the order found
+	order []string            // the tables in the order they were found
 }
 
-func (g *joinGuard) reason(table string) (string, bool) {
-	if g == nil {
-		return "", false
-	}
-	r, ok := g.bad[strings.ToLower(table)]
-	return r, ok
+// guarded says the join of kind k through table is guarded.
+func (g *joinGuard) guarded(table string, k joinKind) bool {
+	return g != nil && g.bad[strings.ToLower(table)]&k != 0
 }
 
-func (g *joinGuard) add(table, reason string) {
+func (g *joinGuard) add(table string, k joinKind, reason string) {
 	if g.bad == nil {
-		g.bad = map[string]string{}
+		g.bad, g.why = map[string]joinKind{}, map[string][]string{}
 	}
-	k := strings.ToLower(table)
-	if _, dup := g.bad[k]; !dup {
-		g.bad[k] = reason
+	key := strings.ToLower(table)
+	if _, seen := g.bad[key]; !seen {
 		g.order = append(g.order, table)
 	}
+	g.bad[key] |= k
+	g.why[key] = append(g.why[key], reason)
 }
 
 // undecidedHits is what the host context offers beside parse.MapContext (rowrun.Match reads it).
@@ -85,23 +93,23 @@ type undecidedHits interface {
 	UndecidedHits(table, col string) int64
 }
 
-// guardedCtx is the MapContext of a mapping whose joins through the tables of the guard are undecided.
+// guardedCtx is the MapContext of a mapping whose guarded joins are undecided.
 type guardedCtx struct {
 	parse.MapContext
 	g *joinGuard
 }
 
-// Get is undecided for a guarded table.
+// Get is undecided for a table whose Get joins are guarded.
 func (c guardedCtx) Get(table string, rowid int64) (parse.Row, bool, error) {
-	if _, bad := c.g.reason(table); bad {
+	if c.g.guarded(table, joinGet) {
 		return nil, false, sqlitedb.ErrKeyUndecidable
 	}
 	return c.MapContext.Get(table, rowid)
 }
 
-// Match is undecided for a guarded table.
+// Match is undecided for a table whose Match joins are guarded.
 func (c guardedCtx) Match(table, col string, key parse.JoinKey) ([]parse.Row, error) {
-	if _, bad := c.g.reason(table); bad {
+	if c.g.guarded(table, joinMatch) {
 		return nil, sqlitedb.ErrKeyUndecidable
 	}
 	return c.MapContext.Match(table, col, key)
@@ -125,15 +133,15 @@ func dataDamage(err error) bool {
 // checkJoinSchema looks at the live view's schema for every table the mapping joins. A table the database lacks is
 // the note join_undecided.<table> = "table absent" and no warning (4I2 PF13: the absence is one fact about the file;
 // each record states its own undecided join). A table not found in a schema that was read only in part (partial, asked
-// only then) is not absent: it is guarded as reasonSchemaPartial. A table that lacks a column its join needs, whose
-// ROWID is not the rowid alias, or that cannot be read is guarded and stated: one note and one counted warning per
-// table; the job stays complete.
+// only then) is not absent: both kinds of join are guarded as reasonSchemaPartial; so are they for a table that cannot
+// be read. A table that lacks the owner column of its Match join has that join guarded, one whose ROWID is not the
+// rowid alias its Get join (m5). Each guarded table is stated once: a note (its reasons joined by "; ") and one counted
+// warning; the job stays complete.
 func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, partial func() (bool, error)) (*joinGuard, error) {
 	g := &joinGuard{}
 	var part *bool
 	for _, jt := range joinTables() {
-		t, err := db.Table(ctx, jt.Table, jt.Need, nil)
-		var us *sqlitedb.UnsupportedSchemaError
+		t, err := db.Table(ctx, jt.Table, nil, nil)
 		switch {
 		case errors.Is(err, sqlitedb.ErrNoSuchTable):
 			if part == nil {
@@ -144,31 +152,45 @@ func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, pa
 				part = &p
 			}
 			if *part {
-				g.add(jt.Table, reasonSchemaPartial)
+				g.add(jt.Table, joinBoth, reasonSchemaPartial)
 			} else {
 				out.Note("join_undecided."+jt.Table, reasonTableAbsent)
 			}
 			continue
-		case errors.As(err, &us) && len(us.Missing) > 0:
-			g.add(jt.Table, "the table lacks column(s) "+strings.Join(us.Missing, ", "))
-			continue
 		case dataDamage(err):
-			g.add(jt.Table, "the table could not be read")
+			g.add(jt.Table, joinBoth, "the table could not be read")
 			continue
 		case err != nil:
 			return nil, err
+		}
+		var missing []string
+		for _, n := range jt.Need {
+			if t.Col(n) < 0 {
+				missing = append(missing, n)
+			}
+		}
+		if len(missing) > 0 {
+			g.add(jt.Table, joinMatch, "the table lacks column(s) "+strings.Join(missing, ", ")+" of its join by owner")
 		}
 		if jt.Alias == "" {
 			continue
 		}
 		if i := t.Col(jt.Alias); i < 0 || !t.Cols()[i].RowidAlias {
-			g.add(jt.Table, "column "+jt.Alias+" is not the rowid alias")
+			g.add(jt.Table, joinGet, "column "+jt.Alias+" is not the rowid alias")
 		}
 	}
 	for _, table := range g.order {
-		reason, _ := g.reason(table)
+		key := strings.ToLower(table)
+		reason := strings.Join(g.why[key], "; ")
 		out.Note("join_undecided."+table, reason)
-		if err := out.Warn(ctx, "sqlite:schema", reasonJoinUndecided+": table "+table+": "+reason+"; every join through it is undecided"); err != nil {
+		scope := "every join through it"
+		switch g.bad[key] {
+		case joinGet:
+			scope = "every join through it by ROWID"
+		case joinMatch:
+			scope = "every join through it by owner"
+		}
+		if err := out.Warn(ctx, "sqlite:schema", reasonJoinUndecided+": table "+table+": "+reason+"; "+scope+" is undecided"); err != nil {
 			return nil, err
 		}
 	}

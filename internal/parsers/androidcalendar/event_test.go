@@ -504,3 +504,21 @@ func mapTyped(t *testing.T, db []byte) map[int64]records.Record {
 	}
 	return out
 }
+
+// Task 9 fix round 1, I1 (C4, C6): the calendar's display name is a free text: over 4 KiB it is cut and named in
+// truncated_fields (calendar_title), an altered one is named in raw.text_flags with its original bytes; never a
+// silent cut.
+func TestAndroidCalendarCalendarTitleIsNeverCutSilently(t *testing.T) {
+	long := strings.Repeat("T", 5000) + "\x00"
+	r := parseBuilt(t, buildCalendarDB(t, []row{{1, nil}}, []row{{1, map[string]any{"calendar_displayName": long}}}), false).rec(t, 1)
+	cal, _ := r.Payload["calendar"].(map[string]any)
+	title, _ := cal["title"].(string)
+	raw := rawOf(r)
+	tf, _ := raw["text_flags"].(string)
+	if len(title) == 0 || len(title) > 4<<10 || !strings.Contains(tf, "calendar_title") || raw["calendar_title_raw_b64"] == nil {
+		t.Errorf("calendar title %d bytes, text_flags %q, calendar_title_raw_b64 present %v", len(title), tf, raw["calendar_title_raw_b64"] != nil)
+	}
+	if fmt.Sprint(r.Payload["truncated_fields"]) != "[calendar_title]" {
+		t.Errorf("truncated_fields %v, want [calendar_title]", r.Payload["truncated_fields"])
+	}
+}

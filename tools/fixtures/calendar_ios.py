@@ -443,12 +443,16 @@ def expect_item(r, env, file="any"):
     if cal is not None:
         cp = {"id": str(r["calendar_id"])}
         t = cal.get("title")
-        if is_text(t) and t:
-            cp["title"] = plain_text(t, MAX_TITLE, "Calendar.title")
+        if is_text(t) and t:  # a free text: cut and named, never silently (Task 9 fix round 1, I1)
+            title = free_text(raw, tf, "calendar_title", t, MAX_TITLE, truncated, unknown, "title", "Calendar")
+            if title:
+                cp["title"] = title
         st = get_join(raw, unknown, env, "store_state", "Store", "store_id", cal.get("store_id"))
         if st is not None:
-            if is_text(st.get("name")) and st.get("name"):
-                cp["account"] = {"name": plain_text(st["name"], MAX_TITLE, "Store.name")}
+            if is_text(st.get("name")) and st.get("name"):  # an identifier: never cut (I1)
+                name = ident(raw, unknown, "calendar_account", st["name"], MAX_ID, "Store")
+                if name:
+                    cp["account"] = {"name": name}
             if st.get("type") is not None:
                 raw["store_type"] = jv(st["type"])
         p["calendar"] = cp

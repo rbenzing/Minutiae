@@ -133,6 +133,7 @@ func (x *item) locationOf() (*calendar.Location, error) {
 func coordinate(c cells, col string, limit float64) *float64 {
 	i := c.c.At(col)
 	if nanCell(c.row, i) {
+		flag(c.unknown, c.row, c.prefix+col, i, rowrun.CellOther) // a stored NaN, as everywhere (m1)
 		c.raw[col] = "NaN"
 		c.raw[col+"_state"] = stateOutOfRange
 		return nil
@@ -146,7 +147,7 @@ func coordinate(c cells, col string, limit float64) *float64 {
 		c.raw[col] = n.Raw()
 		c.raw[col+"_state"] = stateOutOfRange
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(c.unknown, c.row, c.prefix+col, i, k)
+		flag(c.unknown, c.row, c.prefix+col, i, k)
 		if v, ok := storedOther(c.row, i); ok {
 			c.raw[col] = v
 		}
@@ -155,7 +156,9 @@ func coordinate(c cells, col string, limit float64) *float64 {
 }
 
 // calendarOf joins the item's Calendar and its Store (spec 8.2): {id, title, account: {name: Store.name}}, Store.type
-// in raw.store_type as stored; a store_id naming no Store row is raw.store_state "no-Store-row".
+// in raw.store_type as stored; a store_id naming no Store row is raw.store_state "no-Store-row". The title is a free
+// text (calendar_title in text_flags and truncated_fields); the Store name is an identifier (calendar_account_state
+// "too-long" with its length and SHA-256 over 1 KiB).
 func (x *item) calendarOf() (*calendar.CalendarRef, error) {
 	row, id, err := x.getBy("calendar_id", tableCalendar, "calendar_state")
 	if err != nil || row == nil {
@@ -164,7 +167,7 @@ func (x *item) calendarOf() (*calendar.CalendarRef, error) {
 	c := x.joined(tableCalendar, row, x.r.raw, "title", "store_id")
 	ref := calendar.CalendarRef{ID: strconv.FormatInt(id, 10)}
 	if b, ok := c.text("title"); ok && len(b) > 0 {
-		ref.Title = common.CleanText(b, maxTitle).Text
+		ref.Title = freeText(x.r.raw, x.flags, &x.truncated, "calendar_title", b, maxTitle) // never a silent cut (I1)
 	}
 	store, _, err := x.getByOf(c, "store_id", tableStore, "store_state")
 	if err != nil {
@@ -173,7 +176,10 @@ func (x *item) calendarOf() (*calendar.CalendarRef, error) {
 	if store != nil {
 		sc := x.joined(tableStore, store, x.r.raw, "name", "type")
 		if b, ok := sc.text("name"); ok && len(b) > 0 {
-			ref.Account = &calendar.Account{Name: common.CleanText(b, maxTitle).Text}
+			// the account is an identifier: never cut, over 1 KiB stated by its length and SHA-256 (I1)
+			if name, ok := ident(x.r.raw, "calendar_account", b, maxID); ok {
+				ref.Account = &calendar.Account{Name: name}
+			}
 		}
 		if v, over, ok := sc.stored("type"); ok {
 			x.r.raw["store_type"] = v
@@ -220,7 +226,7 @@ func (x *item) personOf(row parse.Row, entry map[string]any, field string) (pers
 			}
 		}
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(c.unknown, row, c.prefix+"email", col, k)
+		flag(c.unknown, row, c.prefix+"email", col, k)
 		c.keep(entry, "email", "email")
 		entry["address_state"] = stateUndecided
 		addrStated, p.undecided = true, true
@@ -261,7 +267,7 @@ func (x *item) personOf(row parse.Row, entry map[string]any, field string) (pers
 				p.Address = s
 			}
 		case rowrun.CellOther, rowrun.CellUnknown:
-			rowrun.Flag(ic.unknown, irow, ic.prefix+"address", acol, k)
+			flag(ic.unknown, irow, ic.prefix+"address", acol, k)
 			ic.keep(entry, "address", "address")
 			entry["address_state"] = stateUndecided
 			p.undecided = true
@@ -278,7 +284,7 @@ func (x *item) personOf(row parse.Row, entry map[string]any, field string) (pers
 			p.Name = cl.Text
 		}
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(ic.unknown, irow, ic.prefix+"display_name", ncol, k)
+		flag(ic.unknown, irow, ic.prefix+"display_name", ncol, k)
 		ic.keep(entry, "display_name", "display_name")
 		entry["name_state"] = stateUndecided
 		p.undecided = true
@@ -303,7 +309,9 @@ func (x *item) organizerOf() (*calendar.Person, error) {
 	for k, v := range entry {
 		switch k {
 		case "identity_state":
-			if v != stateUndecided {
+			if v == stateUndecided {
+				x.r.raw["organizer_identity_state"] = v // the identity key or join cannot be decided (m2)
+			} else {
 				x.r.raw["organizer_state"] = v
 			}
 		case "role", "type", "status":
@@ -428,7 +436,7 @@ func code(c cells, entry map[string]any, col string) string {
 		entry[col] = v
 		return labelUnknown
 	}
-	rowrun.Flag(c.unknown, c.row, c.prefix+col, i, k)
+	flag(c.unknown, c.row, c.prefix+col, i, k)
 	c.keep(entry, col, col)
 	return labelUnknown
 }
@@ -481,8 +489,11 @@ func (x *item) exceptionDatesOf(id int64) error {
 			list = append(list, v)
 		case len(entry) > 0:
 			list = append(list, entry) // a BLOB (date_blob_b64) or an over-long value (date_state): scalars only, B8
+		default:
+			// an unknown date (listed in unknown_columns as ExceptionDate.date) keeps its place: the list stays
+			// parallel to the rows, the entry a map of scalars as a BLOB's is (B8, fix round 1 m3)
+			list = append(list, map[string]any{"date_state": stateUndecided})
 		}
-		// an unreadable date is listed in unknown_columns as ExceptionDate.date
 	}
 	putList(x.r.raw, "exception_dates", list, len(rows))
 	return nil

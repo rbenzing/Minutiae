@@ -2,6 +2,8 @@ package ioscalendar_test
 
 import (
 	"bytes"
+	"encoding/base64"
+	"math"
 	"strings"
 	"testing"
 
@@ -22,7 +24,13 @@ func TestIOSCalendarStateVocabularyIsPinned(t *testing.T) {
 	longMail := strings.Repeat("m", 1100) + "@example.test"
 	longURL := "https://example.test/" + strings.Repeat("u", 1100)
 	const d = float64(cD)
-	s := newBuilt()
+	longTitle := strings.Repeat("T", 5000) + "\x00"
+	longStore := strings.Repeat("S", 1100)
+	longAddress := strings.Repeat("A", 5000) + "\x00"
+	bigText := strings.Repeat("h", 17<<10)
+	s := newBuilt("ExceptionDate")
+	// a DEFAULT that is no literal value: a short record (no stored date) reads as default-undecided, an unknown cell
+	s.table("ExceptionDate", "owner_id INTEGER, date REAL DEFAULT (julianday('now'))", true)
 	s.add("Store", 1, map[string]any{"name": "iCloud", "type": int64(2)})
 	s.add("Calendar", 1, map[string]any{"title": "Home", "store_id": int64(1)})
 	s.add("Calendar", 2, map[string]any{"title": "Orphan", "store_id": int64(99)})
@@ -37,6 +45,21 @@ func TestIOSCalendarStateVocabularyIsPinned(t *testing.T) {
 	s.add("Recurrence", 1, map[string]any{"owner_id": int64(23), "frequency": int64(1), "interval": int64(2), "count": int64(3), "end_date": d, "specifier": "BYDAY=TU"})
 	s.add("ExceptionDate", 1, map[string]any{"owner_id": int64(24), "date": d})
 	s.add("Alarm", 1, map[string]any{"calendaritem_owner_id": int64(25), "trigger_interval": int64(-900), "type": int64(0)})
+	// Task 9 fix round 1 (I1, I2, I3, m1-m3)
+	s.add("Calendar", 3, map[string]any{"title": longTitle})
+	s.add("Store", 3, map[string]any{"name": longStore})
+	s.add("Calendar", 4, map[string]any{"title": "Long account", "store_id": int64(3)})
+	s.add("Location", 2, map[string]any{"title": "Nan", "latitude": math.NaN(), "longitude": math.Inf(1)})
+	s.add("Location", 3, map[string]any{"title": "Neg", "address": longAddress, "latitude": math.Inf(-1)})
+	s.add("Participant", 50, map[string]any{"item_id": int64(36), "identity_id": "x"})
+	s.add("Participant", 51, map[string]any{"item_id": int64(999), "email": int64(5)})
+	s.add("Participant", 52, map[string]any{"item_id": int64(999), "identity_id": int64(3)})
+	s.add("Participant", 53, map[string]any{"item_id": int64(999), "identity_id": "y"})
+	s.add("Recurrence", 2, map[string]any{"owner_id": int64(40), "frequency": int64(1), "end_date": math.Inf(-1)})
+	s.add("ExceptionDate", 2, map[string]any{"owner_id": int64(41), "date": nil})
+	s.tabs["ExceptionDate"].Insert(3, nil, int64(41)) // a short record: date not stored
+	s.add("ExceptionDate", 4, map[string]any{"owner_id": int64(41), "date": math.Inf(1)})
+	s.add("Alarm", 2, map[string]any{"calendaritem_owner_id": int64(42), "trigger_date": math.NaN()})
 	cases := []struct {
 		id   int64
 		kw   map[string]any
@@ -95,6 +118,85 @@ func TestIOSCalendarStateVocabularyIsPinned(t *testing.T) {
 		{28, map[string]any{"location_id": int64(1)}, map[string]any{"latitude": 95, "latitude_state": "out-of-range", "longitude": -181, "longitude_state": "out-of-range"}, map[string]any{"location": map[string]any{"text": "Far"}}, "coordinates"},
 		{29, map[string]any{"location_id": "1"}, map[string]any{"join_undecided": []any{"Location"}, "location_state": absent{}, "unknown_columns": map[string]any{"CalendarItem.location_id": "type-mismatch"}}, nil, "join_undecided"},
 		{30, map[string]any{"url": longURL}, map[string]any{"url_state": "too-long", "url_len": len(longURL), "url_sha256": sha(longURL)}, map[string]any{"url": absent{}}, "url"},
+		// I1: the calendar title is a free text (cut and named, never silently); the Store name is an identifier
+		{
+			31,
+			map[string]any{"calendar_id": int64(3)},
+			map[string]any{"text_flags": "calendar_title", "calendar_title_raw_b64": base64.StdEncoding.EncodeToString([]byte(longTitle))},
+			map[string]any{"calendar": map[string]any{"id": "3", "title": strings.Repeat("T", 4<<10)}, "truncated_fields": []any{"calendar_title"}},
+			"calendar title",
+		},
+		{
+			32,
+			map[string]any{"calendar_id": int64(4)},
+			map[string]any{"calendar_account_state": "too-long", "calendar_account_len": 1100, "calendar_account_sha256": sha(longStore)},
+			map[string]any{"calendar": map[string]any{"id": "4", "title": "Long account"}},
+			"store name",
+		},
+		// I3, m1: a non-finite coordinate is stated in its display form, out of range; a stored NaN is also listed
+		{
+			33,
+			map[string]any{"location_id": int64(2)},
+			map[string]any{
+				"latitude": "NaN", "latitude_state": "out-of-range", "longitude": "+Inf", "longitude_state": "out-of-range",
+				"unknown_columns": map[string]any{"Location.latitude": "type-mismatch"},
+			},
+			map[string]any{"location": map[string]any{"text": "Nan"}},
+			"NaN and +Inf coordinates",
+		},
+		// I3: the location address is a free text of its own (location_address)
+		{
+			34,
+			map[string]any{"location_id": int64(3)},
+			map[string]any{"latitude": "-Inf", "latitude_state": "out-of-range", "text_flags": "location_address", "location_address_raw_b64": base64.StdEncoding.EncodeToString([]byte(longAddress))},
+			map[string]any{"location": map[string]any{"text": "Neg", "address": strings.Repeat("A", 4<<10)}, "truncated_fields": []any{"location_address"}},
+			"-Inf coordinate, location_address",
+		},
+		// I3: a raw-only value over 16 KiB is never kept nor cut: its length and SHA-256
+		{35, map[string]any{"hidden": bigText}, map[string]any{"hidden": absent{}, "hidden_state": "too-long", "hidden_len": 17 << 10, "hidden_sha256": sha(bigText)}, nil, "maxStored"},
+		// I3: an identity key that cannot be read is undecided: never "no address and no name", so not counted
+		{
+			36, nil,
+			map[string]any{
+				"attendees_unnamed": absent{}, "attendees_unnamed_entries": []any{map[string]any{"identity_state": "undecided"}},
+				"join_undecided": []any{"Identity"}, "unknown_columns": map[string]any{"Participant.identity_id": "type-mismatch"},
+			},
+			nil,
+			"identity_state undecided",
+		},
+		// I3, m2: the organizer's undecided address, name and identity are stated under organizer_*
+		{37, map[string]any{"organizer_id": int64(51)}, map[string]any{"organizer_email": 5, "organizer_address_state": "undecided"}, map[string]any{"organizer": absent{}}, "organizer email"},
+		{38, map[string]any{"organizer_id": int64(52)}, map[string]any{"organizer_name_state": "undecided", "organizer_display_name_blob_b64": "Tg=="}, map[string]any{"organizer": absent{}}, "organizer name"},
+		{
+			39,
+			map[string]any{"organizer_id": int64(53)},
+			map[string]any{"organizer_identity_state": "undecided", "organizer_state": absent{}, "join_undecided": []any{"Identity"}},
+			map[string]any{"organizer": absent{}},
+			"organizer identity",
+		},
+		// I2: a non-finite REAL in a raw-only column is kept in its display form and listed, never dropped
+		{
+			40,
+			map[string]any{"orig_date": math.Inf(1)},
+			map[string]any{
+				"orig_date": "+Inf", "orig_date_basis": "unestablished",
+				"recurrence":      []any{map[string]any{"frequency": 1, "end_date": "-Inf"}},
+				"unknown_columns": map[string]any{"CalendarItem.orig_date": "non-finite", "Recurrence.end_date": "non-finite"},
+			},
+			nil,
+			"non-finite orig_date and Recurrence.end_date",
+		},
+		// I3, m3, I2: a stored NULL date is a null element; an unknown one {"date_state": "undecided"}; +Inf its display form
+		{
+			41, nil,
+			map[string]any{
+				"exception_dates": []any{nil, map[string]any{"date_state": "undecided"}, "+Inf"},
+				"unknown_columns": map[string]any{"ExceptionDate.date": "default-undecided,non-finite"}, // the kinds of its rows, joined
+			},
+			nil,
+			"exception dates",
+		},
+		{42, nil, map[string]any{"alarms": []any{map[string]any{"trigger_date": "NaN"}}, "unknown_columns": map[string]any{"Alarm.trigger_date": "type-mismatch"}}, nil, "NaN trigger_date"},
 	}
 	for _, c := range cases {
 		s.event(c.id, c.kw)

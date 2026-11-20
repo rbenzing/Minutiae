@@ -113,7 +113,7 @@ func readCocoa(row parse.Row, c rowrun.Cols, name string, nullStated bool, raw, 
 			raw[name] = nil
 		}
 	default:
-		rowrun.Flag(unknown, row, unknownPrefix+name, col, k)
+		flag(unknown, row, unknownPrefix+name, col, k)
 	}
 	return cc
 }
@@ -202,7 +202,7 @@ func readTiming(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) strin
 	case k == rowrun.CellNull:
 		raw["all_day"] = nil
 	default:
-		rowrun.Flag(unknown, row, unknownPrefix+"all_day", col, k)
+		flag(unknown, row, unknownPrefix+"all_day", col, k)
 		if v, ok := storedOther(row, col); ok {
 			raw["all_day"] = v // C1: a readable value of another class is kept as stored
 		}
@@ -221,7 +221,7 @@ func zoneClass(row parse.Row, c rowrun.Cols, name string, unknown map[string]any
 	b, k := textCellOf(row, col)
 	switch {
 	case k == rowrun.CellOther || k == rowrun.CellUnknown:
-		rowrun.Flag(unknown, row, unknownPrefix+name, col, k)
+		flag(unknown, row, unknownPrefix+name, col, k)
 		return calendar.TimingUnknown, stateTZUnreadable
 	case k != rowrun.CellValue || len(b) == 0:
 		return calendar.TimingUnknown, stateTZAbsent

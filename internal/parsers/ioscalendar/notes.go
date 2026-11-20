@@ -60,7 +60,8 @@ func joinColumns(table string) []string {
 // never claimed absent.
 func writeNotes(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, out parse.Emitter) error {
 	counted := append([]string{tableOccurrences}, joinTableNames()...)
-	rep, err := census.Take(ctx, f, b, countSpecs(counted[:census.MaxSpecs]))
+	first := min(len(counted), census.MaxSpecs)
+	rep, err := census.Take(ctx, f, b, countSpecs(counted[:first]))
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,7 @@ func writeNotes(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, out pa
 			changes = append(changes, t)
 		}
 	}
-	rest := append(slices.Clone(counted[census.MaxSpecs:]), changes[:min(len(changes), maxChangeTables)]...)
+	rest := append(slices.Clone(counted[first:]), changes[:min(len(changes), maxChangeTables)]...)
 	for len(rest) > 0 {
 		n := min(len(rest), census.MaxSpecs)
 		more, err := census.Take(ctx, f, b, countSpecs(rest[:n]))

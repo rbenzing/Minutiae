@@ -494,8 +494,10 @@ def expect_event(r, env, remote, file="any"):
         else:
             cp = {"id": str(cid)}
             t = cal.get("calendar_displayName")
-            if is_text(t) and t:
-                cp["title"] = C.clean(t, MAX_TITLE).text
+            if is_text(t) and t:  # a free text: cut and named, never silently (Task 9 fix round 1, I1)
+                title = free_text(raw, tf, "calendar_title", t, MAX_TITLE, truncated, unknown, "calendar_displayName")
+                if title:
+                    cp["title"] = title
             acct = {}
             for col, key in (("account_type", "type"), ("account_name", "name")):
                 if is_text(cal.get(col)) and cal.get(col):

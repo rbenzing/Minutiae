@@ -336,11 +336,31 @@ func TestIOSCalendarUndecidedJoinsAreStated(t *testing.T) {
 		}
 	}
 	want := []string{
-		"sqlite:schema calendar-join-undecided: table Calendar: column ROWID is not the rowid alias; every join through it is undecided",
+		"sqlite:schema calendar-join-undecided: table Calendar: column ROWID is not the rowid alias; every join through it by ROWID is undecided",
 		"sqlite:table=Calendar calendar-join-undecided: Calendar: 2 records",
 		"sqlite:table=Participant calendar-join-undecided: Participant: 2 records",
 	}
 	if !reflect.DeepEqual(joinWarn, want) {
 		t.Errorf("join warnings %q, want %q", joinWarn, want)
+	}
+
+	// Task 9 fix round 1, m5: the guard is per join. A Participant without item_id makes the attendees (Match)
+	// undecided but leaves the organizer (Get by ROWID) decided ...
+	s = newBuilt("Participant")
+	s.table("Participant", "identity_id INTEGER, email TEXT", true)
+	s.add("Participant", 1, map[string]any{"email": "org@example.test"})
+	s.event(1, map[string]any{"organizer_id": int64(1)})
+	r := byRowid(t, parseBuilt(t, s.bytes(), true))[1]
+	if !sameJSON(t, r.Payload["organizer"], map[string]any{"address": "org@example.test"}) || !sameJSON(t, rawOf(r)["join_undecided"], []any{"Participant"}) {
+		t.Errorf("Participant without item_id: organizer %v, join_undecided %v; want the organizer and the attendees undecided", r.Payload["organizer"], rawOf(r)["join_undecided"])
+	}
+	// ... and a Participant whose ROWID is not the rowid alias makes the organizer undecided but leaves the attendees
+	s = newBuilt("Participant")
+	s.table("Participant", "ROWID INTEGER, item_id INTEGER, email TEXT", false)
+	s.add("Participant", 1, map[string]any{"ROWID": int64(1), "item_id": int64(1), "email": "att@example.test"})
+	s.event(1, map[string]any{"organizer_id": int64(1)})
+	r = byRowid(t, parseBuilt(t, s.bytes(), true))[1]
+	if r.Payload["organizer"] != nil || !sameJSON(t, r.Payload["attendees"], []any{map[string]any{"address": "att@example.test"}}) || !sameJSON(t, rawOf(r)["join_undecided"], []any{"Participant"}) {
+		t.Errorf("Participant without its alias: organizer %v, attendees %v, join_undecided %v", r.Payload["organizer"], r.Payload["attendees"], rawOf(r)["join_undecided"])
 	}
 }
