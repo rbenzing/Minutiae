@@ -18,6 +18,7 @@ import (
 var calendarDirs = []string{
 	"internal/recordtypes/calendar",
 	"internal/parsers/androidcalendar",
+	"internal/parsers/ioscalendar",
 }
 
 // zoneFuncs are the functions of package time that make or load a zone.
