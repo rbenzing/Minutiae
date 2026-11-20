@@ -31,7 +31,7 @@ them), so they are not pinned. `tgnet/Vector.java` and `tgnet/tl/legacy/TL_legac
 ## How the table was built, and what differs from the recon and the spec
 
 `telegram_tl_facts.py --emit <A-HEAD sources>` wrote the A-HEAD rows; `--emit <sources> --pin <older pin> --absent-from
-constructors.tsv` wrote the rows of IDs that only an older pin reads. One field was then completed by hand (below). Every
+constructors.tsv` wrote the rows of IDs that only an older pin reads. Three rows were then completed by hand (below). Every
 row is then checked at its own pin: the ID is read by its type's switch, the class and the source line are the source's,
 the body is the one the selection of plan 4I4 Task 1 asks for, and the fields equal the reduced `readParams` (a `prefix`
 row: a proper prefix of it, up to the last needed field, spec Q2/T6). At A-HEAD every ID each type's switch reads is a
@@ -59,10 +59,20 @@ row; at the three older pins every ID the pinned types' switches read is a row (
   `user_id` (`TLRPC.java:43834-43835`). The layer's own field is the forwarded user: release-5.14.0_1851 reads that value
   into `MessageFwdHeader.from_id` (an int beside a separate `channel_id`, `TLRPC.java:29805-29808` there) and looks it
   up as a user (`MessageObject.java:4845` there). Resolved `user` (`facts.tsv` `wrapper.TL_messageFwdHeader_layer68.from_id`).
+- Read by hand (flag-only trues the reduction cannot see): `TL_messageEntityFormattedDate` `0x904ac7c7` computes its
+  six flag-only trues (`relative`, `short_time`, `long_time`, `short_date`, `long_date`, `day_of_week`: bits 0 to 5) in a
+  method of its own (`TLRPC.java:63806`) called after its last read (`TLRPC.java:63820`); they are listed after `date`,
+  where they are computed. `TL_community` `0x65efe954` sets `collapsed_in_dialogs` from bit 20 of `flags2` combined with
+  an app switch (`TLRPC.java:40714`); the stored bit is listed as `collapsed_in_dialogs=F2.20`. The script reports a
+  flag-only true set by any expression other than one flag test, and any call of a method it does not follow, as MANUAL.
 - The old forward headers read two inline ids into the same field `from_id`, one per flag bit (bit 0 a user, bit 1 a
   channel); `facts.tsv` holds one `wrapper.<class>.from_id` row per inline id, each citing the line of its own read.
 - `DatabaseMigrationHelper.java` lines: the recon's 815-823 (the pre-84 secret-chat uid) and 818 (the 32-bit mid) are
   819-825 and 819 at A-HEAD (`facts.tsv`).
+- This file is written by `telegram_tl_facts.py --assemble` from the four `--check` reports, the docs cross-check and
+  `facts.tsv`; each report names the SHA-256 of the `constructors.tsv` and `facts.tsv` it checked, and
+  `TestTelegramFactsCiteTheirSource` recomputes both, so an edit of either file without a new run fails the default
+  tests.
 
 # Constructor rows, per pin (`telegram_tl_facts.py --check`)
 
@@ -88,265 +98,272 @@ Fetched files (paths below `TMessagesProj/src/main/java/org/telegram/`):
 | `ui/Stories/MessageMediaStoryFull.java` | 0691a6ddb1639e2880038bf0377721e20644a6e539c8746a52b673353e289faf |
 | `ui/Stories/MessageMediaStoryFull_old.java` | d83f99d50d7a5d2ebc8d90dec1bd23bc4618816b00a33fec6567b8c8f248d093 |
 
+Fact files checked (SHA-256 of the committed bytes):
+
+| File | SHA-256 |
+|---|---|
+| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
+
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
-| Type | ID | Class | Verdict | Source |
-|---|---|---|---|---|
-| Message | 0x05f46804 | TL_messageForwarded_old | verified | TLRPC.java:61033 |
-| Message | 0x1d86f70e | TL_messageService_old2 | verified | TLRPC.java:59717 |
-| Message | 0x1e4c8a69 | TL_message_layer175 | verified | TL_legacy_message.java:2222 |
-| Message | 0x22eb6aba | TL_message_old | verified | TLRPC.java:61073 |
-| Message | 0x2357bf25 | TL_message_layer179 | verified | TL_legacy_message.java:1886 |
-| Message | 0x286fa604 | TL_messageService_layer123 | verified | TLRPC.java:61265 |
-| Message | 0x2b085862 | TL_messageService_layer195 | verified | TLRPC.java:61435 |
-| Message | 0x2bebfa86 | TL_message_old6 | verified | TLRPC.java:60661 |
-| Message | 0x38116ee0 | TL_message_layer169 | verified | TL_legacy_message.java:2530 |
-| Message | 0x3ae56482 | TL_message_layer224 | verified | TL_legacy_message.java:251 |
-| Message | 0x44f9b43d | TL_message_layer104 | verified | TLRPC.java:60550 |
-| Message | 0x452c0e65 | TL_message_layer117 | verified | TLRPC.java:60431 |
-| Message | 0x555555f8 | TL_message_secret_old | verified | TLRPC.java:61224 |
-| Message | 0x555555f9 | TL_message_secret_layer72 | verified | TLRPC.java:61168 |
-| Message | 0x555555fa | TL_message_secret | verified | TLRPC.java:61106 |
-| Message | 0x567699b3 | TL_message_old2 | verified | TLRPC.java:60968 |
-| Message | 0x58ae39c9 | TL_message_layer123 | verified | TL_legacy_message.java:2947 |
-| Message | 0x5ba66c13 | TL_message_old7 | verified | TLRPC.java:60050 |
-| Message | 0x7600b9d3 | TL_message | verified | TLRPC.java:60187 |
-| Message | 0x76bec211 | TL_message_layer173 | verified | TL_legacy_message.java:2379 |
-| Message | 0x7a800e0a | TL_messageService | verified | TLRPC.java:61311 |
-| Message | 0x83e5de54 | TL_messageEmpty_layer122 | verified | TLRPC.java:59680 |
-| Message | 0x85d6cbe2 | TL_message_layer135 | verified | TL_legacy_message.java:2675 |
-| Message | 0x90a6ca84 | TL_messageEmpty | verified | TLRPC.java:59694 |
-| Message | 0x90dddc11 | TL_message_layer72 | verified | TLRPC.java:59750 |
-| Message | 0x94345242 | TL_message_layer195 | verified | TL_legacy_message.java:1520 |
-| Message | 0x95ef6f2b | TL_message_layer226 | verified | TL_legacy_message.java:15 |
-| Message | 0x96fdbbe9 | TL_message_layer199 | verified | TL_legacy_message.java:1327 |
-| Message | 0x9815cec8 | TL_message_layer216 | verified | TL_legacy_message.java:918 |
-| Message | 0x9cb490e9 | TL_message_layer222 | verified | TL_legacy_message.java:480 |
-| Message | 0x9e19a1f6 | TL_messageService_layer118 | verified | TLRPC.java:61486 |
-| Message | 0x9f8d60bb | TL_messageService_old | verified | TLRPC.java:61006 |
-| Message | 0xa367e716 | TL_messageForwarded_old2 | verified | TLRPC.java:60142 |
-| Message | 0xa4e97f37 | TL_message_layer179 | verified | TLRPC.java:59522 |
-| Message | 0xa66c7efc | TL_message_layer176 | verified | TL_legacy_message.java:2059 |
-| Message | 0xa7ab1991 | TL_message_old3 | verified | TLRPC.java:60911 |
-| Message | 0xb92f76cf | TL_message_layer220 | verified | TL_legacy_message.java:702 |
-| Message | 0xbce383d2 | TL_message_layer131 | verified | TL_legacy_message.java:2812 |
-| Message | 0xbde09c2e | TL_message_layer180 | verified | TL_legacy_message.java:1707 |
-| Message | 0xc06b9607 | TL_messageService_layer48 | verified | TLRPC.java:60805 |
-| Message | 0xc09be45f | TL_message_layer68 | verified | TLRPC.java:59851 |
-| Message | 0xc3060325 | TL_message_old4 | verified | TLRPC.java:60848 |
-| Message | 0xc992e15c | TL_message_layer47 | verified | TLRPC.java:59952 |
-| Message | 0xd3d28540 | TL_messageService_layer204 | verified | TLRPC.java:61376 |
-| Message | 0xeabcdd4d | TL_message_layer205 | verified | TL_legacy_message.java:1128 |
-| Message | 0xf07814c8 | TL_message_old5 | verified | TLRPC.java:60736 |
-| Message | 0xf52e6b7f | TL_message_layer118 | verified | TL_legacy_message.java:3076 |
-| Peer | 0x36c6019a | TL_peerChat | verified | TLRPC.java:3902 |
-| Peer | 0x59511722 | TL_peerUser | verified | TLRPC.java:3876 |
-| Peer | 0x9db1bc6d | TL_peerUser_layer131 | verified | TLRPC.java:3915 |
-| Peer | 0xa2a5371e | TL_peerChannel | verified | TLRPC.java:3889 |
-| Peer | 0xbad0e5bb | TL_peerChat_layer131 | verified | TLRPC.java:3928 |
-| Peer | 0xbddde532 | TL_peerChannel_layer131 | verified | TLRPC.java:3863 |
-| MessageFwdHeader | 0x353a686b | TL_messageFwdHeader_layer118 | verified | TLRPC.java:44001 |
-| MessageFwdHeader | 0x4e4df4bb | TL_messageFwdHeader | verified | TLRPC.java:43863 |
-| MessageFwdHeader | 0x559ebe6d | TL_messageFwdHeader_layer96 | verified | TLRPC.java:44166 |
-| MessageFwdHeader | 0x5f777dce | TL_messageFwdHeader_layer169 | verified | TLRPC.java:43942 |
-| MessageFwdHeader | 0xc786ddcb | TL_messageFwdHeader_layer68 | MANUAL, read by hand at TLRPC.java:43828 | TLRPC.java:43828 |
-| MessageFwdHeader | 0xec338270 | TL_messageFwdHeader_layer112 | verified | TLRPC.java:44066 |
-| MessageFwdHeader | 0xfadff4ac | TL_messageFwdHeader_layer72 | verified | TLRPC.java:44125 |
-| MessageReplyHeader | 0x0e5af939 | TL_messageReplyStoryHeader | verified | TLRPC.java:28186 |
-| MessageReplyHeader | 0x1b97dd66 | TL_messageReplyHeader_layer231 | verified | TLRPC.java:28290 |
-| MessageReplyHeader | 0x3d5c1693 | TL_messageReplyHeader_layer165_2 | verified | TLRPC.java:28572 |
-| MessageReplyHeader | 0x6917560b | TL_messageReplyHeader_layer223 | verified | TLRPC.java:28371 |
-| MessageReplyHeader | 0x6eebcabd | TL_messageReplyHeader_layer166 | verified | TLRPC.java:28511 |
-| MessageReplyHeader | 0x9c98bfc1 | TL_messageReplyStoryHeader_layer174 | verified | TLRPC.java:28170 |
-| MessageReplyHeader | 0xa6d57763 | TL_messageReplyHeader_layer165 | verified | TLRPC.java:28625 |
-| MessageReplyHeader | 0xafbc09db | TL_messageReplyHeader_layer207 | verified | TLRPC.java:28444 |
-| MessageReplyHeader | 0xddb5ab75 | TL_messageReplyHeader | verified | TLRPC.java:28201 |
-| MessageEntity | 0x020df5d0 | TL_messageEntityBlockquote_layer180 | verified | TLRPC.java:32950 |
-| MessageEntity | 0x0652c1c5 | TL_messageEntityDiffDelete | verified | TLRPC.java:63923 |
-| MessageEntity | 0x208e68c9 | TL_inputMessageEntityMentionName | verified | TLRPC.java:32751 |
-| MessageEntity | 0x28a20571 | TL_messageEntityCode | verified | TLRPC.java:32862 |
-| MessageEntity | 0x32ca960f | TL_messageEntitySpoiler | verified | TLRPC.java:32707 |
-| MessageEntity | 0x352dca58 | TL_messageEntityMentionName_layer131 | verified | TLRPC.java:32734 |
-| MessageEntity | 0x4c4e743f | TL_messageEntityCashtag | verified | TLRPC.java:32781 |
-| MessageEntity | 0x64e475c2 | TL_messageEntityEmail | verified | TLRPC.java:32540 |
-| MessageEntity | 0x6cef8ac7 | TL_messageEntityBotCommand | verified | TLRPC.java:32513 |
-| MessageEntity | 0x6ed02538 | TL_messageEntityUrl | verified | TLRPC.java:32625 |
-| MessageEntity | 0x6f635b0d | TL_messageEntityHashtag | verified | TLRPC.java:32835 |
-| MessageEntity | 0x71777116 | TL_messageEntityDiffInsert | verified | TLRPC.java:63859 |
-| MessageEntity | 0x73924be0 | TL_messageEntityPre | verified | TLRPC.java:32567 |
-| MessageEntity | 0x761e6af4 | TL_messageEntityBankCard | verified | TLRPC.java:32992 |
-| MessageEntity | 0x76a6d327 | TL_messageEntityTextUrl | verified | TLRPC.java:32482 |
-| MessageEntity | 0x826f8b60 | TL_messageEntityItalic | verified | TLRPC.java:32653 |
-| MessageEntity | 0x904ac7c7 | TL_messageEntityFormattedDate | verified | TLRPC.java:63794 |
-| MessageEntity | 0x9b69e34b | TL_messageEntityPhone | verified | TLRPC.java:33046 |
-| MessageEntity | 0x9c4e7e8b | TL_messageEntityUnderline | verified | TLRPC.java:32965 |
-| MessageEntity | 0xbb92ba95 | TL_messageEntityUnknown | verified | TLRPC.java:32598 |
-| MessageEntity | 0xbd610bc9 | TL_messageEntityBold | verified | TLRPC.java:32808 |
-| MessageEntity | 0xbf0693d4 | TL_messageEntityStrike | verified | TLRPC.java:32889 |
-| MessageEntity | 0xc6c1e5a7 | TL_messageEntityDiffReplace | verified | TLRPC.java:63888 |
-| MessageEntity | 0xc8cf05f8 | TL_messageEntityCustomEmoji | verified | TLRPC.java:63760 |
-| MessageEntity | 0xdc7b1140 | TL_messageEntityMentionName | verified | TLRPC.java:33073 |
-| MessageEntity | 0xf1ccaaac | TL_messageEntityBlockquote | verified | TLRPC.java:32916 |
-| MessageEntity | 0xfa04579d | TL_messageEntityMention | verified | TLRPC.java:32680 |
-| MessageEntity | 0xfdabbfcd | TL_messageEntityTonAddress | verified | TLRPC.java:33019 |
-| MessageAction | 0x80e11a7f | TL_messageActionPhoneCall | verified | TLRPC.java:26192 |
-| PhoneCallDiscardReason | 0x57adc690 | TL_phoneCallDiscardReasonHangup | verified | TLRPC.java:20934 |
-| PhoneCallDiscardReason | 0x85e42301 | TL_phoneCallDiscardReasonMissed | verified | TLRPC.java:20950 |
-| PhoneCallDiscardReason | 0x9fbbf1f7 | TL_phoneCallDiscardReasonMigrateConferenceCall | verified | TLRPC.java:20966 |
-| PhoneCallDiscardReason | 0xe095c1a0 | TL_phoneCallDiscardReasonDisconnect | verified | TLRPC.java:20958 |
-| PhoneCallDiscardReason | 0xfaf7e8c9 | TL_phoneCallDiscardReasonBusy | verified | TLRPC.java:20942 |
-| MessageMedia | 0x08cbec07 | TL_messageMediaDice | verified | TLRPC.java:8203 |
-| MessageMedia | 0x2238f214 | TL_messageMediaWidget | verified | TLRPC.java:66788 |
-| MessageMedia | 0x29632a36 | TL_messageMediaUnsupported_old | verified | TLRPC.java:7269 |
-| MessageMedia | 0x2ec0533f | TL_messageMediaVenue | verified | TLRPC.java:7491 |
-| MessageMedia | 0x2fda2204 | TL_messageMediaDocument_old | verified | TLRPC.java:7804 |
-| MessageMedia | 0x3d8ce53d | TL_messageMediaPhoto_layer68 | verified | TLRPC.java:8108 |
-| MessageMedia | 0x3ded6320 | TL_messageMediaEmpty | verified | TLRPC.java:7483 |
-| MessageMedia | 0x3f7ee58b | TL_messageMediaDice_layer220 | verified | TLRPC.java:8230 |
-| MessageMedia | 0x4bd6e798 | TL_messageMediaPoll_layer223 | verified | TLRPC.java:7926 |
-| MessageMedia | 0x4cf4d72d | TL_messageMediaDocument_layer187 | verified | TLRPC.java:7698 |
-| MessageMedia | 0x52d8ccd9 | TL_messageMediaDocument | verified | TLRPC.java:7554 |
-| MessageMedia | 0x56e0d474 | TL_messageMediaGeo | verified | TLRPC.java:8258 |
-| MessageMedia | 0x58260664 | TL_messageMediaGiveaway_layer167 | verified | TLRPC.java:66720 |
-| MessageMedia | 0x5bcf1675 | TL_messageMediaVideo_layer45 | verified | TLRPC.java:8123 |
-| MessageMedia | 0x5e7d2f39 | TL_messageMediaContact_layer81 | verified | TLRPC.java:8089 |
-| MessageMedia | 0x638fe46b | TL_messageMediaDice_layer111 | verified | TLRPC.java:8245 |
-| MessageMedia | 0x68cb6283 | TL_messageMediaStory | verified | TLRPC.java:65742 |
-| MessageMedia | 0x695150d7 | TL_messageMediaPhoto_layer223 | verified | TLRPC.java:7869 |
-| MessageMedia | 0x70322949 | TL_messageMediaContact | verified | TLRPC.java:8159 |
-| MessageMedia | 0x773f4e66 | TL_messageMediaPoll | verified | TLRPC.java:7898 |
-| MessageMedia | 0x7912b71f | TL_messageMediaVenue_layer71 | verified | TLRPC.java:7520 |
-| MessageMedia | 0x7c3c2609 | TL_messageMediaGeoLive_layer119 | verified | TLRPC.java:8061 |
-| MessageMedia | 0x7c4414d3 | TL_messageMediaDocument_layer74 | verified | TLRPC.java:7771 |
-| MessageMedia | 0x84551347 | TL_messageMediaInvoice_layer145 | verified | TLRPC.java:7434 |
-| MessageMedia | 0x8a53b014 | TL_messageMediaToDo | verified | TLRPC.java:66764 |
-| MessageMedia | 0x9cb070d7 | TL_messageMediaDocument_layer159 | verified | TLRPC.java:7739 |
-| MessageMedia | 0x9f84f49e | TL_messageMediaUnsupported | verified | TLRPC.java:7475 |
-| MessageMedia | 0xa2d24290 | TL_messageMediaVideo_old | verified | TLRPC.java:7541 |
-| MessageMedia | 0xa32dd600 | TL_messageMediaWebPage_layer165 | verified | TLRPC.java:8294 |
-| MessageMedia | 0xa831bf37 | TL_messageMediaWidget_layer233 | verified | TLRPC.java:66851 |
-| MessageMedia | 0xa8852491 | TL_messageMediaPaidMedia | verified | TLRPC.java:66749 |
-| MessageMedia | 0xaa073beb | TL_messageMediaGiveaway | verified | TLRPC.java:66626 |
-| MessageMedia | 0xb5223b0f | TL_messageMediaPhoto_layer74 | verified | TLRPC.java:7941 |
-| MessageMedia | 0xb7ed7b0d | TL_messageMediaWidget_old | verified | TLRPC.java:66876 |
-| MessageMedia | 0xb940c666 | TL_messageMediaGeoLive | verified | TLRPC.java:8032 |
-| MessageMedia | 0xc6991068 | TL_messageMediaGiveawayResults_layer186 | verified | TLRPC.java:66583 |
-| MessageMedia | 0xc6b68300 | TL_messageMediaAudio_layer45 | verified | TLRPC.java:7282 |
-| MessageMedia | 0xc79aee1d | MessageMediaStoryFull | verified | MessageMediaStoryFull.java:11 |
-| MessageMedia | 0xc79aee1f | MessageMediaStoryFull_old | verified | MessageMediaStoryFull_old.java:9 |
-| MessageMedia | 0xc8c45a2a | TL_messageMediaPhoto_old | verified | TLRPC.java:7295 |
-| MessageMedia | 0xca5cab89 | TL_messageMediaVideoStream | verified | TLRPC.java:8180 |
-| MessageMedia | 0xcbb20d88 | TL_messageMediaStory_layer162 | verified | TLRPC.java:65767 |
-| MessageMedia | 0xcbf24940 | TL_messageMediaContact_layer131 | verified | TLRPC.java:8138 |
-| MessageMedia | 0xceaa3ea1 | TL_messageMediaGiveawayResults | verified | TLRPC.java:66517 |
-| MessageMedia | 0xdaad85b0 | TL_messageMediaGiveaway_layer186 | verified | TLRPC.java:66683 |
-| MessageMedia | 0xdbbdf614 | TL_messageMediaDocument_layer197_2 | verified | TLRPC.java:7610 |
-| MessageMedia | 0xdd570bd5 | TL_messageMediaDocument_layer197 | verified | TLRPC.java:7657 |
-| MessageMedia | 0xddf10c3b | TL_messageMediaWebPage | verified | TLRPC.java:8271 |
-| MessageMedia | 0xe216eb63 | TL_messageMediaPhoto | verified | TLRPC.java:7832 |
-| MessageMedia | 0xf3e02ea8 | TL_messageMediaDocument_layer68 | verified | TLRPC.java:7817 |
-| MessageMedia | 0xf6a548d3 | TL_messageMediaInvoice | verified | TLRPC.java:7386 |
-| MessageMedia | 0xfdb19008 | TL_messageMediaGame | verified | TLRPC.java:8076 |
-| Photo | 0x22b56751 | TL_photo_old | verified | TLRPC.java:33275 |
-| Photo | 0x2331b22d | TL_photoEmpty | verified | TLRPC.java:33262 |
-| Photo | 0x9288dd29 | TL_photo_layer82 | verified | TLRPC.java:33360 |
-| Photo | 0x9c477dd8 | TL_photo_layer97 | verified | TLRPC.java:33195 |
-| Photo | 0xc3838076 | TL_photo_old2 | verified | TLRPC.java:33239 |
-| Photo | 0xcded42fe | TL_photo_layer55 | verified | TLRPC.java:33220 |
-| Photo | 0xd07504a5 | TL_photo_layer115 | verified | TLRPC.java:33300 |
-| Photo | 0xfb197a65 | TL_photo | verified | TLRPC.java:33327 |
-| Document | 0x1e87342b | TL_document_layer142 | verified | TLRPC.java:29229 |
-| Document | 0x36f8c871 | TL_documentEmpty | verified | TLRPC.java:29334 |
-| Document | 0x55555556 | TL_documentEncrypted_old | verified | TLRPC.java:29155 |
-| Document | 0x55555558 | TL_documentEncrypted | verified | TLRPC.java:29347 |
-| Document | 0x59534e4c | TL_document_layer92 | verified | TLRPC.java:29097 |
-| Document | 0x87232bc7 | TL_document_layer82 | verified | TLRPC.java:29126 |
-| Document | 0x8fd4c4d8 | TL_document | verified | TLRPC.java:29188 |
-| Document | 0x9ba29cc1 | TL_document_layer113 | verified | TLRPC.java:29270 |
-| Document | 0x9efc6326 | TL_document_old | verified | TLRPC.java:29305 |
-| Document | 0xf9a39f4f | TL_document_layer53 | verified | TLRPC.java:29378 |
-| GeoPoint | 0x0296f104 | TL_geoPoint_layer119 | verified | TLRPC.java:5081 |
-| GeoPoint | 0x1117dd5f | TL_geoPointEmpty | verified | TLRPC.java:5113 |
-| GeoPoint | 0x2049d70c | TL_geoPoint_layer81 | verified | TLRPC.java:5098 |
-| GeoPoint | 0xb2a2f663 | TL_geoPoint | verified | TLRPC.java:5121 |
-| WebPage | 0x211a1788 | TL_webPageEmpty | verified | TLRPC.java:20333 |
-| WebPage | 0x5f07b4bc | TL_webPage_layer104 | verified | TLRPC.java:20149 |
-| WebPage | 0x7311ca11 | TL_webPageNotModified | verified | TLRPC.java:20431 |
-| WebPage | 0x85849473 | TL_webPageNotModified_layer110 | verified | TLRPC.java:20418 |
-| WebPage | 0xa31ea0b5 | TL_webPage_old | verified | TLRPC.java:20248 |
-| WebPage | 0xb0d13e47 | TL_webPagePending | verified | TLRPC.java:20395 |
-| WebPage | 0xc586da1c | TL_webPagePending_layer165 | verified | TLRPC.java:20380 |
-| WebPage | 0xca820ed7 | TL_webPage_layer58 | verified | TLRPC.java:20452 |
-| WebPage | 0xd41a5167 | TL_webPageUrlPending | verified | TLRPC.java:20367 |
-| WebPage | 0xe89c45b2 | TL_webPage | verified | TLRPC.java:19932 |
-| WebPage | 0xeb1477e8 | TL_webPageEmpty_layer165 | verified | TLRPC.java:20354 |
-| WebPage | 0xfa64e172 | TL_webPage_layer107 | verified | TLRPC.java:20041 |
-| User | 0x020b1422 | TL_user_layer216 | verified | TLRPC.java:22479 |
-| User | 0x075cf7a8 | TL_userForeign_old2 | verified | TLRPC.java:24461 |
-| User | 0x1c60e608 | TL_userSelf_old3 | verified | TLRPC.java:24356 |
-| User | 0x200250ba | TL_userEmpty_layer131 | verified | TLRPC.java:24400 |
-| User | 0x215c4438 | TL_user_layer184 | verified | TLRPC.java:23234 |
-| User | 0x22e49072 | TL_user_old | verified | TLRPC.java:24627 |
-| User | 0x22e8ceb0 | TL_userRequest_old | verified | TLRPC.java:24413 |
-| User | 0x2e13f4c3 | TL_user_layer104 | verified | TLRPC.java:24224 |
-| User | 0x31774388 | TL_user_layer218 | verified | TLRPC.java:22273 |
-| User | 0x3ff6ecb0 | TL_user_layer144 | verified | TLRPC.java:23998 |
-| User | 0x4b46c37e | TL_user_layer199 | verified | TLRPC.java:22678 |
-| User | 0x4fe9cce0 | TL_user_layer185 | verified | TLRPC.java:23052 |
-| User | 0x5214c89d | TL_userForeign_old | verified | TLRPC.java:24438 |
-| User | 0x5d99adee | TL_user_layer147 | verified | TLRPC.java:23875 |
-| User | 0x7007b451 | TL_userSelf_old2 | verified | TLRPC.java:24708 |
-| User | 0x720535ec | TL_userSelf_old | verified | TLRPC.java:24331 |
-| User | 0x83314fca | TL_user_layer195 | verified | TLRPC.java:22868 |
-| User | 0x8f97c628 | TL_user_layer159 | verified | TLRPC.java:23735 |
-| User | 0x938458c1 | TL_user_layer131 | verified | TLRPC.java:24113 |
-| User | 0xabb5f120 | TL_user_layer165 | verified | TLRPC.java:23581 |
-| User | 0xb1b8cc83 | TL_user | verified | TLRPC.java:22059 |
-| User | 0xb29ad7cc | TL_userDeleted_old | verified | TLRPC.java:24513 |
-| User | 0xcab35e18 | TL_userContact_old2 | verified | TLRPC.java:21962 |
-| User | 0xd10d979a | TL_user_layer65 | verified | TLRPC.java:24530 |
-| User | 0xd3bc4b7a | TL_userEmpty | verified | TLRPC.java:22014 |
-| User | 0xd6016d7a | TL_userDeleted_old2 | verified | TLRPC.java:24381 |
-| User | 0xd9ccc4ef | TL_userRequest_old2 | verified | TLRPC.java:24486 |
-| User | 0xeb602f25 | TL_user_layer166 | verified | TLRPC.java:23410 |
-| User | 0xf2fb8319 | TL_userContact_old | verified | TLRPC.java:21989 |
-| Chat | 0x07328bdb | TL_chatForbidden_layer131 | verified | TLRPC.java:42223 |
-| Chat | 0x0aadfc8f | TL_channel_layer185 | verified | TLRPC.java:41430 |
-| Chat | 0x0cb44b1c | TL_channel_layer72 | verified | TLRPC.java:42659 |
-| Chat | 0x17d493d5 | TL_channelForbidden | verified | TLRPC.java:39960 |
-| Chat | 0x1981ea7e | TL_channel_layer166 | verified | TLRPC.java:41710 |
-| Chat | 0x1c32b11c | TL_channel_layer227 | verified | TLRPC.java:40501 |
-| Chat | 0x289da732 | TL_channelForbidden_layer131 | verified | TLRPC.java:39991 |
-| Chat | 0x29562865 | TL_chatEmpty | verified | TLRPC.java:61827 |
-| Chat | 0x2d85832c | TL_channelForbidden_layer52 | verified | TLRPC.java:40098 |
-| Chat | 0x3bda1bde | TL_chat_layer131 | verified | TLRPC.java:39905 |
-| Chat | 0x41cbf256 | TL_chat | verified | TLRPC.java:39844 |
-| Chat | 0x450b7115 | TL_channel_layer77 | verified | TLRPC.java:42582 |
-| Chat | 0x4b1b7506 | TL_channel_layer48 | verified | TLRPC.java:40043 |
-| Chat | 0x4df30834 | TL_channel_layer104 | verified | TLRPC.java:42468 |
-| Chat | 0x6592a1a7 | TL_chatForbidden | verified | TLRPC.java:42208 |
-| Chat | 0x65efe954 | TL_community | verified | TLRPC.java:40705 |
-| Chat | 0x678e9587 | TL_channel_old | verified | TLRPC.java:42299 |
-| Chat | 0x6e9c9bc7 | TL_chat_old | verified | TLRPC.java:42346 |
-| Chat | 0x7312bc48 | TL_chat_old2 | verified | TLRPC.java:39811 |
-| Chat | 0x7482147e | TL_channel_layer203 | verified | TLRPC.java:40939 |
-| Chat | 0x7ad15240 | TL_channel | verified | TLRPC.java:40115 |
-| Chat | 0x8261ac61 | TL_channel_layer147 | verified | TLRPC.java:42105 |
-| Chat | 0x83259464 | TL_channel_layer161 | verified | TLRPC.java:41986 |
-| Chat | 0x8537784f | TL_channelForbidden_layer67 | verified | TLRPC.java:40020 |
-| Chat | 0x8e87ccd8 | TL_channel_layer167 | verified | TLRPC.java:41579 |
-| Chat | 0x94f592db | TL_channel_layer165 | verified | TLRPC.java:41852 |
-| Chat | 0x9ba2d800 | TL_chatEmpty_layer131 | verified | TLRPC.java:61842 |
-| Chat | 0xa14dca52 | TL_channel_layer67 | verified | TLRPC.java:42238 |
-| Chat | 0xc88974ac | TL_channel_layer92 | verified | TLRPC.java:42731 |
-| Chat | 0xd31a961e | TL_channel_layer131 | verified | TLRPC.java:42371 |
-| Chat | 0xd49f34c6 | TL_channel_layer232 | verified | TLRPC.java:40312 |
-| Chat | 0xd91cdd54 | TL_chat_layer92 | verified | TLRPC.java:42808 |
-| Chat | 0xe00998b7 | TL_channel_layer199 | verified | TLRPC.java:41110 |
-| Chat | 0xfb0ccc41 | TL_chatForbidden_old | verified | TLRPC.java:39794 |
-| Chat | 0xfd3cdab8 | TL_communityForbidden | verified | TLRPC.java:40682 |
-| Chat | 0xfe4478bd | TL_channel_layer195 | verified | TLRPC.java:41273 |
-| Chat | 0xfe685355 | TL_channel_layer216 | verified | TLRPC.java:40756 |
+| Type | ID | Class | Verdict | Source | Note |
+|---|---|---|---|---|---|
+| Message | 0x05f46804 | TL_messageForwarded_old | verified | TLRPC.java:61033 |  |
+| Message | 0x1d86f70e | TL_messageService_old2 | verified | TLRPC.java:59717 |  |
+| Message | 0x1e4c8a69 | TL_message_layer175 | verified | TL_legacy_message.java:2222 |  |
+| Message | 0x22eb6aba | TL_message_old | verified | TLRPC.java:61073 |  |
+| Message | 0x2357bf25 | TL_message_layer179 | verified | TL_legacy_message.java:1886 |  |
+| Message | 0x286fa604 | TL_messageService_layer123 | verified | TLRPC.java:61265 |  |
+| Message | 0x2b085862 | TL_messageService_layer195 | verified | TLRPC.java:61435 |  |
+| Message | 0x2bebfa86 | TL_message_old6 | verified | TLRPC.java:60661 |  |
+| Message | 0x38116ee0 | TL_message_layer169 | verified | TL_legacy_message.java:2530 |  |
+| Message | 0x3ae56482 | TL_message_layer224 | verified | TL_legacy_message.java:251 |  |
+| Message | 0x44f9b43d | TL_message_layer104 | verified | TLRPC.java:60550 |  |
+| Message | 0x452c0e65 | TL_message_layer117 | verified | TLRPC.java:60431 |  |
+| Message | 0x555555f8 | TL_message_secret_old | verified | TLRPC.java:61224 |  |
+| Message | 0x555555f9 | TL_message_secret_layer72 | verified | TLRPC.java:61168 |  |
+| Message | 0x555555fa | TL_message_secret | verified | TLRPC.java:61106 |  |
+| Message | 0x567699b3 | TL_message_old2 | verified | TLRPC.java:60968 |  |
+| Message | 0x58ae39c9 | TL_message_layer123 | verified | TL_legacy_message.java:2947 |  |
+| Message | 0x5ba66c13 | TL_message_old7 | verified | TLRPC.java:60050 |  |
+| Message | 0x7600b9d3 | TL_message | verified | TLRPC.java:60187 |  |
+| Message | 0x76bec211 | TL_message_layer173 | verified | TL_legacy_message.java:2379 |  |
+| Message | 0x7a800e0a | TL_messageService | verified | TLRPC.java:61311 |  |
+| Message | 0x83e5de54 | TL_messageEmpty_layer122 | verified | TLRPC.java:59680 |  |
+| Message | 0x85d6cbe2 | TL_message_layer135 | verified | TL_legacy_message.java:2675 |  |
+| Message | 0x90a6ca84 | TL_messageEmpty | verified | TLRPC.java:59694 |  |
+| Message | 0x90dddc11 | TL_message_layer72 | verified | TLRPC.java:59750 |  |
+| Message | 0x94345242 | TL_message_layer195 | verified | TL_legacy_message.java:1520 |  |
+| Message | 0x95ef6f2b | TL_message_layer226 | verified | TL_legacy_message.java:15 |  |
+| Message | 0x96fdbbe9 | TL_message_layer199 | verified | TL_legacy_message.java:1327 |  |
+| Message | 0x9815cec8 | TL_message_layer216 | verified | TL_legacy_message.java:918 |  |
+| Message | 0x9cb490e9 | TL_message_layer222 | verified | TL_legacy_message.java:480 |  |
+| Message | 0x9e19a1f6 | TL_messageService_layer118 | verified | TLRPC.java:61486 |  |
+| Message | 0x9f8d60bb | TL_messageService_old | verified | TLRPC.java:61006 |  |
+| Message | 0xa367e716 | TL_messageForwarded_old2 | verified | TLRPC.java:60142 |  |
+| Message | 0xa4e97f37 | TL_message_layer179 | verified | TLRPC.java:59522 |  |
+| Message | 0xa66c7efc | TL_message_layer176 | verified | TL_legacy_message.java:2059 |  |
+| Message | 0xa7ab1991 | TL_message_old3 | verified | TLRPC.java:60911 |  |
+| Message | 0xb92f76cf | TL_message_layer220 | verified | TL_legacy_message.java:702 |  |
+| Message | 0xbce383d2 | TL_message_layer131 | verified | TL_legacy_message.java:2812 |  |
+| Message | 0xbde09c2e | TL_message_layer180 | verified | TL_legacy_message.java:1707 |  |
+| Message | 0xc06b9607 | TL_messageService_layer48 | verified | TLRPC.java:60805 |  |
+| Message | 0xc09be45f | TL_message_layer68 | verified | TLRPC.java:59851 |  |
+| Message | 0xc3060325 | TL_message_old4 | verified | TLRPC.java:60848 |  |
+| Message | 0xc992e15c | TL_message_layer47 | verified | TLRPC.java:59952 |  |
+| Message | 0xd3d28540 | TL_messageService_layer204 | verified | TLRPC.java:61376 |  |
+| Message | 0xeabcdd4d | TL_message_layer205 | verified | TL_legacy_message.java:1128 |  |
+| Message | 0xf07814c8 | TL_message_old5 | verified | TLRPC.java:60736 |  |
+| Message | 0xf52e6b7f | TL_message_layer118 | verified | TL_legacy_message.java:3076 |  |
+| Peer | 0x36c6019a | TL_peerChat | verified | TLRPC.java:3902 |  |
+| Peer | 0x59511722 | TL_peerUser | verified | TLRPC.java:3876 |  |
+| Peer | 0x9db1bc6d | TL_peerUser_layer131 | verified | TLRPC.java:3915 |  |
+| Peer | 0xa2a5371e | TL_peerChannel | verified | TLRPC.java:3889 |  |
+| Peer | 0xbad0e5bb | TL_peerChat_layer131 | verified | TLRPC.java:3928 |  |
+| Peer | 0xbddde532 | TL_peerChannel_layer131 | verified | TLRPC.java:3863 |  |
+| MessageFwdHeader | 0x353a686b | TL_messageFwdHeader_layer118 | verified | TLRPC.java:44001 |  |
+| MessageFwdHeader | 0x4e4df4bb | TL_messageFwdHeader | verified | TLRPC.java:43863 |  |
+| MessageFwdHeader | 0x559ebe6d | TL_messageFwdHeader_layer96 | verified | TLRPC.java:44166 |  |
+| MessageFwdHeader | 0x5f777dce | TL_messageFwdHeader_layer169 | verified | TLRPC.java:43942 |  |
+| MessageFwdHeader | 0xc786ddcb | TL_messageFwdHeader_layer68 | MANUAL, read by hand at TLRPC.java:43828 | TLRPC.java:43828 | the class of an inline id (T5) |
+| MessageFwdHeader | 0xec338270 | TL_messageFwdHeader_layer112 | verified | TLRPC.java:44066 |  |
+| MessageFwdHeader | 0xfadff4ac | TL_messageFwdHeader_layer72 | verified | TLRPC.java:44125 |  |
+| MessageReplyHeader | 0x0e5af939 | TL_messageReplyStoryHeader | verified | TLRPC.java:28186 |  |
+| MessageReplyHeader | 0x1b97dd66 | TL_messageReplyHeader_layer231 | verified | TLRPC.java:28290 |  |
+| MessageReplyHeader | 0x3d5c1693 | TL_messageReplyHeader_layer165_2 | verified | TLRPC.java:28572 |  |
+| MessageReplyHeader | 0x6917560b | TL_messageReplyHeader_layer223 | verified | TLRPC.java:28371 |  |
+| MessageReplyHeader | 0x6eebcabd | TL_messageReplyHeader_layer166 | verified | TLRPC.java:28511 |  |
+| MessageReplyHeader | 0x9c98bfc1 | TL_messageReplyStoryHeader_layer174 | verified | TLRPC.java:28170 |  |
+| MessageReplyHeader | 0xa6d57763 | TL_messageReplyHeader_layer165 | verified | TLRPC.java:28625 |  |
+| MessageReplyHeader | 0xafbc09db | TL_messageReplyHeader_layer207 | verified | TLRPC.java:28444 |  |
+| MessageReplyHeader | 0xddb5ab75 | TL_messageReplyHeader | verified | TLRPC.java:28201 |  |
+| MessageEntity | 0x020df5d0 | TL_messageEntityBlockquote_layer180 | verified | TLRPC.java:32950 |  |
+| MessageEntity | 0x0652c1c5 | TL_messageEntityDiffDelete | verified | TLRPC.java:63923 |  |
+| MessageEntity | 0x208e68c9 | TL_inputMessageEntityMentionName | verified | TLRPC.java:32751 |  |
+| MessageEntity | 0x28a20571 | TL_messageEntityCode | verified | TLRPC.java:32862 |  |
+| MessageEntity | 0x32ca960f | TL_messageEntitySpoiler | verified | TLRPC.java:32707 |  |
+| MessageEntity | 0x352dca58 | TL_messageEntityMentionName_layer131 | verified | TLRPC.java:32734 |  |
+| MessageEntity | 0x4c4e743f | TL_messageEntityCashtag | verified | TLRPC.java:32781 |  |
+| MessageEntity | 0x64e475c2 | TL_messageEntityEmail | verified | TLRPC.java:32540 |  |
+| MessageEntity | 0x6cef8ac7 | TL_messageEntityBotCommand | verified | TLRPC.java:32513 |  |
+| MessageEntity | 0x6ed02538 | TL_messageEntityUrl | verified | TLRPC.java:32625 |  |
+| MessageEntity | 0x6f635b0d | TL_messageEntityHashtag | verified | TLRPC.java:32835 |  |
+| MessageEntity | 0x71777116 | TL_messageEntityDiffInsert | verified | TLRPC.java:63859 |  |
+| MessageEntity | 0x73924be0 | TL_messageEntityPre | verified | TLRPC.java:32567 |  |
+| MessageEntity | 0x761e6af4 | TL_messageEntityBankCard | verified | TLRPC.java:32992 |  |
+| MessageEntity | 0x76a6d327 | TL_messageEntityTextUrl | verified | TLRPC.java:32482 |  |
+| MessageEntity | 0x826f8b60 | TL_messageEntityItalic | verified | TLRPC.java:32653 |  |
+| MessageEntity | 0x904ac7c7 | TL_messageEntityFormattedDate | MANUAL, read by hand at TLRPC.java:63820 | TLRPC.java:63794 | a call of a method the reduction does not follow |
+| MessageEntity | 0x9b69e34b | TL_messageEntityPhone | verified | TLRPC.java:33046 |  |
+| MessageEntity | 0x9c4e7e8b | TL_messageEntityUnderline | verified | TLRPC.java:32965 |  |
+| MessageEntity | 0xbb92ba95 | TL_messageEntityUnknown | verified | TLRPC.java:32598 |  |
+| MessageEntity | 0xbd610bc9 | TL_messageEntityBold | verified | TLRPC.java:32808 |  |
+| MessageEntity | 0xbf0693d4 | TL_messageEntityStrike | verified | TLRPC.java:32889 |  |
+| MessageEntity | 0xc6c1e5a7 | TL_messageEntityDiffReplace | verified | TLRPC.java:63888 |  |
+| MessageEntity | 0xc8cf05f8 | TL_messageEntityCustomEmoji | verified | TLRPC.java:63760 |  |
+| MessageEntity | 0xdc7b1140 | TL_messageEntityMentionName | verified | TLRPC.java:33073 |  |
+| MessageEntity | 0xf1ccaaac | TL_messageEntityBlockquote | verified | TLRPC.java:32916 |  |
+| MessageEntity | 0xfa04579d | TL_messageEntityMention | verified | TLRPC.java:32680 |  |
+| MessageEntity | 0xfdabbfcd | TL_messageEntityTonAddress | verified | TLRPC.java:33019 |  |
+| MessageAction | 0x80e11a7f | TL_messageActionPhoneCall | verified | TLRPC.java:26192 |  |
+| PhoneCallDiscardReason | 0x57adc690 | TL_phoneCallDiscardReasonHangup | verified | TLRPC.java:20934 |  |
+| PhoneCallDiscardReason | 0x85e42301 | TL_phoneCallDiscardReasonMissed | verified | TLRPC.java:20950 |  |
+| PhoneCallDiscardReason | 0x9fbbf1f7 | TL_phoneCallDiscardReasonMigrateConferenceCall | verified | TLRPC.java:20966 |  |
+| PhoneCallDiscardReason | 0xe095c1a0 | TL_phoneCallDiscardReasonDisconnect | verified | TLRPC.java:20958 |  |
+| PhoneCallDiscardReason | 0xfaf7e8c9 | TL_phoneCallDiscardReasonBusy | verified | TLRPC.java:20942 |  |
+| MessageMedia | 0x08cbec07 | TL_messageMediaDice | verified | TLRPC.java:8203 |  |
+| MessageMedia | 0x2238f214 | TL_messageMediaWidget | verified | TLRPC.java:66788 |  |
+| MessageMedia | 0x29632a36 | TL_messageMediaUnsupported_old | verified | TLRPC.java:7269 |  |
+| MessageMedia | 0x2ec0533f | TL_messageMediaVenue | verified | TLRPC.java:7491 |  |
+| MessageMedia | 0x2fda2204 | TL_messageMediaDocument_old | verified | TLRPC.java:7804 |  |
+| MessageMedia | 0x3d8ce53d | TL_messageMediaPhoto_layer68 | verified | TLRPC.java:8108 |  |
+| MessageMedia | 0x3ded6320 | TL_messageMediaEmpty | verified | TLRPC.java:7483 |  |
+| MessageMedia | 0x3f7ee58b | TL_messageMediaDice_layer220 | verified | TLRPC.java:8230 |  |
+| MessageMedia | 0x4bd6e798 | TL_messageMediaPoll_layer223 | verified | TLRPC.java:7926 |  |
+| MessageMedia | 0x4cf4d72d | TL_messageMediaDocument_layer187 | verified | TLRPC.java:7698 |  |
+| MessageMedia | 0x52d8ccd9 | TL_messageMediaDocument | verified | TLRPC.java:7554 |  |
+| MessageMedia | 0x56e0d474 | TL_messageMediaGeo | verified | TLRPC.java:8258 |  |
+| MessageMedia | 0x58260664 | TL_messageMediaGiveaway_layer167 | verified | TLRPC.java:66720 |  |
+| MessageMedia | 0x5bcf1675 | TL_messageMediaVideo_layer45 | verified | TLRPC.java:8123 |  |
+| MessageMedia | 0x5e7d2f39 | TL_messageMediaContact_layer81 | verified | TLRPC.java:8089 |  |
+| MessageMedia | 0x638fe46b | TL_messageMediaDice_layer111 | verified | TLRPC.java:8245 |  |
+| MessageMedia | 0x68cb6283 | TL_messageMediaStory | verified | TLRPC.java:65742 |  |
+| MessageMedia | 0x695150d7 | TL_messageMediaPhoto_layer223 | verified | TLRPC.java:7869 |  |
+| MessageMedia | 0x70322949 | TL_messageMediaContact | verified | TLRPC.java:8159 |  |
+| MessageMedia | 0x773f4e66 | TL_messageMediaPoll | verified | TLRPC.java:7898 |  |
+| MessageMedia | 0x7912b71f | TL_messageMediaVenue_layer71 | verified | TLRPC.java:7520 |  |
+| MessageMedia | 0x7c3c2609 | TL_messageMediaGeoLive_layer119 | verified | TLRPC.java:8061 |  |
+| MessageMedia | 0x7c4414d3 | TL_messageMediaDocument_layer74 | verified | TLRPC.java:7771 |  |
+| MessageMedia | 0x84551347 | TL_messageMediaInvoice_layer145 | verified | TLRPC.java:7434 |  |
+| MessageMedia | 0x8a53b014 | TL_messageMediaToDo | verified | TLRPC.java:66764 |  |
+| MessageMedia | 0x9cb070d7 | TL_messageMediaDocument_layer159 | verified | TLRPC.java:7739 |  |
+| MessageMedia | 0x9f84f49e | TL_messageMediaUnsupported | verified | TLRPC.java:7475 |  |
+| MessageMedia | 0xa2d24290 | TL_messageMediaVideo_old | verified | TLRPC.java:7541 |  |
+| MessageMedia | 0xa32dd600 | TL_messageMediaWebPage_layer165 | verified | TLRPC.java:8294 |  |
+| MessageMedia | 0xa831bf37 | TL_messageMediaWidget_layer233 | verified | TLRPC.java:66851 |  |
+| MessageMedia | 0xa8852491 | TL_messageMediaPaidMedia | verified | TLRPC.java:66749 |  |
+| MessageMedia | 0xaa073beb | TL_messageMediaGiveaway | verified | TLRPC.java:66626 |  |
+| MessageMedia | 0xb5223b0f | TL_messageMediaPhoto_layer74 | verified | TLRPC.java:7941 |  |
+| MessageMedia | 0xb7ed7b0d | TL_messageMediaWidget_old | verified | TLRPC.java:66876 |  |
+| MessageMedia | 0xb940c666 | TL_messageMediaGeoLive | verified | TLRPC.java:8032 |  |
+| MessageMedia | 0xc6991068 | TL_messageMediaGiveawayResults_layer186 | verified | TLRPC.java:66583 |  |
+| MessageMedia | 0xc6b68300 | TL_messageMediaAudio_layer45 | verified | TLRPC.java:7282 |  |
+| MessageMedia | 0xc79aee1d | MessageMediaStoryFull | verified | MessageMediaStoryFull.java:11 |  |
+| MessageMedia | 0xc79aee1f | MessageMediaStoryFull_old | verified | MessageMediaStoryFull_old.java:9 |  |
+| MessageMedia | 0xc8c45a2a | TL_messageMediaPhoto_old | verified | TLRPC.java:7295 |  |
+| MessageMedia | 0xca5cab89 | TL_messageMediaVideoStream | verified | TLRPC.java:8180 |  |
+| MessageMedia | 0xcbb20d88 | TL_messageMediaStory_layer162 | verified | TLRPC.java:65767 |  |
+| MessageMedia | 0xcbf24940 | TL_messageMediaContact_layer131 | verified | TLRPC.java:8138 |  |
+| MessageMedia | 0xceaa3ea1 | TL_messageMediaGiveawayResults | verified | TLRPC.java:66517 |  |
+| MessageMedia | 0xdaad85b0 | TL_messageMediaGiveaway_layer186 | verified | TLRPC.java:66683 |  |
+| MessageMedia | 0xdbbdf614 | TL_messageMediaDocument_layer197_2 | verified | TLRPC.java:7610 |  |
+| MessageMedia | 0xdd570bd5 | TL_messageMediaDocument_layer197 | verified | TLRPC.java:7657 |  |
+| MessageMedia | 0xddf10c3b | TL_messageMediaWebPage | verified | TLRPC.java:8271 |  |
+| MessageMedia | 0xe216eb63 | TL_messageMediaPhoto | verified | TLRPC.java:7832 |  |
+| MessageMedia | 0xf3e02ea8 | TL_messageMediaDocument_layer68 | verified | TLRPC.java:7817 |  |
+| MessageMedia | 0xf6a548d3 | TL_messageMediaInvoice | verified | TLRPC.java:7386 |  |
+| MessageMedia | 0xfdb19008 | TL_messageMediaGame | verified | TLRPC.java:8076 |  |
+| Photo | 0x22b56751 | TL_photo_old | verified | TLRPC.java:33275 |  |
+| Photo | 0x2331b22d | TL_photoEmpty | verified | TLRPC.java:33262 |  |
+| Photo | 0x9288dd29 | TL_photo_layer82 | verified | TLRPC.java:33360 |  |
+| Photo | 0x9c477dd8 | TL_photo_layer97 | verified | TLRPC.java:33195 |  |
+| Photo | 0xc3838076 | TL_photo_old2 | verified | TLRPC.java:33239 |  |
+| Photo | 0xcded42fe | TL_photo_layer55 | verified | TLRPC.java:33220 |  |
+| Photo | 0xd07504a5 | TL_photo_layer115 | verified | TLRPC.java:33300 |  |
+| Photo | 0xfb197a65 | TL_photo | verified | TLRPC.java:33327 |  |
+| Document | 0x1e87342b | TL_document_layer142 | verified | TLRPC.java:29229 |  |
+| Document | 0x36f8c871 | TL_documentEmpty | verified | TLRPC.java:29334 |  |
+| Document | 0x55555556 | TL_documentEncrypted_old | verified | TLRPC.java:29155 |  |
+| Document | 0x55555558 | TL_documentEncrypted | verified | TLRPC.java:29347 |  |
+| Document | 0x59534e4c | TL_document_layer92 | verified | TLRPC.java:29097 |  |
+| Document | 0x87232bc7 | TL_document_layer82 | verified | TLRPC.java:29126 |  |
+| Document | 0x8fd4c4d8 | TL_document | verified | TLRPC.java:29188 |  |
+| Document | 0x9ba29cc1 | TL_document_layer113 | verified | TLRPC.java:29270 |  |
+| Document | 0x9efc6326 | TL_document_old | verified | TLRPC.java:29305 |  |
+| Document | 0xf9a39f4f | TL_document_layer53 | verified | TLRPC.java:29378 |  |
+| GeoPoint | 0x0296f104 | TL_geoPoint_layer119 | verified | TLRPC.java:5081 |  |
+| GeoPoint | 0x1117dd5f | TL_geoPointEmpty | verified | TLRPC.java:5113 |  |
+| GeoPoint | 0x2049d70c | TL_geoPoint_layer81 | verified | TLRPC.java:5098 |  |
+| GeoPoint | 0xb2a2f663 | TL_geoPoint | verified | TLRPC.java:5121 |  |
+| WebPage | 0x211a1788 | TL_webPageEmpty | verified | TLRPC.java:20333 |  |
+| WebPage | 0x5f07b4bc | TL_webPage_layer104 | verified | TLRPC.java:20149 |  |
+| WebPage | 0x7311ca11 | TL_webPageNotModified | verified | TLRPC.java:20431 |  |
+| WebPage | 0x85849473 | TL_webPageNotModified_layer110 | verified | TLRPC.java:20418 |  |
+| WebPage | 0xa31ea0b5 | TL_webPage_old | verified | TLRPC.java:20248 |  |
+| WebPage | 0xb0d13e47 | TL_webPagePending | verified | TLRPC.java:20395 |  |
+| WebPage | 0xc586da1c | TL_webPagePending_layer165 | verified | TLRPC.java:20380 |  |
+| WebPage | 0xca820ed7 | TL_webPage_layer58 | verified | TLRPC.java:20452 |  |
+| WebPage | 0xd41a5167 | TL_webPageUrlPending | verified | TLRPC.java:20367 |  |
+| WebPage | 0xe89c45b2 | TL_webPage | verified | TLRPC.java:19932 |  |
+| WebPage | 0xeb1477e8 | TL_webPageEmpty_layer165 | verified | TLRPC.java:20354 |  |
+| WebPage | 0xfa64e172 | TL_webPage_layer107 | verified | TLRPC.java:20041 |  |
+| User | 0x020b1422 | TL_user_layer216 | verified | TLRPC.java:22479 |  |
+| User | 0x075cf7a8 | TL_userForeign_old2 | verified | TLRPC.java:24461 |  |
+| User | 0x1c60e608 | TL_userSelf_old3 | verified | TLRPC.java:24356 |  |
+| User | 0x200250ba | TL_userEmpty_layer131 | verified | TLRPC.java:24400 |  |
+| User | 0x215c4438 | TL_user_layer184 | verified | TLRPC.java:23234 |  |
+| User | 0x22e49072 | TL_user_old | verified | TLRPC.java:24627 |  |
+| User | 0x22e8ceb0 | TL_userRequest_old | verified | TLRPC.java:24413 |  |
+| User | 0x2e13f4c3 | TL_user_layer104 | verified | TLRPC.java:24224 |  |
+| User | 0x31774388 | TL_user_layer218 | verified | TLRPC.java:22273 |  |
+| User | 0x3ff6ecb0 | TL_user_layer144 | verified | TLRPC.java:23998 |  |
+| User | 0x4b46c37e | TL_user_layer199 | verified | TLRPC.java:22678 |  |
+| User | 0x4fe9cce0 | TL_user_layer185 | verified | TLRPC.java:23052 |  |
+| User | 0x5214c89d | TL_userForeign_old | verified | TLRPC.java:24438 |  |
+| User | 0x5d99adee | TL_user_layer147 | verified | TLRPC.java:23875 |  |
+| User | 0x7007b451 | TL_userSelf_old2 | verified | TLRPC.java:24708 |  |
+| User | 0x720535ec | TL_userSelf_old | verified | TLRPC.java:24331 |  |
+| User | 0x83314fca | TL_user_layer195 | verified | TLRPC.java:22868 |  |
+| User | 0x8f97c628 | TL_user_layer159 | verified | TLRPC.java:23735 |  |
+| User | 0x938458c1 | TL_user_layer131 | verified | TLRPC.java:24113 |  |
+| User | 0xabb5f120 | TL_user_layer165 | verified | TLRPC.java:23581 |  |
+| User | 0xb1b8cc83 | TL_user | verified | TLRPC.java:22059 |  |
+| User | 0xb29ad7cc | TL_userDeleted_old | verified | TLRPC.java:24513 |  |
+| User | 0xcab35e18 | TL_userContact_old2 | verified | TLRPC.java:21962 |  |
+| User | 0xd10d979a | TL_user_layer65 | verified | TLRPC.java:24530 |  |
+| User | 0xd3bc4b7a | TL_userEmpty | verified | TLRPC.java:22014 |  |
+| User | 0xd6016d7a | TL_userDeleted_old2 | verified | TLRPC.java:24381 |  |
+| User | 0xd9ccc4ef | TL_userRequest_old2 | verified | TLRPC.java:24486 |  |
+| User | 0xeb602f25 | TL_user_layer166 | verified | TLRPC.java:23410 |  |
+| User | 0xf2fb8319 | TL_userContact_old | verified | TLRPC.java:21989 |  |
+| Chat | 0x07328bdb | TL_chatForbidden_layer131 | verified | TLRPC.java:42223 |  |
+| Chat | 0x0aadfc8f | TL_channel_layer185 | verified | TLRPC.java:41430 |  |
+| Chat | 0x0cb44b1c | TL_channel_layer72 | verified | TLRPC.java:42659 |  |
+| Chat | 0x17d493d5 | TL_channelForbidden | verified | TLRPC.java:39960 |  |
+| Chat | 0x1981ea7e | TL_channel_layer166 | verified | TLRPC.java:41710 |  |
+| Chat | 0x1c32b11c | TL_channel_layer227 | verified | TLRPC.java:40501 |  |
+| Chat | 0x289da732 | TL_channelForbidden_layer131 | verified | TLRPC.java:39991 |  |
+| Chat | 0x29562865 | TL_chatEmpty | verified | TLRPC.java:61827 |  |
+| Chat | 0x2d85832c | TL_channelForbidden_layer52 | verified | TLRPC.java:40098 |  |
+| Chat | 0x3bda1bde | TL_chat_layer131 | verified | TLRPC.java:39905 |  |
+| Chat | 0x41cbf256 | TL_chat | verified | TLRPC.java:39844 |  |
+| Chat | 0x450b7115 | TL_channel_layer77 | verified | TLRPC.java:42582 |  |
+| Chat | 0x4b1b7506 | TL_channel_layer48 | verified | TLRPC.java:40043 |  |
+| Chat | 0x4df30834 | TL_channel_layer104 | verified | TLRPC.java:42468 |  |
+| Chat | 0x6592a1a7 | TL_chatForbidden | verified | TLRPC.java:42208 |  |
+| Chat | 0x65efe954 | TL_community | MANUAL, read by hand at TLRPC.java:40714 | TLRPC.java:40705 | a flag-only true set by an expression that is not one flag test |
+| Chat | 0x678e9587 | TL_channel_old | verified | TLRPC.java:42299 |  |
+| Chat | 0x6e9c9bc7 | TL_chat_old | verified | TLRPC.java:42346 |  |
+| Chat | 0x7312bc48 | TL_chat_old2 | verified | TLRPC.java:39811 |  |
+| Chat | 0x7482147e | TL_channel_layer203 | verified | TLRPC.java:40939 |  |
+| Chat | 0x7ad15240 | TL_channel | verified | TLRPC.java:40115 |  |
+| Chat | 0x8261ac61 | TL_channel_layer147 | verified | TLRPC.java:42105 |  |
+| Chat | 0x83259464 | TL_channel_layer161 | verified | TLRPC.java:41986 |  |
+| Chat | 0x8537784f | TL_channelForbidden_layer67 | verified | TLRPC.java:40020 |  |
+| Chat | 0x8e87ccd8 | TL_channel_layer167 | verified | TLRPC.java:41579 |  |
+| Chat | 0x94f592db | TL_channel_layer165 | verified | TLRPC.java:41852 |  |
+| Chat | 0x9ba2d800 | TL_chatEmpty_layer131 | verified | TLRPC.java:61842 |  |
+| Chat | 0xa14dca52 | TL_channel_layer67 | verified | TLRPC.java:42238 |  |
+| Chat | 0xc88974ac | TL_channel_layer92 | verified | TLRPC.java:42731 |  |
+| Chat | 0xd31a961e | TL_channel_layer131 | verified | TLRPC.java:42371 |  |
+| Chat | 0xd49f34c6 | TL_channel_layer232 | verified | TLRPC.java:40312 |  |
+| Chat | 0xd91cdd54 | TL_chat_layer92 | verified | TLRPC.java:42808 |  |
+| Chat | 0xe00998b7 | TL_channel_layer199 | verified | TLRPC.java:41110 |  |
+| Chat | 0xfb0ccc41 | TL_chatForbidden_old | verified | TLRPC.java:39794 |  |
+| Chat | 0xfd3cdab8 | TL_communityForbidden | verified | TLRPC.java:40682 |  |
+| Chat | 0xfe4478bd | TL_channel_layer195 | verified | TLRPC.java:41273 |  |
+| Chat | 0xfe685355 | TL_channel_layer216 | verified | TLRPC.java:40756 |  |
 
 Completeness: every ID the switch of each type reads at this pin is a row (MessageAction: the phone-call action only, by design).
 
@@ -386,14 +403,21 @@ Fetched files (paths below `TMessagesProj/src/main/java/org/telegram/`):
 | `ui/Stories/MessageMediaStoryFull.java` | d32150c15955e21c39cf5f47dbc99fe2d95bcb7a740324f9470ca16a037cbc69 |
 | `ui/Stories/MessageMediaStoryFull_old.java` | 53134ad4bf0ecbbc7ecf6372aeb6afe854ef30e043f56297706f584820179edf |
 
+Fact files checked (SHA-256 of the committed bytes):
+
+| File | SHA-256 |
+|---|---|
+| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
+
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
-| Type | ID | Class | Verdict | Source |
-|---|---|---|---|---|
-| Message | 0x1c9b1027 | TL_message_layer104_2 | verified | TLRPC.java:72674 |
-| Message | 0x9789dac4 | TL_message_layer104_3 | verified | TLRPC.java:72510 |
-| Chat | 0x0db12acb | TL_channel_layer167_3 | verified | TLRPC.java:49495 |
-| Chat | 0xa636a3e2 | TL_channel_layer167_2 | verified | TLRPC.java:49322 |
+| Type | ID | Class | Verdict | Source | Note |
+|---|---|---|---|---|---|
+| Message | 0x1c9b1027 | TL_message_layer104_2 | verified | TLRPC.java:72674 |  |
+| Message | 0x9789dac4 | TL_message_layer104_3 | verified | TLRPC.java:72510 |  |
+| Chat | 0x0db12acb | TL_channel_layer167_3 | verified | TLRPC.java:49495 |  |
+| Chat | 0xa636a3e2 | TL_channel_layer167_2 | verified | TLRPC.java:49322 |  |
 
 Membership: every ID the pinned types' switches read at this pin is a row of `constructors.tsv` (MessageAction: the `TL_messageActionPhoneCall` family only).
 
@@ -635,11 +659,18 @@ Fetched files (paths below `TMessagesProj/src/main/java/org/telegram/`):
 | `tgnet/TLObject.java` | 09ed9fd44708933d1bb72b99467a19f1e87651bbecd869fe2a37c737a2afc7d2 |
 | `tgnet/TLRPC.java` | 82a26b9545edcf9f0dec632d213e21b436ef1a9262d0807e5f374d24b1c04ca8 |
 
+Fact files checked (SHA-256 of the committed bytes):
+
+| File | SHA-256 |
+|---|---|
+| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
+
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
-| Type | ID | Class | Verdict | Source |
-|---|---|---|---|---|
-| - | - | - | no row is pinned here | - |
+| Type | ID | Class | Verdict | Source | Note |
+|---|---|---|---|---|---|
+| - | - | - | no row is pinned here | - | - |
 
 Membership: every ID the pinned types' switches read at this pin is a row of `constructors.tsv` (MessageAction: the `TL_messageActionPhoneCall` family only).
 
@@ -832,11 +863,18 @@ Fetched files (paths below `TMessagesProj/src/main/java/org/telegram/`):
 | `tgnet/TLObject.java` | 09ed9fd44708933d1bb72b99467a19f1e87651bbecd869fe2a37c737a2afc7d2 |
 | `tgnet/TLRPC.java` | 990b58441399718bec3da1f399ece395ef9a546ebd46c888534b3b0e631d1547 |
 
+Fact files checked (SHA-256 of the committed bytes):
+
+| File | SHA-256 |
+|---|---|
+| `constructors.tsv` | d45538b70f1d7d0dd81e02800445454a0a228ada8864b83a65c21c75691365a1 |
+| `facts.tsv` | a4f462c2bf624b44e6f28d405a2f672fb49eae06b8948cd901075428cfe11782 |
+
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
-| Type | ID | Class | Verdict | Source |
-|---|---|---|---|---|
-| PhoneCallDiscardReason | 0xafe2b839 | TL_phoneCallDiscardReasonAllowGroupCall | verified | TLRPC.java:12808 |
+| Type | ID | Class | Verdict | Source | Note |
+|---|---|---|---|---|---|
+| PhoneCallDiscardReason | 0xafe2b839 | TL_phoneCallDiscardReasonAllowGroupCall | verified | TLRPC.java:12808 |  |
 
 Membership: every ID the pinned types' switches read at this pin is a row of `constructors.tsv` (MessageAction: the `TL_messageActionPhoneCall` family only).
 

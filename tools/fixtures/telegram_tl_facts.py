@@ -3,11 +3,12 @@
     py -3 -I tools/fixtures/telegram_tl_facts.py --emit <srcdir> [--pin <name>] [--absent-from <constructors.tsv>]
     py -3 -I tools/fixtures/telegram_tl_facts.py --check <constructors.tsv> --pin <name> <srcdir>
         [--commit SHA] [--write-report FILE]
+    py -3 -I tools/fixtures/telegram_tl_facts.py --assemble <schemasdir> <report.md>...
 
 <srcdir> holds the app source fetched at one pinned commit, under the repository's paths below
 TMessagesProj/src/main/java/org/telegram/ (tgnet/TLRPC.java, tgnet/tl/*.java, tgnet/tl/legacy/*.java and
-ui/Stories/*.java are the files it reads classes from; a SHA-256 is reported for every file of the directory). The files are GPLv2 and untrusted text: this script reads them as text and applies
-regular expressions to them; nothing in them is executed, imported, or used as a path or a command, and it
+ui/Stories/*.java are the files it reads classes from; a SHA-256 is reported for every file of the directory).
+The files are GPLv2 and untrusted text: this script reads them as text and applies regular expressions to them; nothing in them is executed, imported, or used as a path or a command, and it
 never starts a process. Its output holds facts only (constructor IDs, class names, field order, flag bits,
 file:line), never source text.
 
@@ -30,7 +31,10 @@ rows on stderr; the rows' body follows the selection of plan 4I4 Task 1 (SELECTI
 longer does). --check compares a constructors.tsv with the sources of one pin: every row pinned there is
 `verified`, `MISMATCH` or `MANUAL`; at A-HEAD every ID each type's switch reads must be a row (else
 `missing`; MessageAction holds the phone-call action only); at an older pin it reports membership, every
-ID of the pinned types' switches `in-table` or `missing`. Exit status 1 on any MISMATCH or missing.
+ID of the pinned types' switches `in-table` or `missing`. Exit status 1 on any MISMATCH or missing. Each
+report names the SHA-256 of the constructors.tsv and facts.tsv it checked. A MANUAL row is reported as
+"MANUAL, read by hand at <file>:<line>" with its reason: the builder reads it there. --assemble writes
+<schemasdir>/CROSSCHECK.md from the fixed text below, the reports in the order given, and facts.tsv.
 """
 import hashlib
 import os
@@ -109,6 +113,109 @@ RE_ELEM = re.compile(r"^(\w+(?:\.\w+)*)\s+(\w+)\s*=\s*" + QTYPE +
                      r"\.TLdeserialize\(stream,\s*stream\.readInt32\(exception\),\s*exception\);$")
 RE_ADD = re.compile(r"^(?:this\.)?(" + NAME + r")\.add\((.+)\);$")
 RE_ADDREAD = re.compile(r"^stream\.(\w+)\(exception\)$")
+
+
+# The fixed text of CROSSCHECK.md around the script's reports (--assemble): the pins, the files fetched beyond the
+# plan's list, the findings against the recon and the spec, and the docs cross-check (each page fetched once,
+# 2026-11-20).
+PREAMBLE = """# TL facts cross-check (plan 4I4)
+
+The Telegram Android constructor table `constructors.tsv` and the other pinned facts `facts.tsv` of this directory,
+checked by `tools/fixtures/telegram_tl_facts.py` against the app source of the repository
+TelegramMessenger/Telegram-Android (GPLv2) at four pinned commits, one `--check` run per pin. The fetched files were held
+in scratch only and are not in the repository; each is pinned below by commit and SHA-256 (paths below
+`TMessagesProj/src/main/java/org/telegram/`). Fetched 2026-11-20 by plain HTTP, one file at a time, with a generic user
+agent. Sources are untrusted text: the script reads them with regular expressions and never runs them. Facts only (IDs,
+class names, field order, flag bits, `file:line`): no code is copied.
+
+## Pins
+
+The three tags were peeled with `git ls-remote <repository> refs/tags/<tag> refs/tags/<tag>^{}` on 2026-11-20 (each
+is a lightweight tag on the commit below); the head commit is the recon's.
+
+| Pin | Commit | Name at the repository |
+|---|---|---|
+| A-HEAD | 21f7d109da6ab3506c9e9577f98c6a38771ab335 | master tip of 2026-11-12, TL layer 233, `LAST_DB_VERSION` 181 |
+| A-11.4.2 | fb2e545101f41303f1e2712de2e7611a9335f1c3 | tag `release-11.4.2-5469`, `LAST_DB_VERSION` 159 |
+| release-8.1.1_2431 | 58aded63e9713ef796d76f3e29a60a5254f803b4 | tag `release-8.1.1_2431`, `LAST_DB_VERSION` 84 |
+| release-5.14.0_1851 | 7d6fa267c13bacd48f8d8f10d31a61f38b77bfe4 | tag `release-5.14.0_1851`, `LAST_DB_VERSION` 64 |
+
+Files fetched beyond the plan's list, as evidence for `facts.tsv`: `messenger/MessagesController.java` at every pin (the
+caller that stores an edited message) and `messenger/LocaleController.java` at A-HEAD (the call duration's format), and
+at A-HEAD and A-11.4.2 `ui/Stories/MessageMediaStoryFull.java` and `MessageMediaStoryFull_old.java` (two classes the
+MessageMedia switch reads). Every other `tgnet/tl/*.java` of A-HEAD (18 files) and A-11.4.2 (7 files) was fetched and
+searched: none defines a class of the pinned types (no switch case resolves to one, and the checks below pass without
+them), so they are not pinned. `tgnet/Vector.java` and `tgnet/tl/legacy/TL_legacy_message.java` exist at A-HEAD only,
+`messenger/DatabaseMigrationHelper.java` from A-11.4.2 on.
+
+## How the table was built, and what differs from the recon and the spec
+
+`telegram_tl_facts.py --emit <A-HEAD sources>` wrote the A-HEAD rows; `--emit <sources> --pin <older pin> --absent-from
+constructors.tsv` wrote the rows of IDs that only an older pin reads. Three rows were then completed by hand (below). Every
+row is then checked at its own pin: the ID is read by its type's switch, the class and the source line are the source's,
+the body is the one the selection of plan 4I4 Task 1 asks for, and the fields equal the reduced `readParams` (a `prefix`
+row: a proper prefix of it, up to the last needed field, spec Q2/T6). At A-HEAD every ID each type's switch reads is a
+row; at the three older pins every ID the pinned types' switches read is a row (membership).
+
+- MessageMedia holds 52 rows, not the 50 of spec §6.6 (recon §3.6 counted classes in `TLRPC.java`): the A-HEAD switch
+  also reads two app-local IDs, `0xc79aee1d` `MessageMediaStoryFull` and `0xc79aee1f` `MessageMediaStoryFull_old`
+  (`ui/Stories/`, also read at A-11.4.2). They are `opaque` rows.
+- Five IDs are read at an older pin and no longer at A-HEAD; each is a row pinned at the newest pin that reads it, so a
+  blob an older app wrote stays decodable: Message `0x1c9b1027` `TL_message_layer104_2` and `0x9789dac4`
+  `TL_message_layer104_3` (read at release-5.14.0_1851, release-8.1.1_2431 and A-11.4.2; pinned at A-11.4.2), Chat
+  `0xa636a3e2` `TL_channel_layer167_2` and `0x0db12acb` `TL_channel_layer167_3` (A-11.4.2), PhoneCallDiscardReason
+  `0xafe2b839` `TL_phoneCallDiscardReasonAllowGroupCall` (release-5.14.0_1851; its one field `encrypted_key` is key
+  material and is `secret`, spec §9). Message is so 49 rows (46 A-HEAD classes, the alias `0xa4e97f37`, two), Chat 39,
+  PhoneCallDiscardReason 6.
+- MessageReplyHeader: 9 rows (A-HEAD). At release-8.1.1_2431 the type is one class, `TL_messageReplyHeader`
+  `0xa6d57763`, with no switch (it checks its own constructor): that ID is the A-HEAD `TL_messageReplyHeader_layer165`
+  row. At release-5.14.0_1851 there is no reply header object (the Message bodies read `reply_to_msg_id` inline).
+  MessageEntity: 28 rows.
+- A value the app reads and drops is named `_discarded_<gate>` (for example `[F.22: _discarded_f22:str]` in
+  `TL_message_layer104_2`): the source keeps no name for it, and none is guessed.
+- A read the app ORs constants into (`TL_message_old6`, `TL_message_secret_old`: `flags` with `MESSAGE_FLAG_HAS_FROM_ID`)
+  is listed as the wire value read (`flags:#`); the app's in-memory flags differ from the stored ones (recon §2 item 6).
+- Read by hand (T5): `TL_messageFwdHeader_layer68` `0xc786ddcb` flag bit 0 builds a `TL_peerChannel` but fills its
+  `user_id` (`TLRPC.java:43834-43835`). The layer's own field is the forwarded user: release-5.14.0_1851 reads that value
+  into `MessageFwdHeader.from_id` (an int beside a separate `channel_id`, `TLRPC.java:29805-29808` there) and looks it
+  up as a user (`MessageObject.java:4845` there). Resolved `user` (`facts.tsv` `wrapper.TL_messageFwdHeader_layer68.from_id`).
+- Read by hand (flag-only trues the reduction cannot see): `TL_messageEntityFormattedDate` `0x904ac7c7` computes its
+  six flag-only trues (`relative`, `short_time`, `long_time`, `short_date`, `long_date`, `day_of_week`: bits 0 to 5) in a
+  method of its own (`TLRPC.java:63806`) called after its last read (`TLRPC.java:63820`); they are listed after `date`,
+  where they are computed. `TL_community` `0x65efe954` sets `collapsed_in_dialogs` from bit 20 of `flags2` combined with
+  an app switch (`TLRPC.java:40714`); the stored bit is listed as `collapsed_in_dialogs=F2.20`. The script reports a
+  flag-only true set by any expression other than one flag test, and any call of a method it does not follow, as MANUAL.
+- The old forward headers read two inline ids into the same field `from_id`, one per flag bit (bit 0 a user, bit 1 a
+  channel); `facts.tsv` holds one `wrapper.<class>.from_id` row per inline id, each citing the line of its own read.
+- `DatabaseMigrationHelper.java` lines: the recon's 815-823 (the pre-84 secret-chat uid) and 818 (the 32-bit mid) are
+  819-825 and 819 at A-HEAD (`facts.tsv`).
+- This file is written by `telegram_tl_facts.py --assemble` from the four `--check` reports, the docs cross-check and
+  `facts.tsv`; each report names the SHA-256 of the `constructors.tsv` and `facts.tsv` it checked, and
+  `TestTelegramFactsCiteTheirSource` recomputes both, so an edit of either file without a new run fails the default
+  tests.
+
+"""
+
+DOCS = """# Docs cross-check
+
+The public constructor pages (fetched 2026-11-20; their header said layer 225) were compared with the app source for the
+constructors that have one. Every other row is app source only (recon §3.1: the pages lag the app by eight layers; the
+layer 226-233 IDs, the private secret-chat IDs `0x555555f8`/`f9`/`fa`, `0x55555558` and the app-local IDs have no page).
+
+| Constructor | ID | App source (A-HEAD) | Verdict |
+|---|---|---|---|
+| messageActionPhoneCall | 0x80e11a7f | `TLRPC.java:26192` (flags, video bit 2, call_id long, reason bit 0, duration int bit 1) | confirmed on the public constructor page, fetched 2026-11-20 |
+| phoneCallDiscardReasonMissed | 0x85e42301 | `TLRPC.java:20950` (empty) | confirmed on the public constructor page, fetched 2026-11-20 |
+| phoneCallDiscardReasonBusy | 0xfaf7e8c9 | `TLRPC.java:20942` (empty) | confirmed on the public constructor page, fetched 2026-11-20 |
+| phoneCallDiscardReasonHangup | 0x57adc690 | `TLRPC.java:20934` (empty) | confirmed on the public constructor page, fetched 2026-11-20 |
+| phoneCallDiscardReasonDisconnect | 0xe095c1a0 | `TLRPC.java:20958` (empty) | confirmed on the public constructor page, fetched 2026-11-20 |
+| phoneCallDiscardReasonMigrateConferenceCall | 0x9fbbf1f7 | `TLRPC.java:20966` (slug string) | confirmed on the public constructor page, fetched 2026-11-20 |
+| boolTrue | 0x997275b5 | `NativeByteBuffer.java:158,449`, `SerializedData.java:158,380` | confirmed on the public constructor page, fetched 2026-11-20 |
+| boolFalse | 0xbc799737 | `NativeByteBuffer.java:160,451`, `SerializedData.java:160,382` | confirmed on the public constructor page, fetched 2026-11-20 |
+| vector | 0x1cb5c415 | `Vector.java:8` | confirmed on the public serialization page, fetched 2026-11-20 |
+| every other row of `constructors.tsv` | - | the rows above | app source only (recon §3.1) |
+
+"""
 
 
 def flag_ref(cond):
@@ -488,15 +595,21 @@ def reduce_class(src, c):
                 f = "%s=%s" % (m.group(1), ref)
                 # a flag-only true is listed where it is computed: in a gate it belongs to the gate
                 gates = [b for b in blocks if b[0] == "gate"]
+                if any(b[0] in ("other", "else", "loop", "catch") for b in blocks):
+                    raise Manual(where(ln), "a flag-only true set under a condition that is not one flag bit")
                 if gates:
                     gates[-1][2].append(f)
-                elif any(b[0] in ("other", "else", "loop") for b in blocks):
-                    pass
                 else:
                     items.append(f)
                 continue
+            if re.search(r"hasFlag\(|\(\s*flags\d*\s*&", m.group(2)):
+                # a flag-only true computed by a wider expression: never dropped silently (review M2)
+                raise Manual(where(ln), "a flag-only true set by an expression that is not one flag test")
         if "stream" in s:
             raise Manual(where(ln), "a statement on the stream of an unknown form")
+        if re.fullmatch(r"(?:this\.)?\w+\([^;]*\);", s) and not any(b[0] == "catch" for b in blocks):
+            # a call of the class's own method (applyFlags()) may set fields the reduction cannot see
+            raise Manual(where(ln), "a call of a method the reduction does not follow")
     if blocks:
         raise Manual(where(last + 1), "unbalanced braces")
     return items
@@ -622,7 +735,7 @@ def load_tsv(path):
 
 
 def verify_row(src, r, ids):
-    """The verdict of one table row against the source of its own pin."""
+    """The verdict of one table row against the source of its own pin (a MANUAL verdict comes with its reason)."""
     cid = int(r[1], 16)
     if cid not in ids:
         return "MISMATCH (the switch does not read this ID)"
@@ -643,14 +756,15 @@ def verify_row(src, r, ids):
     try:
         items = reduce_class(src, c)
     except Manual as e:
-        return "MANUAL at %s (%s)" % (e.where, e.why)
+        # the builder reads the row by hand at this line (plan 4I4 Task 1); the reason goes in the note
+        return "MANUAL, read by hand at %s" % e.where, e.why
     got = split_items(r[6])
     if r[3] == "full" and not same_items(got, items):
         return "MISMATCH (fields %s)" % " ".join(items)
     if r[3] == "prefix" and not (len(got) < len(items) and same_items(got, items[:len(got)])):
         return "MISMATCH (not a proper prefix of %s)" % " ".join(items)
     if contradictory_ids(items[:len(got)]):
-        return "MANUAL at %s:%d (inline id class read by hand, T5)" % (c.fname, c.line)
+        return "MANUAL, read by hand at %s:%d" % (c.fname, c.line), "the class of an inline id (T5)"
     return "verified"
 
 
@@ -664,20 +778,26 @@ def check(tsv, pin, srcdir, commit):
     out += ["## %s (%s)" % (pin, commit or "commit not given"), "",
             "Fetched files (paths below `TMessagesProj/src/main/java/org/telegram/`):", ""]
     out += file_table(srcdir)
+    # review I1: the report names the exact fact files it checked, so a later edit of either is seen
+    facts = os.path.join(os.path.dirname(tsv), "facts.tsv")
+    out += ["", "Fact files checked (SHA-256 of the committed bytes):", "", "| File | SHA-256 |", "|---|---|",
+            "| `constructors.tsv` | %s |" % sha256(tsv), "| `facts.tsv` | %s |" % sha256(facts)]
     out += ["", "Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's "
             "switch, the class, the source line, the body the selection asks for, and the field order reduced from "
             "`readParams`; a `prefix` row is a proper prefix of the reduced body):", "",
-            "| Type | ID | Class | Verdict | Source |", "|---|---|---|---|---|"]
+            "| Type | ID | Class | Verdict | Source | Note |", "|---|---|---|---|---|---|"]
     own = [r for r in table if r[4] == pin]
     for typ, _, _ in SELECTION:
         ids = {cid: (ln, c) for cid, ln, c in switches[typ]}
         for r in [r for r in own if r[0] == typ]:
-            verdict = verify_row(src, r, ids)
+            verdict, note = verify_row(src, r, ids), ""
+            if isinstance(verdict, tuple):
+                verdict, note = verdict
             if verdict.startswith("MISMATCH"):
                 bad += 1
-            out.append("| %s | %s | %s | %s | %s |" % (r[0], r[1], r[2], verdict, r[5]))
+            out.append("| %s | %s | %s | %s | %s | %s |" % (r[0], r[1], r[2], verdict, r[5], note))
     if not own:
-        out.append("| - | - | - | no row is pinned here | - |")
+        out.append("| - | - | - | no row is pinned here | - | - |")
     out.append("")
     if pin == "A-HEAD":
         out += ["Completeness: every ID the switch of each type reads at this pin is a row (MessageAction: the "
@@ -712,6 +832,23 @@ def check(tsv, pin, srcdir, commit):
                     pin, typ, cid, "in-table" if ok else "missing", c.name, c.fname, c.line))
     out.append("")
     return "\n".join(out) + "\n", bad
+
+
+def assemble(schemas, reports):
+    """CROSSCHECK.md: the fixed text, the reports in the order given, the docs cross-check and the facts.tsv rows."""
+    out = PREAMBLE + "# Constructor rows, per pin (`telegram_tl_facts.py --check`)\n\n"
+    for path in reports:
+        with open(path, encoding="utf-8") as fh:
+            out += fh.read() + "\n"
+    out += DOCS
+    out += ("# facts.tsv rows\n\nEach fact was read by hand at the cited line of its pin (the note column of "
+            "`facts.tsv` names the other lines read).\n\n| Key | Pin | Source | Value | Read |\n|---|---|---|---|---|\n")
+    with open(os.path.join(schemas, "facts.tsv"), encoding="utf-8") as fh:
+        for line in fh.read().rstrip("\n").split("\n")[1:]:
+            key, value, pin, source, _ = line.split("\t")
+            out += "| %s | %s | %s | %s | read by hand |\n" % (key, pin, source, value)
+    with open(os.path.join(schemas, "CROSSCHECK.md"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(out.rstrip("\n") + "\n")
 
 
 def take(args, flag):
@@ -754,6 +891,9 @@ def main(argv):
             sys.stdout.write(report)
         sys.stderr.write("%s: %d MISMATCH or missing\n" % (pin, bad))
         return 1 if bad else 0
+    if args and args[0] == "--assemble" and len(args) >= 3:
+        assemble(args[1], args[2:])
+        return 0
     raise SystemExit(__doc__)
 
 

@@ -86,7 +86,7 @@ MessageEntity	0x73924be0	TL_messageEntityPre	full	A-HEAD	TLRPC.java:32567	offset
 MessageEntity	0x761e6af4	TL_messageEntityBankCard	full	A-HEAD	TLRPC.java:32992	offset:i32 length:i32
 MessageEntity	0x76a6d327	TL_messageEntityTextUrl	full	A-HEAD	TLRPC.java:32482	offset:i32 length:i32 url:str
 MessageEntity	0x826f8b60	TL_messageEntityItalic	full	A-HEAD	TLRPC.java:32653	offset:i32 length:i32
-MessageEntity	0x904ac7c7	TL_messageEntityFormattedDate	full	A-HEAD	TLRPC.java:63794	flags:# offset:i32 length:i32 date:i32
+MessageEntity	0x904ac7c7	TL_messageEntityFormattedDate	full	A-HEAD	TLRPC.java:63794	flags:# offset:i32 length:i32 date:i32 relative=F.0 short_time=F.1 long_time=F.2 short_date=F.3 long_date=F.4 day_of_week=F.5
 MessageEntity	0x9b69e34b	TL_messageEntityPhone	full	A-HEAD	TLRPC.java:33046	offset:i32 length:i32
 MessageEntity	0x9c4e7e8b	TL_messageEntityUnderline	full	A-HEAD	TLRPC.java:32965	offset:i32 length:i32
 MessageEntity	0xbb92ba95	TL_messageEntityUnknown	full	A-HEAD	TLRPC.java:32598	offset:i32 length:i32
@@ -236,7 +236,7 @@ Chat	0x450b7115	TL_channel_layer77	prefix	A-HEAD	TLRPC.java:42582	flags:# creato
 Chat	0x4b1b7506	TL_channel_layer48	prefix	A-HEAD	TLRPC.java:40043	flags:# creator=F.0 kicked=F.1 left=F.2 moderator=F.4 broadcast=F.5 verified=F.7 megagroup=F.8 restricted=F.9 signatures=F.11 id:i32 access_hash:i64 title:str [F.6: username:str]
 Chat	0x4df30834	TL_channel_layer104	prefix	A-HEAD	TLRPC.java:42468	flags:# creator=F.0 left=F.2 broadcast=F.5 verified=F.7 megagroup=F.8 restricted=F.9 signatures=F.11 min=F.12 scam=F.19 has_link=F.20 has_geo=F.21 slowmode_enabled=F.22 id:i32 [F.13: access_hash:i64] title:str [F.6: username:str]
 Chat	0x6592a1a7	TL_chatForbidden	full	A-HEAD	TLRPC.java:42208	id:i64 title:str
-Chat	0x65efe954	TL_community	prefix	A-HEAD	TLRPC.java:40705	flags:# flags2:# creator=F.0 left=F.2 min=F.12 id:i64 [F.13: access_hash:i64] title:str
+Chat	0x65efe954	TL_community	prefix	A-HEAD	TLRPC.java:40705	flags:# flags2:# creator=F.0 left=F.2 min=F.12 collapsed_in_dialogs=F2.20 id:i64 [F.13: access_hash:i64] title:str
 Chat	0x678e9587	TL_channel_old	prefix	A-HEAD	TLRPC.java:42299	flags:# creator=F.0 kicked=F.1 left=F.2 moderator=F.4 broadcast=F.5 verified=F.7 megagroup=F.8 explicit_content=F.9 id:i32 access_hash:i64 title:str [F.6: username:str]
 Chat	0x6e9c9bc7	TL_chat_old	prefix	A-HEAD	TLRPC.java:42346	id:i32 title:str
 Chat	0x7312bc48	TL_chat_old2	prefix	A-HEAD	TLRPC.java:39811	flags:# creator=F.0 kicked=F.1 left=F.2 deactivated=F.5 id:i32 title:str

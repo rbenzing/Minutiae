@@ -1,6 +1,8 @@
 package archtest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -98,6 +100,12 @@ var (
 // inline id, the resolved class.
 type tgField struct{ name, kind, class string }
 
+// tgSHA256 is the lowercase hex SHA-256 of a file's text as read.
+func tgSHA256(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
 // tgParseFields checks the fields column against the 4I4-P4 grammar and returns its fields.
 func tgParseFields(t *testing.T, row string, s string) []tgField {
 	t.Helper()
@@ -183,6 +191,9 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		}
 		seen[id] = true
 		counts[typ]++
+		if _, ok := telegramTypeCounts[typ]; !ok {
+			t.Errorf("%s: type %q is not one of the pinned types (telegramTypeCounts)", row, typ)
+		}
 		if !slices.Contains([]string{"full", "prefix", "opaque"}, body) {
 			t.Errorf("%s: body %q is not full, prefix or opaque", row, body)
 		}
@@ -319,9 +330,10 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	}
 	for _, r := range cons {
 		re := regexp.MustCompile(`(?m)^\| ` + regexp.QuoteMeta(r[0]) + ` \| ` + regexp.QuoteMeta(r[1]) + ` \| ` +
-			regexp.QuoteMeta(r[2]) + ` \| (verified|MANUAL, read by hand at [A-Za-z_]+\.java:[0-9]+) \|`)
+			regexp.QuoteMeta(r[2]) + ` \| (verified|MANUAL, read by hand at [A-Za-z_]+\.java:[0-9]+) \| ` +
+			regexp.QuoteMeta(r[5]) + ` \|`)
 		if !re.MatchString(report) {
-			t.Errorf("CROSSCHECK.md has no verified or read-by-hand row for %s %s %s", r[0], r[1], r[2])
+			t.Errorf("CROSSCHECK.md has no verified or read-by-hand row for %s %s %s at %s", r[0], r[1], r[2], r[5])
 		}
 	}
 	memberRE := regexp.MustCompile(`(?m)^\| (A-11\.4\.2|release-8\.1\.1_2431|release-5\.14\.0_1851) \| (\w+) \| (0x[0-9a-f]{8}) \| in-table \|`)
@@ -338,9 +350,28 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		}
 	}
 	for _, r := range facts {
-		row := "| " + r[0] + " | " + r[2] + " | " + r[3] + " |"
+		row := "| " + r[0] + " | " + r[2] + " | " + r[3] + " | " + r[1] + " |"
 		if !strings.Contains(report, row) {
 			t.Errorf("CROSSCHECK.md has no row %q for the fact", row)
+		}
+	}
+
+	// Review I1: each pin's report names the SHA-256 of the two fact files it checked; both must be the committed
+	// bytes, so an edit of a field, a flag bit or a fact value without a new --check run fails here.
+	hashRE := regexp.MustCompile(`(?m)^\| ` + "`" + `(constructors|facts)\.tsv` + "`" + ` \| ([0-9a-f]{64}) \|$`)
+	want := map[string]string{"constructors": tgSHA256(consSrc), "facts": tgSHA256(factsSrc)}
+	seenHash := map[string]int{}
+	for _, m := range hashRE.FindAllStringSubmatch(report, -1) {
+		seenHash[m[1]]++
+		if m[2] != want[m[1]] {
+			t.Errorf("CROSSCHECK.md checked %s.tsv with SHA-256 %s; the committed file is %s: run --check again",
+				m[1], m[2], want[m[1]])
+		}
+	}
+	for name := range want {
+		if seenHash[name] != len(telegramPins) {
+			t.Errorf("CROSSCHECK.md names the SHA-256 of %s.tsv %d times, want once per pin (%d)", name,
+				seenHash[name], len(telegramPins))
 		}
 	}
 
