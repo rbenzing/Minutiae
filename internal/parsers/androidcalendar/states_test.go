@@ -162,6 +162,28 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 		},
 		// more than one EventsRawTimes row: the first is kept and the number is stated (fix round 1, M5)
 		{46, nil, map[string]any{"raw_times": map[string]any{"dtstart2445": "A"}, "raw_times_total": int64(2)}, nil},
+		// an identifier or a duration within its limit as stored but over it once each invalid byte is U+FFFD (3 bytes)
+		// is too long for the payload as well: never cut, never a payload value over the limit (FuzzMapAndroidCalendarRows)
+		{49, map[string]any{"eventTimezone": strings.Repeat("\xff", 100)}, map[string]any{"eventTimezone_state": "too-long", "eventTimezone_len": int64(100), "eventTimezone_sha256": sha(strings.Repeat("\xff", 100))}, map[string]any{"start_timezone": nil}},
+		{50, map[string]any{"duration": strings.Repeat("\x9d", 22)}, map[string]any{"duration_state": "unparsed", "duration_len": int64(22), "duration_sha256": sha(strings.Repeat("\x9d", 22))}, map[string]any{"duration": nil}},
+		// a wrongly typed attendee name is listed and kept as stored with name_state "undecided", as an address is; without
+		// an address its entry goes to raw.attendees_unnamed_entries and it is never counted unnamed (coordinator ruling h)
+		{
+			47, nil,
+			map[string]any{
+				"attendees_unnamed": nil, "attendees": nil, "unknown_columns": map[string]any{"Attendees.attendeeName": "type-mismatch"},
+				"attendees_unnamed_entries": []any{map[string]any{"attendeeName": int64(7), "name_state": "undecided"}},
+			},
+			map[string]any{"attendees": nil},
+		},
+		{
+			48, nil,
+			map[string]any{
+				"attendees_unnamed": nil, "unknown_columns": map[string]any{"Attendees.attendeeName": "type-mismatch"},
+				"attendees": []any{map[string]any{"attendeeName_blob_b64": "AQI=", "name_state": "undecided"}},
+			},
+			map[string]any{"attendees": []any{map[string]any{"address": "x@example.test"}}},
+		},
 	}
 	var rows []row
 	for _, c := range cases {
@@ -174,6 +196,8 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 			{3, map[string]any{"event_id": int64(43), "attendeeEmail": int64(5), "attendeeName": "Num"}},
 			{4, map[string]any{"event_id": int64(44), "attendeeEmail": []byte{1, 2}}},
 			{5, map[string]any{"event_id": int64(45), "attendeeName": "Blob", "attendeeType": []byte{1, 2}}},
+			{6, map[string]any{"event_id": int64(47), "attendeeName": int64(7)}},
+			{7, map[string]any{"event_id": int64(48), "attendeeEmail": "x@example.test", "attendeeName": []byte{1, 2}}},
 		},
 		"Reminders":          {{1, map[string]any{"event_id": int64(41), "minutes": int64(-5), "method": int64(2)}}},
 		"CalendarAlerts":     {{2000, map[string]any{"event_id": int64(45), "begin": []byte{1, 2}, "state": int64(1)}}},

@@ -83,8 +83,8 @@ func TestMetaIsValid(t *testing.T) {
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformAndroid {
 		t.Errorf("platforms %v", m.Platforms)
 	}
-	if len(m.Claims) != 0 {
-		t.Errorf("claims %v: none until the mapping is total (plan 4I3 Task 6)", m.Claims)
+	if len(m.Claims) != 1 || m.Claims[0] != (parse.TableClaim{Role: "db", Table: "Events"}) {
+		t.Errorf("claims %v, want Events on the db role (TestClaimsEqualClaimableTables)", m.Claims)
 	}
 }
 

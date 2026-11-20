@@ -2,6 +2,7 @@ package androidcalendar
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -367,7 +368,109 @@ func TestCalendarUnreadableCellsAreUndecided(t *testing.T) {
 			t.Errorf("%s: raw.timing_state %v, want undecided", c.name, o.raw["timing_state"])
 		}
 	}
+
+	// cells beyond the times, mapped by the full Events mapping (plan 4I3 Task 6, F02): a NaN code, a BLOB free text
+	// and a NaN reminder offset are listed and give no value: never NULL, never a default, never a guessed label
+	recs := mapRows(t, []evRow{
+		{1, map[string]any{"eventStatus": math.NaN()}},
+		{2, map[string]any{"title": []byte{0xde, 0xad}}},
+		{3, nil},
+	}, [][]any{{int64(3), math.NaN(), int64(1)}})
+	for _, c := range []struct {
+		id       int64
+		name     string
+		col, key string // the unknown column, the payload key
+		want     any    // nil: absent
+	}{
+		{1, "eventStatus NaN", "Events.eventStatus", "status", "unknown"},
+		{2, "title BLOB", "Events.title", "title", nil},
+	} {
+		r := recs[c.id]
+		raw, _ := r.Payload["raw"].(map[string]any)
+		uc, _ := raw["unknown_columns"].(map[string]any)
+		if uc[c.col] != "type-mismatch" {
+			t.Errorf("%s: unknown_columns %v, want %s type-mismatch", c.name, uc, c.col)
+		}
+		if got, has := r.Payload[c.key]; (c.want == nil && has) || (c.want != nil && got != c.want) {
+			t.Errorf("%s: payload.%s = %#v (present %v), want %#v", c.name, c.key, got, has, c.want)
+		}
+	}
+	if raw, _ := recs[1].Payload["raw"].(map[string]any); raw["eventStatus"] != nil {
+		t.Errorf("eventStatus NaN: raw.eventStatus = %#v: an unreadable cell is never a stored value", raw["eventStatus"])
+	}
+	r3 := recs[3]
+	raw3, _ := r3.Payload["raw"].(map[string]any)
+	uc, _ := raw3["unknown_columns"].(map[string]any)
+	if uc["Reminders.minutes"] != "type-mismatch" {
+		t.Errorf("minutes NaN: unknown_columns %v, want Reminders.minutes type-mismatch", uc)
+	}
+	if got := fmt.Sprint(r3.Payload["reminders"]); got != "[map[method:alert]]" {
+		t.Errorf("minutes NaN: reminders %s, want the method only (no before_s)", got)
+	}
+	if got := fmt.Sprint(raw3["reminders"]); got != "[map[method:1]]" {
+		t.Errorf("minutes NaN: raw.reminders %s, want the stored method only (an unreadable minutes is never a value)", got)
+	}
 }
+
+// mapDDL is the part of the 601 Events table mapRows reads beyond timesDDL, and remindersDDL the 601 Reminders table.
+const (
+	mapDDL = `CREATE TABLE Events (_id INTEGER PRIMARY KEY AUTOINCREMENT, calendar_id INTEGER NOT NULL, eventTimezone TEXT,
+dtstart INTEGER, dtend INTEGER, duration TEXT, allDay INTEGER NOT NULL DEFAULT 0, originalInstanceTime INTEGER,
+originalAllDay INTEGER, deleted INTEGER NOT NULL DEFAULT 0, eventStatus INTEGER, title TEXT)`
+	remindersDDL = `CREATE TABLE Reminders (_id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, minutes INTEGER, method INTEGER)`
+)
+
+// mapRows builds Events rows (timesCols, then eventStatus and title from kw) and Reminders rows (event_id, minutes,
+// method) into a database and maps every Events row with the live mapping (an empty guard), by rowid.
+func mapRows(t *testing.T, rows []evRow, reminders [][]any) map[int64]records.Record {
+	t.Helper()
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
+	tb := b.CreateTable("Events", mapDDL)
+	for _, r := range rows {
+		tb.Insert(r.id, append(r.vals(), r.kw["eventStatus"], r.kw["title"])...)
+	}
+	rt := b.CreateTable("Reminders", remindersDDL)
+	for i, r := range reminders {
+		rt.Insert(int64(i+1), append([]any{nil}, r...)...)
+	}
+	img := b.Bytes()
+	ctx := t.Context()
+	in := &parse.Input{
+		Primary:   parse.Artifact{ID: "a1", Size: int64(len(img)), Logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db"},
+		Artifacts: map[string]parse.Artifact{"db": {ID: "a1", Size: int64(len(img))}},
+		Budget:    parse.NewBudget(256 << 20).View(),
+	}
+	db, err := sqlitedb.Open(ctx, sqlitedb.Files{DB: bytes.NewReader(img), DBSize: int64(len(img))}, in.Budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Release()
+	mc := sqlitedb.NewContext(ctx, db, in, nopNotes{})
+	defer mc.Close()
+	m := eventMappingWith(&env{})
+	tab, err := db.Table(ctx, "Events", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[int64]records.Record{}
+	err = tab.Scan(ctx, func(row sqlitedb.Row) error {
+		recs, err := m.Map(mc, row)
+		if err != nil || len(recs) != 1 {
+			return fmt.Errorf("%d records: %w", len(recs), err)
+		}
+		id, _ := row.Rowid()
+		out[id] = recs[0]
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+type nopNotes struct{}
+
+func (nopNotes) Note(string, string) {}
 
 // rawEqual compares a raw value with the expected one; a BLOB is expected as its base64 text ({"blob_b64": ...}).
 func rawEqual(got, want any) bool {

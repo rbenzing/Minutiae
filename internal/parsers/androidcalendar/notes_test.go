@@ -1,6 +1,7 @@
 package androidcalendar_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,5 +90,19 @@ func TestAndroidCalendarPartialSchemaIsStated(t *testing.T) {
 	}
 	if strings.Contains(res.Notes["tables"], "EventsRawTimes") || !strings.Contains(res.Notes["tables"], "Events") {
 		t.Errorf("note tables = %q: the tables seen, without the lost one", res.Notes["tables"])
+	}
+	// coordinator ruling (i): a join table not seen in a schema read in part is undecided, never "table absent" (the
+	// decoder reports this one as unreadable; TestCheckJoinSchemaNeverCallsAPartialSchemaAbsent pins the case where it
+	// reports no such table)
+	if got := res.Notes["join_undecided.EventsRawTimes"]; got == "" || got == "table absent" {
+		t.Errorf("note join_undecided.EventsRawTimes = %q, want an unreadable or undecided reason, never absent", got)
+	}
+	if w := warningsWith(res, "calendar-join-undecided: table EventsRawTimes: "); len(w) != 1 || w[0].Locator != "sqlite:schema" {
+		t.Errorf("warnings %v, want one schema warning naming EventsRawTimes", res.Warnings)
+	}
+	if len(res.Records) == 1 {
+		if l, _ := rawOf(res.Records[0])["join_undecided"].([]any); !slices.Contains(l, any("EventsRawTimes")) {
+			t.Errorf("raw.join_undecided = %v: the EventsRawTimes join is undecided", l)
+		}
 	}
 }

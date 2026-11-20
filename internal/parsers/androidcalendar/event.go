@@ -184,13 +184,14 @@ func readDuration(r cells, ev *calendar.Event) {
 	if len(b) == 0 {
 		return
 	}
-	if len(b) > maxDurationLen {
+	s := validText(b) // the limit holds for the text the payload would carry (U+FFFD grows an invalid byte)
+	if len(s) > maxDurationLen {
 		r.raw["duration_state"] = durUnparsed
 		r.raw["duration_len"] = int64(len(b))
 		r.raw["duration_sha256"] = sha256Hex(b)
 		return
 	}
-	ev.Duration = validText(b)
+	ev.Duration = s
 }
 
 // readBody cleans the description at 256 KiB into the record Body and the body_* facts (spec 4.2, C4, C6).
@@ -310,12 +311,13 @@ type joinState int
 const (
 	jFound     joinState = iota // the join was made
 	jNoRow                      // a clean miss: no row has the key
-	jUndecided                  // a missing or guarded table, an undecidable key
+	jUndecided                  // a missing, guarded or damaged table, an undecidable key
 	jRecovered                  // a recovered row: no join is made (B2)
 )
 
 // getRowAt returns the state of the Get join of table at rowid (and the row when found). A recovered row (nil env)
-// joins nothing. A table the database lacks is undecided, not a miss; every other error is fatal.
+// joins nothing. A table the database lacks, or whose pages on the search path are damaged (dataDamage: the row may
+// exist), is undecided, not a miss, as a child join is (spec 9); every other error (the budget, a cancel) is fatal.
 func getRowAt(m parse.MapContext, e *env, table string, id int64) (parse.Row, joinState, error) {
 	if e == nil {
 		return nil, jRecovered, nil
@@ -323,7 +325,7 @@ func getRowAt(m parse.MapContext, e *env, table string, id int64) (parse.Row, jo
 	row, found, err := m.Get(table, id)
 	var us *sqlitedb.UnsupportedSchemaError
 	switch {
-	case errors.Is(err, sqlitedb.ErrNoSuchTable), errors.As(err, &us), errors.Is(err, sqlitedb.ErrKeyUndecidable):
+	case errors.Is(err, sqlitedb.ErrNoSuchTable), errors.As(err, &us), errors.Is(err, sqlitedb.ErrKeyUndecidable), err != nil && dataDamage(err):
 		return nil, jUndecided, nil
 	case err != nil:
 		return nil, jFound, err

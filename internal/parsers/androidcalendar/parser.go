@@ -41,14 +41,27 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
+// ClaimableTables are the tables whose mapping is total: every Events row gives one record (spec 10), so typed recovery
+// (plan 4G) can map the events that were deleted or superseded. A recovered row joins no table (B2). The join tables,
+// the derived Instances cache, Colors and the meta tables are never claimed.
+func ClaimableTables() []string { return []string{tableEvents} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
+}
+
 // Meta describes the parser. The one primary glob ends in calendar.db, so a -wal, -journal or -shm file is never a
-// primary (4I-R21); it reaches the job only as the companion of its primary. No table is claimed until the typed
-// recovery of Events is tested (plan 4I3 Task 6).
+// primary (4I-R21); it reaches the job only as the companion of its primary. The claims are ClaimableTables.
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android calendar (calendar provider)",
 		Platforms: []string{parse.PlatformAndroid},
 		Emits:     []parse.Emit{{Type: calendar.Type, PayloadVersion: calendar.PayloadVersion}},
+		Claims:    claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Required: true, Globs: []string{"android:**/com.android.providers.calendar/databases/calendar.db"}},
 			{Role: "wal", Companions: []string{"-wal"}},
@@ -294,7 +307,11 @@ func checkLiveView(ctx context.Context, in *parse.Input, files sqlitedb.Files, o
 		if i := t.Col("_id"); i < 0 || !t.Cols()[i].RowidAlias {
 			return nil, v, fmt.Errorf("android.calendar: %w", &sqlitedb.UnsupportedSchemaError{Table: tableEvents, Reason: "column _id is not the rowid alias"})
 		}
-		g, err := checkJoinSchema(ctx, db, out)
+		partial := func() (bool, error) {
+			rep, err := census.Take(ctx, files, in.Budget, nil)
+			return rep.SchemaSkipped > 0, err
+		}
+		g, err := checkJoinSchema(ctx, db, out, partial)
 		return g, v, err
 	case !provider && errors.Is(err, sqlitedb.ErrNoSuchTable):
 		return nil, v, nil // a database of another kind: the identifying step states it

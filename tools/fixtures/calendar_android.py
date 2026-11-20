@@ -173,12 +173,12 @@ def ident(raw, unknown, col, v, limit):
     if not is_text(v):
         unknown["Events." + col] = "type-mismatch"
         return None
-    if len(v) > limit:
+    s = v.decode("utf-8", errors="replace")
+    if len(s.encode("utf-8")) > limit:  # the limit holds for the text the payload carries (U+FFFD grows a byte)
         raw[col + "_state"] = "too-long"
         raw[col + "_len"] = len(v)
         raw[col + "_sha256"] = hashlib.sha256(v).hexdigest()
         return None
-    s = v.decode("utf-8", errors="replace")
     return s or None
 
 
@@ -368,7 +368,7 @@ def expect_event(r, env, remote, file="any"):
         unknown["Events.duration"] = "type-mismatch"
         raw["duration"] = jv(dv)
     if is_text(dv) and dv:
-        if len(dv) > MAX_DURATION:
+        if len(dv.decode("utf-8", errors="replace").encode("utf-8")) > MAX_DURATION:  # as the payload carries it
             # unparsed in every case, also with no start or an unknown timing (coordinator ruling, Task 4)
             raw["duration_state"] = "unparsed"
             raw["duration_len"], raw["duration_sha256"] = len(dv), hashlib.sha256(dv).hexdigest()
@@ -585,8 +585,10 @@ def children(p, raw, tf, unknown, env, rid):
                 tf.add("attendees")
             if c.text:
                 e["name"] = c.text
-        elif name is not None and not is_text(name):  # spec 9: a wrong type is listed, never absent silently
+        elif name is not None and not is_text(name):  # kept as stored, its name undecided, as the address (ruling h)
             unknown["Attendees.attendeeName"] = "type-mismatch"
+            extra = put_entry(dict(extra, name_state="undecided"), "attendeeName", name)
+            undecided = True
         codes = {}
         for k in ("attendeeRelationship", "attendeeType", "attendeeStatus", "attendeeIdentity", "attendeeIdNamespace"):
             if a.get(k) is not None:

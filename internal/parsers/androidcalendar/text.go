@@ -25,15 +25,18 @@ const stateTooLong = "too-long"
 
 // ident is an identifier as stored, never cut (spec 9): within limit it is returned (valid UTF-8, each byte that
 // starts no valid sequence replaced by U+FFFD); over it, nothing is returned and raw states <col>_state "too-long",
-// <col>_len and the SHA-256 of the stored bytes in <col>_sha256.
+// <col>_len (of the stored bytes) and the SHA-256 of the stored bytes in <col>_sha256. The limit holds for the text the
+// payload would carry: a stored text within it whose invalid bytes grow past it as U+FFFD is too long as well
+// (FuzzMapAndroidCalendarRows).
 func ident(raw map[string]any, col string, b []byte, limit int) (string, bool) {
-	if len(b) > limit {
+	s := validText(b)
+	if len(s) > limit {
 		raw[col+"_state"] = stateTooLong
 		raw[col+"_len"] = int64(len(b))
 		raw[col+"_sha256"] = sha256Hex(b)
 		return "", false
 	}
-	return validText(b), true
+	return s, true
 }
 
 func sha256Hex(b []byte) string {

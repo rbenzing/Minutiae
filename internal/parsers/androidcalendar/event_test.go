@@ -288,7 +288,7 @@ func TestCalendarTimingDecidesTimeBasis(t *testing.T) {
 // ---------------------------------------------------------------- Go-built databases (user version 601, F05)
 
 // snapshotDDL returns the CREATE TABLE statement of table in the 601 snapshot.
-func snapshotDDL(t *testing.T, table string) string {
+func snapshotDDL(t testing.TB, table string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "fixtures", "schemas", "calendar-android", "601.sql"))
 	if err != nil {

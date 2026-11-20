@@ -18,6 +18,9 @@ const (
 	reasonJoinUndecided = "calendar-join-undecided"
 	reasonFlagUndecided = "calendar-flag-undecided"
 	reasonTableAbsent   = "table absent"
+	// reasonSchemaPartial is the join note of a join table that a schema read in part does not show: unknown, never
+	// absent (coordinator ruling i).
+	reasonSchemaPartial = "unreadable: the schema could not be read whole and the table is not in what was read"
 )
 
 // joinTables are the tables the mapping joins (spec 7.2, 7.3), with the columns each join needs, as Probe checks
@@ -106,17 +109,30 @@ func dataDamage(err error) bool {
 
 // checkJoinSchema looks at the live view's schema for every table the mapping joins. A table the database lacks is
 // the note join_undecided.<table> = "table absent" and no warning (4I2 PF13: the absence is one fact about the file;
-// each record states its own undecided join). A table that lacks a column its join needs, whose key is not the rowid
-// alias, or that cannot be read is guarded and stated: one note and one counted warning per table; the job stays
-// complete.
-func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter) (*joinGuard, error) {
+// each record states its own undecided join). A table not found in a schema that was read only in part (partial, asked
+// only then) is not absent: it is guarded as reasonSchemaPartial (coordinator ruling i). A table that lacks a column
+// its join needs, whose key is not the rowid alias, or that cannot be read is guarded and stated: one note and one
+// counted warning per table; the job stays complete.
+func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, partial func() (bool, error)) (*joinGuard, error) {
 	g := &joinGuard{}
+	var part *bool
 	for _, jt := range joinTables() {
 		t, err := db.Table(ctx, jt.Table, jt.Need, nil)
 		var us *sqlitedb.UnsupportedSchemaError
 		switch {
 		case errors.Is(err, sqlitedb.ErrNoSuchTable):
-			out.Note("join_undecided."+jt.Table, reasonTableAbsent)
+			if part == nil {
+				p, perr := partial()
+				if perr != nil {
+					return nil, perr
+				}
+				part = &p
+			}
+			if *part {
+				g.add(jt.Table, reasonSchemaPartial)
+			} else {
+				out.Note("join_undecided."+jt.Table, reasonTableAbsent)
+			}
 			continue
 		case errors.As(err, &us) && len(us.Missing) > 0:
 			g.add(jt.Table, "the table lacks column(s) "+strings.Join(us.Missing, ", "))

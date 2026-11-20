@@ -166,12 +166,38 @@ func readAddress(c cells, a *calendar.Attendee, entry map[string]any) bool {
 	return false
 }
 
+// readName reads attendeeName into a: TEXT is the name, cleaned at 4 KiB (an altered name puts "attendees" in
+// raw.text_flags); a cell of another class or an unreadable one is listed in unknown_columns, keeps its stored value in
+// entry (when it has one) and states name_state "undecided", as readAddress does (coordinator ruling h). It reports
+// whether the name is undecided: such a row is not one with "neither address nor name".
+func readName(c cells, a *calendar.Attendee, entry map[string]any, flags textFlags) bool {
+	col := c.c.At("attendeeName")
+	b, k := textCellOf(c.row, col)
+	switch k {
+	case rowrun.CellValue:
+		if len(b) > 0 {
+			cl := common.CleanText(b, maxTitle)
+			if len(cl.Flags) > 0 {
+				flags["attendees"] = true
+			}
+			a.Name = cl.Text
+		}
+	case rowrun.CellOther, rowrun.CellUnknown:
+		rowrun.Flag(c.unknown, c.row, c.prefix+"attendeeName", col, k)
+		storeCell(c, entry, "attendeeName")
+		entry["name_state"] = stateUndecided
+		return true
+	}
+	return false
+}
+
 // attendeesOf joins the event's Attendees (spec 7.3): attendeeEmail is the address (readAddress), attendeeName the
-// name (cleaned at 4 KiB; an altered name puts "attendees" in raw.text_flags), the codes labelled by the contract.
-// raw.attendees holds each attendee's stored codes, attendeeIdentity, attendeeIdNamespace and address state, strictly
-// parallel to attendees (spec 7.3 "aligned by order"; fix round 1, I2). A row with no name and no address is not an
-// attendee: with neither (an over-long address counts as none, F27) it is counted in raw.attendees_unnamed; its entry,
-// when it states an address (over-long or undecided), goes to raw.attendees_unnamed_entries (at most maxList, with
+// name (readName), the codes labelled by the contract.
+// raw.attendees holds each attendee's stored codes, attendeeIdentity, attendeeIdNamespace and address and name states,
+// strictly parallel to attendees (spec 7.3 "aligned by order"; fix round 1, I2). A row with no name and no address is
+// not an attendee: with neither (an over-long address counts as none, F27; an undecided address or name is not
+// "neither", ruling h) it is counted in raw.attendees_unnamed; its entry, when it states an address (over-long or
+// undecided) or an undecided name, goes to raw.attendees_unnamed_entries (at most maxList, with
 // _total and _truncated). It returns the attendees (at most maxList), their total and whether they were cut.
 func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]calendar.Attendee, *int64, bool, error) {
 	rows, undecided, err := childRows(m, tableAttendees, id, r.raw)
@@ -190,23 +216,17 @@ func attendeesOf(m parse.MapContext, id int64, r cells, flags textFlags) ([]cale
 		var a calendar.Attendee
 		entry := map[string]any{}
 		addrUndecided := readAddress(c, &a, entry)
-		if b, ok := c.text("attendeeName"); ok && len(b) > 0 {
-			cl := common.CleanText(b, maxTitle)
-			if len(cl.Flags) > 0 {
-				flags["attendees"] = true
-			}
-			a.Name = cl.Text
-		}
+		nameUndecided := readName(c, &a, entry, flags)
 		a.Role = childCode(c, "attendeeRelationship", "attendeeRelationship", entry)
 		a.Type = childCode(c, "attendeeType", "attendeeType", entry)
 		a.Status = childCode(c, "attendeeStatus", "attendeeStatus", entry)
 		storeCell(c, entry, "attendeeIdentity")
 		storeCell(c, entry, "attendeeIdNamespace")
 		if a.Address == "" && a.Name == "" {
-			if !addrUndecided {
+			if !addrUndecided && !nameUndecided {
 				unnamed++
 			}
-			if _, stated := entry["address_state"]; stated {
+			if _, stated := entry["address_state"]; stated || nameUndecided {
 				unnamedEntries++
 				if len(unnamedList) < maxList {
 					unnamedList = append(unnamedList, entry)

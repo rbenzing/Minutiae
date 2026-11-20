@@ -11,7 +11,9 @@ package artparse_test
 // Phases, in order: gen, decode-200m, decode-1g, ingest-200m, jobs-500, and for plan 4I whatsapp-gen and whatsapp-decode-1m
 // (a 1,000,000-message msgstore.db written by the engine, then parsed with MemBudget 1 GiB), and for plan 4I2 waios-gen and
 // waios-decode-1m (the same for a 1,000,000-message iOS ChatStorage.sqlite; the database file plus the peak resident set
-// must stay within 2 GiB; both skip under -short). Environment:
+// must stay within 2 GiB; both skip under -short), and for plan 4I3 calendar-gen and calendar-decode (a calendar.db of
+// 500,000 events, 900,000 attendees and 500,000 reminders written by the engine, then parsed with MemBudget 1 GiB; the
+// same 2 GiB bound; both skip under -short). Environment:
 // MINUTIAE_SCALE_DIR (the work directory; about 4 GiB), MINUTIAE_SCALE_LABEL, MINUTIAE_SCALE_MACHINE,
 // MINUTIAE_SCALE_PHASE, and for gen only MINUTIAE_SCALE_GEN (a comma list of 200m, 1g; both by default).
 //
@@ -43,6 +45,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers"
+	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
@@ -72,7 +75,7 @@ func scaleEnvOf(t *testing.T) scaleEnv {
 	t.Helper()
 	e := scaleEnv{phase: os.Getenv("MINUTIAE_SCALE_PHASE")}
 	if e.phase == "" {
-		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m) to run the parse scale test; it is manual (see docs/testing.md)")
+		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode) to run the parse scale test; it is manual (see docs/testing.md)")
 	}
 	if e.label = os.Getenv("MINUTIAE_SCALE_LABEL"); e.label == "" {
 		t.Fatal("set MINUTIAE_SCALE_LABEL (a name for this run, such as 4h)")
@@ -111,6 +114,8 @@ type phaseResult struct {
 	PeakRSSMeasured bool     `json:"peak_rss_measured"`
 	PeakRSSBytes    int64    `json:"peak_rss_bytes"`
 	PeakRSSLimit    int64    `json:"peak_rss_limit"`
+	// TableRows are the rows of each table of a multi-table input (calendar-gen and calendar-decode).
+	TableRows map[string]int64 `json:"table_rows,omitempty"`
 }
 
 func gitCommit() string {
@@ -660,8 +665,12 @@ func TestScaleParse(t *testing.T) {
 		runGenWhatsAppIOS(t, e)
 	case "waios-decode-1m":
 		whatsAppIOSDecode(t, e)
+	case "calendar-gen":
+		runGenCalendar(t, e)
+	case "calendar-decode":
+		calendarDecode(t, e)
 	default:
-		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m)", e.phase)
+		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode)", e.phase)
 	}
 }
 
@@ -1038,6 +1047,220 @@ func whatsAppIOSDecode(t *testing.T, e scaleEnv) {
 	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
 }
 
+// ---- Android calendar (plan 4I3 task 6, 4I3-P12) ----
+
+const (
+	calRemotePath = "/data/data/com.android.providers.calendar/databases/calendar.db"
+	calDDL        = "../../tools/fixtures/schemas/calendar-android/601.sql"
+	calEvents     = 500_000
+	calAttendees  = 900_000 // below the join-index cap of 1,000,000 entries per column: the Attendees join stays decided (F13)
+	calReminders  = 500_000
+	calCalendars  = 10
+	calBudget     = 1024 * scaleMiB // MemBudget of calendar-decode
+	calSizeCap    = 2048 * scaleMiB // the database file plus the peak resident set must stay within 2 GiB
+)
+
+// calGen is what calendar-gen records: the file size and the rows of each table.
+type calGen struct {
+	Bytes int64            `json:"bytes"`
+	Rows  map[string]int64 `json:"rows"`
+}
+
+// genRows inserts total rows through stmt in batches of 20,000, args giving the values of row id.
+func genRows(db *sql.DB, total int64, stmt string, args func(id int64) []any) error {
+	const batch = 20000
+	for start := int64(1); start <= total; start += batch {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		st, err := tx.Prepare(stmt)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		for id := start; id < start+batch && id <= total; id++ {
+			if _, err := st.Exec(args(id)...); err != nil {
+				_ = st.Close()
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		_ = st.Close()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// genCalendar writes a calendar.db (user version 601) through the engine from the committed 601 snapshot: calCalendars
+// calendars; n events of one hour in Europe/Berlin, every 20th all-day and every 50th a weekly series with a duration;
+// the attendees spread over the events in turn (event i gets attendee i and, past n, a second one); one reminder each.
+func genCalendar(path string, n, attendees, reminders int64) (calGen, error) {
+	db, err := openGen(path)
+	if err != nil {
+		return calGen{}, err
+	}
+	fail := func(err error) (calGen, error) { _ = db.Close(); return calGen{}, err }
+	if err := execScript(db, calDDL); err != nil {
+		return fail(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 601"); err != nil {
+		return fail(err)
+	}
+	err = genRows(db, calCalendars, "INSERT INTO Calendars (_id, account_name, account_type, calendar_displayName, ownerAccount, deleted, visible, sync_events) VALUES (?,?,?,?,?,0,1,1)", func(c int64) []any {
+		return []any{c, fmt.Sprintf("user%d@example.test", c), "com.example.sync", fmt.Sprintf("Calendar %d", c), fmt.Sprintf("user%d@example.test", c)}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	r, pool := rand.New(rand.NewPCG(8, 9)), bodyPool() //nolint:gosec // a fixed seed: the generated input is repeatable
+	const day, hour = int64(86_400_000), int64(3_600_000)
+	err = genRows(db, n, "INSERT INTO Events (_id, calendar_id, title, description, eventLocation, dtstart, dtend, duration, rrule, eventTimezone, allDay, deleted, lastSynced, dirty, eventStatus, hasAttendeeData) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,0,0,1,1)", func(id int64) []any {
+		off := r.IntN(len(pool) - 400)
+		dtstart := int64(1_577_836_800_000) + id*hour
+		var dtend, dur, rrule any = dtstart + hour, nil, nil
+		allDay, zone := int64(0), "Europe/Berlin"
+		switch {
+		case id%20 == 0:
+			allDay, zone = 1, "UTC"
+			dtstart -= dtstart % day
+			dtend = dtstart + day
+		case id%50 == 1:
+			dtend, dur, rrule = nil, "PT1H", "FREQ=WEEKLY;BYDAY=TU"
+		}
+		return []any{id, id%calCalendars + 1, string(pool[off : off+20+r.IntN(40)]), string(pool[off : off+r.IntN(300)]), string(pool[off+5 : off+25]), dtstart, dtend, dur, rrule, zone, allDay}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	err = genRows(db, attendees, "INSERT INTO Attendees (_id, event_id, attendeeName, attendeeEmail, attendeeStatus, attendeeRelationship, attendeeType) VALUES (?,?,?,?,1,1,1)", func(id int64) []any {
+		return []any{id, (id-1)%n + 1, fmt.Sprintf("Attendee %d", id), fmt.Sprintf("a%d@example.test", id)}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	err = genRows(db, reminders, "INSERT INTO Reminders (_id, event_id, minutes, method) VALUES (?,?,?,1)", func(id int64) []any {
+		return []any{id, (id-1)%n + 1, id % 60}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if err := db.Close(); err != nil {
+		return calGen{}, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return calGen{}, err
+	}
+	return calGen{Bytes: st.Size(), Rows: map[string]int64{"Events": n, "Attendees": attendees, "Reminders": reminders, "Calendars": calCalendars}}, nil
+}
+
+// runGenCalendar is the calendar-gen phase: the 500,000-event calendar.db under MINUTIAE_SCALE_DIR/input. Under -short it
+// skips.
+func runGenCalendar(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("calendar-gen writes a database of several hundred MiB: skipped under -short")
+	}
+	if err := os.MkdirAll(filepath.Join(e.dir, "input"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	g, err := genCalendar(genPath(e, "calendar-500k.db"), calEvents, calAttendees, calReminders)
+	if err != nil {
+		t.Fatalf("gen calendar-500k.db: %v", err)
+	}
+	t.Logf("gen calendar-500k.db: %d bytes, rows %v in %s", g.Bytes, g.Rows, time.Since(start).Round(time.Second))
+	b, _ := json.MarshalIndent(g, "", "  ")
+	if err := os.WriteFile(genPath(e, "calendar-gen.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeResult(t, e, phaseResult{Phase: "calendar-gen", Outcome: "generated", InputBytes: g.Bytes, Rows: g.Rows["Events"], TableRows: g.Rows})
+}
+
+// joinCheckWriter is countWriter that also counts the records whose raw names an undecided join (F13: with the
+// attendees below the join-index cap every join of the measurement is decided).
+type joinCheckWriter struct {
+	countWriter
+	undecided int64
+}
+
+func (w *joinCheckWriter) Add(ctx context.Context, r records.Record) error {
+	if raw, ok := r.Payload["raw"].(map[string]any); ok {
+		if _, has := raw["join_undecided"]; has {
+			w.undecided++
+		}
+	}
+	return w.countWriter.Add(ctx, r)
+}
+
+// calendarDecode is the calendar-decode phase: the 500,000-event store parsed with MemBudget 1 GiB, counting what the
+// parser emits and the records with an undecided join (there must be none). The parser is registered under a synthetic
+// source hash (it is not in the release registry yet); the phase fails when the database file plus the peak resident set
+// exceed 2 GiB. Under -short it skips.
+func calendarDecode(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("calendar-decode parses a database of several hundred MiB with a 1 GiB budget: skipped under -short")
+	}
+	b, err := os.ReadFile(genPath(e, "calendar-gen.json")) //nolint:gosec // the operator's work directory
+	if err != nil {
+		t.Fatalf("run the calendar-gen phase first: %v", err)
+	}
+	var g calGen
+	if err := json.Unmarshal(b, &g); err != nil {
+		t.Fatal(err)
+	}
+	c := newScaleCase(t, filepath.Join(e.dir, "cases"), "CALENDARDECODE")
+	captureFile(t, c, calRemotePath, genPath(e, "calendar-500k.db"))
+	p := androidcalendar.Parser{}
+	reg, err := artparse.Register(p, parsertest.FakeHash(androidcalendar.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg, err = reg.WithRecoveryHash(parsertest.FakeHash(androidcalendar.Name + ".recover")); err != nil {
+		t.Fatal(err)
+	}
+	lim := parse.DefaultLimits()
+	lim.MemBudget = calBudget
+	opt := artparse.Options{Limits: lim}
+	w := &joinCheckWriter{}
+	artparse.WithNewWriter(&opt, func(*evidence.Case, records.Parser, records.WriterOptions) (artparse.IngestWriter, error) {
+		return w, nil
+	})
+	h, err := artparse.New(c, []artparse.Registered{reg}, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug.FreeOSMemory()
+	start := time.Now()
+	sum, err := h.Run(context.Background(), artparse.RunOptions{})
+	wall := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	rss, ok := peakRSS()
+	res := phaseResult{Phase: "calendar-decode", MemBudget: calBudget, InputBytes: g.Bytes, Rows: g.Rows["Events"], PeakRSSLimit: calSizeCap - g.Bytes, TableRows: g.Rows}
+	fillResult(&res, sum, wall, rss, ok)
+	res.Streamed = streamedOf(t, c)
+	writeResult(t, e, res)
+	if len(sum.Jobs) != 1 {
+		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
+	}
+	if res.Outcome != artparse.OutcomeComplete {
+		t.Errorf("outcome %s (%s), want complete", res.Outcome, res.Reason)
+	}
+	if res.Records != g.Rows["Events"] {
+		t.Errorf("records = %d, want the %d events written (one record per Events row)", res.Records, g.Rows["Events"])
+	}
+	if w.undecided != 0 {
+		t.Errorf("%d records name an undecided join: with %d attendees, below the join-index cap, every join is decided (F13)", w.undecided, g.Rows["Attendees"])
+	}
+	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
+}
+
 // TestScaleParseSmoke proves the harness works end to end on a 2 MiB database through decode and ingest,
 // and on a few small calllog bundles, without the environment of the real phases.
 func TestScaleParseSmoke(t *testing.T) {
@@ -1057,6 +1280,16 @@ func TestScaleParseSmoke(t *testing.T) {
 		parsePhase(t, e, name, genPath(e, "smoke.db"), gi, 0, counting, false, 0)
 	}
 	manyJobsPhase(t, e, "smoke-jobs", 5, 0, 0)
+	// the calendar phases on a small store: calendar-decode reads what genCalendar wrote
+	g, err := genCalendar(genPath(e, "calendar-500k.db"), 500, 900, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, _ := json.Marshal(g)
+	if err := os.WriteFile(genPath(e, "calendar-gen.json"), cb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calendarDecode(t, e)
 	var res phaseResult
 	b, err := os.ReadFile(filepath.Join(e.dir, "parse-results", "smoke", "smoke-ingest.json")) //nolint:gosec // this test's own directory
 	if err != nil {
