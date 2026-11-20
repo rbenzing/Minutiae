@@ -5,7 +5,9 @@ import (
 	"fmt"
 )
 
-// Sentinels. Every error this package returns is an *Error wrapping exactly one of them.
+// Sentinels. Every *Error wraps exactly one of them. The Reader returns only *Error; a
+// walker Stop.Err is an *Error, an *UnknownConstructorError, or nil for an opaque or prefix
+// stop (walker.go).
 var (
 	// ErrTruncated: fewer bytes remain than the primitive, the length prefix, the padding, a
 	// string's declared length or a vector's declared count (at its minimum element size)
@@ -42,11 +44,17 @@ type Error struct {
 	// after its prefix or header. Both are 0 on every other error.
 	Declared  int
 	Remaining int
+	// Detail tells a recovered panic ("panic: " and the quoted value) apart from a table
+	// defect ("table: " and what is wrong) under ErrInternal; "" on every other error.
+	Detail string
 }
 
 // Error names the sentinel, the offset and the path, and the declared value and the bytes
 // that remained when they are set.
 func (e *Error) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("%v (%s) at offset %d (path %q)", e.Err, e.Detail, e.Offset, e.Path)
+	}
 	if e.Declared != 0 {
 		return fmt.Sprintf("%v at offset %d (path %q; declared %d, %d bytes remain)", e.Err, e.Offset, e.Path, e.Declared, e.Remaining)
 	}

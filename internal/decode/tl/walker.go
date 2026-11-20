@@ -6,6 +6,9 @@ import (
 	"strconv"
 )
 
+// maxDetail caps the quoted panic value kept in Error.Detail (as typedstream.guard).
+const maxDetail = 200
+
 // Named is one decoded field: its dotted path (`fwd_from.from_id`, `entities[2].offset`), its
 // kind and the value in the member the kind names (table.go). Bytes is a sub-slice of the
 // blob, never a copy, and is nil for KSecret (spec section 9).
@@ -66,8 +69,8 @@ func (e *UnknownConstructorError) Error() string {
 	return fmt.Sprintf("tl: unknown constructor %#08x for type %q at offset %d (path %q)", e.ID, e.Type, e.Offset, e.Path)
 }
 
-// Result is what a decode read. Fields hold everything decoded before Stop (nil when the top
-// object was read whole); Flags are the encoding facts met (reader.go); End is the offset
+// Result is what a decode read. Fields hold everything decoded before Stop, and Stop is nil
+// when the top object was read whole; Flags are the encoding facts met (reader.go); End is the offset
 // after the last field read (the end of the top object when Stop is nil: where an app-local
 // trailer starts); Steps is the reader's step count at return.
 type Result struct {
@@ -79,8 +82,24 @@ type Result struct {
 	Steps  int
 }
 
-// namedCost is what one Named charges to the budget (F8).
-const namedCost = 64
+// FieldOverhead is the fixed part of what one Named charges to the budget: the Named itself
+// (104 bytes on a 64-bit platform) and its share of the Fields slice, rounded up. Each Named
+// also charges its path's length (F8, Task 3 review I1). The Fields slice's spare capacity
+// and the allocator's size classes stay uncharged (docs/limitations/parsers.md, Decoders).
+const FieldOverhead = 128
+
+// cost is what n charges to the budget.
+func cost(n *Named) int64 { return FieldOverhead + int64(len(n.Path)) }
+
+// Charged is what the decode charged to the budget for Fields (FieldOverhead and the path's
+// length per field): the caller frees exactly this when it is done with the result.
+func (r Result) Charged() int64 {
+	var total int64
+	for i := range r.Fields {
+		total += cost(&r.Fields[i])
+	}
+	return total
+}
 
 // Flags word names a field's Flags may name (TLRPC: flags, then flags2).
 const (
@@ -94,9 +113,10 @@ const (
 // set in the flags word read before it in the same object. The walker never skips: an
 // object it cannot read ends the whole decode, and everything read before it is returned.
 //
-// Every Named appended charges 64 bytes to budget (a refusal, or a nil budget, is
-// StopBudget). Decode never frees: the caller frees 64 x len(Fields) when it is done with the
-// result. A panic is recovered into StopMalformed with ErrInternal.
+// Every Named appended charges FieldOverhead and its path's length to budget (a refusal, or
+// a nil budget, is StopBudget). Decode never frees: the caller frees Result.Charged() when it
+// is done with the result. A panic is recovered into StopMalformed with ErrInternal and a
+// Detail "panic: " and the quoted value, apart from a table defect ("table: ...").
 func Decode(b []byte, typ string, t Table, budget Budget) (res Result) {
 	w := &walker{t: t, budget: budget}
 	defer func() {
@@ -105,7 +125,14 @@ func Decode(b []byte, typ string, t Table, budget Budget) (res Result) {
 			if w.r != nil {
 				off = w.r.Offset()
 			}
-			w.stop = &Stop{Kind: StopMalformed, Err: &Error{Err: ErrInternal, Offset: off, Path: w.path}, Offset: off, Path: w.path}
+			msg := strconv.QuoteToASCII(fmt.Sprint(p))
+			if len(msg) > maxDetail {
+				msg = msg[:maxDetail]
+			}
+			w.stop = &Stop{
+				Kind: StopMalformed, Err: &Error{Err: ErrInternal, Offset: off, Path: w.path, Detail: "panic: " + msg},
+				Offset: off, Path: w.path, Type: w.typ, ID: w.id,
+			}
 			res = w.result()
 		}
 	}()
@@ -122,7 +149,11 @@ type walker struct {
 	fields []Named
 	stop   *Stop
 	end    int
-	path   string // the path being read, for a recovered panic
+	// where: the path being read and the type and ID of the object it belongs to, for a
+	// recovered panic.
+	path string
+	typ  string
+	id   uint32
 }
 
 func (w *walker) result() Result {
@@ -171,7 +202,13 @@ func (w *walker) lookup(id uint32, typ, path string, off int) (Constructor, bool
 		w.stop = &Stop{Kind: StopOpaque, Offset: off, Path: path, Type: c.Type, ID: id}
 		return Constructor{}, false
 	}
+	c.ID = id // the ID read (the table key) is what every later Stop names (review M6)
 	return c, true
+}
+
+// defect stops on a table defect: ErrInternal with the detail "table: " and what.
+func (w *walker) defect(what, path string, c *Constructor) {
+	w.fail(&Error{Err: ErrInternal, Offset: w.r.Offset(), Detail: "table: " + what}, path, c.Type, c.ID)
 }
 
 // fail stops on err (an *Error of the Reader, or a sentinel) with the field path filled in.
@@ -204,7 +241,7 @@ func stopKind(err error) string {
 
 // add charges and appends one Named read from off; a refusal stops at off with ErrNoBudget.
 func (w *walker) add(n Named, off int, c *Constructor) bool {
-	if w.budget == nil || w.budget.Alloc(namedCost) != nil {
+	if w.budget == nil || w.budget.Alloc(cost(&n)) != nil {
 		w.stop = &Stop{
 			Kind: StopBudget, Err: &Error{Err: ErrNoBudget, Offset: off, Path: n.Path},
 			Offset: off, Path: n.Path, Type: c.Type, ID: c.ID,
@@ -239,11 +276,18 @@ func (w *walker) body(c Constructor, path string, depth int) bool {
 	for i := range c.Fields {
 		f := &c.Fields[i]
 		fp := join(path, f.Name)
-		w.path = fp
+		w.path, w.typ, w.id = fp, c.Type, c.ID
 		if f.Flags != "" {
 			k := wordIndex(f.Flags)
-			if k < 0 || !words.set[k] || f.Bit < 0 || f.Bit > 31 {
-				w.fail(ErrInternal, fp, c.Type, c.ID)
+			switch {
+			case k < 0:
+				w.defect("gate names no flags word", fp, &c)
+				return false
+			case !words.set[k]:
+				w.defect("gated field before its flags word", fp, &c)
+				return false
+			case f.Bit < 0 || f.Bit > 31:
+				w.defect("flag bit out of range", fp, &c)
 				return false
 			}
 			if words.v[k]&(1<<uint(f.Bit)) == 0 {
@@ -295,8 +339,8 @@ func (w *walker) field(c *Constructor, f *Field, fp string, depth int, words *fl
 	case KFlags:
 		k := wordIndex(f.Name)
 		if k < 0 {
-			err = ErrInternal
-			break
+			w.defect("flags word not named flags or flags2", fp, c)
+			return false
 		}
 		var v uint32
 		if v, err = r.Uint32(); err == nil {
@@ -308,8 +352,8 @@ func (w *walker) field(c *Constructor, f *Field, fp string, depth int, words *fl
 		}
 	case KTrue:
 		if f.Flags == "" {
-			err = ErrInternal
-			break
+			w.defect("flag-only true without a gate", fp, c)
+			return false
 		}
 		n.Bool = true
 	case KObject:
@@ -317,7 +361,8 @@ func (w *walker) field(c *Constructor, f *Field, fp string, depth int, words *fl
 	case KVector, KVecInt32, KVecInt64:
 		return w.vector(c, f, fp, depth)
 	default:
-		err = ErrInternal
+		w.defect("unknown field kind", fp, c)
+		return false
 	}
 	if err != nil {
 		w.fail(err, fp, c.Type, c.ID)
@@ -376,7 +421,7 @@ func (w *walker) vector(c *Constructor, f *Field, fp string, depth int) bool {
 	}
 	for i := range count {
 		ep := fp + "[" + strconv.Itoa(i) + "]"
-		w.path = ep
+		w.path, w.typ, w.id = ep, c.Type, c.ID
 		eoff := r.Offset()
 		if f.Kind == KVector {
 			if !w.object(f.Of, ep, eoff, depth) {

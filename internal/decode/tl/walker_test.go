@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"math"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 //	half{flags:#, a:i32}                                                           Point, BodyPrefix
 //	blank                                                                          Point, BodyOpaque
 //	kinds{b:Bool, d:double, s:string, raw:bytes, v32:vec<i32>, cid:id64@channel}   Kinds
+//	crate{boxes:vec<Box>, nodes:vec<Node>}                                         Crate (vectors of objects with vectors)
 const (
 	idPoint uint32 = 0x0a0b0c01
 	idBox   uint32 = 0x0a0b0c02
@@ -25,6 +27,7 @@ const (
 	idHalf  uint32 = 0x0a0b0c04
 	idBlank uint32 = 0x0a0b0c05
 	idKinds uint32 = 0x0a0b0c06
+	idCrate uint32 = 0x0a0b0c07
 )
 
 func synthTable() Table {
@@ -60,6 +63,10 @@ func synthTable() Table {
 			{Name: "v32", Kind: KVecInt32},
 			{Name: "cid", Kind: KID64, Class: "channel"},
 		}},
+		idCrate: {ID: idCrate, Name: "crate", Type: "Crate", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "boxes", Kind: KVector, Of: "Box"},
+			{Name: "nodes", Kind: KVector, Of: "Node"},
+		}},
 	}
 }
 
@@ -91,13 +98,41 @@ func boxBlob(inner []byte, items [][]byte, ids []int64, key []byte, who int32) [
 	}
 	b := cat(le32(idBox), le32(flags), inner, le32(IDVector), le32(uint32(len(items))))
 	for _, it := range items {
-		b = cat(b, it)
+		b = append(b, it...)
 	}
-	b = cat(b, le32(IDVector), le32(uint32(len(ids))))
+	b = append(b, cat(le32(IDVector), le32(uint32(len(ids))))...)
 	for _, v := range ids {
-		b = cat(b, le64(uint64(v)))
+		b = append(b, le64(uint64(v))...)
 	}
-	return cat(b, tlBytes(key), le32(uint32(who)))
+	return append(b, cat(tlBytes(key), le32(uint32(who)))...)
+}
+
+// crateBlob is a boxed crate of n copies of box and the node elements given.
+func crateBlob(box []byte, n int, nodes ...[]byte) []byte {
+	b := cat(le32(idCrate), le32(IDVector), le32(uint32(n)), bytes.Repeat(box, n), le32(IDVector), le32(uint32(len(nodes))))
+	for _, nd := range nodes {
+		b = append(b, nd...)
+	}
+	return b
+}
+
+// pointsBox is a box holding p points of flags 0 and nothing else (6 + 3p reads).
+func pointsBox(p int) []byte {
+	items := make([][]byte, p)
+	for i := range items {
+		items[i] = pointBlob(0, 0, int64(i))
+	}
+	return boxBlob(nil, items, nil, nil, 0)
+}
+
+// wantCharge is the budget charge of r's fields computed by the test (I1): 128 bytes and the
+// path's length per field.
+func wantCharge(r Result) int64 {
+	var n int64
+	for _, f := range r.Fields {
+		n += 128 + int64(len(f.Path))
+	}
+	return n
 }
 
 // fullBox is a box with every gated field set (TestTLDecodeReadsInTableOrder).
@@ -145,7 +180,8 @@ func field(t *testing.T, r Result, path string) Named {
 
 // Spec section 7.2: fields are read in table order; a gated field is read only when its bit
 // is set; paths are dotted and indexed; KSecret keeps only its length (spec section 9);
-// KID32/KID64 carry their class (T5); every Named charges 64 bytes and Decode never frees (F8).
+// KID32/KID64 carry their class (T5); every Named charges 128 bytes and its path's length,
+// and Decode never frees (F8, Task 3 review I1).
 func TestTLDecodeReadsInTableOrder(t *testing.T) {
 	blob := fullBox()
 	bud := open()
@@ -164,8 +200,8 @@ func TestTLDecodeReadsInTableOrder(t *testing.T) {
 	if r.Top != idBox || r.End != len(blob) || len(r.Flags) != 0 {
 		t.Errorf("top %#x, end %d, flags %v; want %#x, %d, none", r.Top, r.End, r.Flags, idBox, len(blob))
 	}
-	if bud.held != 64*int64(len(r.Fields)) {
-		t.Errorf("budget holds %d, want 64 x %d", bud.held, len(r.Fields))
+	if bud.held != wantCharge(r) || r.Charged() != bud.held {
+		t.Errorf("budget holds %d, Charged %d; want %d", bud.held, r.Charged(), wantCharge(r))
 	}
 	if f := field(t, r, "key"); f.Kind != KSecret || f.Len != 32 || f.Bytes != nil {
 		t.Errorf("key = %+v; want KSecret, Len 32, Bytes nil", f)
@@ -317,8 +353,8 @@ func TestTLDecodePartialKeepsWhatWasRead(t *testing.T) {
 		if r.End > cut {
 			t.Errorf("cut %d: end %d", cut, r.End)
 		}
-		if bud.held != 64*int64(len(r.Fields)) {
-			t.Errorf("cut %d: budget holds %d for %d fields", cut, bud.held, len(r.Fields))
+		if bud.held != wantCharge(r) || r.Charged() != bud.held {
+			t.Errorf("cut %d: budget holds %d, Charged %d; want %d", cut, bud.held, r.Charged(), wantCharge(r))
 		}
 		var te *Error
 		if r.Stop.Kind != StopTruncated || !errors.As(r.Stop.Err, &te) || te.Err != ErrTruncated ||
@@ -424,7 +460,7 @@ func TestTLDecodeStopKinds(t *testing.T) {
 	bud := &countBudget{limit: 2}
 	r = Decode(pointBlob(1, 5, 6), "Point", tab, bud)
 	checkStop(t, "budget", r, StopBudget, ErrNoBudget, "y", 12)
-	if !slices.Equal(paths(r.Fields), []string{"flags", "x"}) || bud.held != 128 || r.End != 12 {
+	if !slices.Equal(paths(r.Fields), []string{"flags", "x"}) || bud.held != (128+5)+(128+1) || r.End != 12 {
 		t.Errorf("budget: paths %v, held %d, end %d", paths(r.Fields), bud.held, r.End)
 	}
 	// A nil budget is a refusal.
@@ -441,8 +477,15 @@ func TestTLDecodeStopKinds(t *testing.T) {
 	// A panic (here the caller's budget) is recovered into malformed ErrInternal; what was
 	// read before it is kept.
 	r = Decode(pointBlob(1, 5, 6), "Point", tab, &panicBudget{after: 1})
-	if r.Stop == nil || r.Stop.Kind != StopMalformed || !errors.Is(r.Stop.Err, ErrInternal) || len(r.Fields) != 1 {
-		t.Errorf("panic: %+v", r)
+	checkStop(t, "panic", r, StopMalformed, ErrInternal, "x", 12)
+	if te := new(Error); !errors.As(r.Stop.Err, &te) || te.Detail != `panic: "budget"` ||
+		len(r.Fields) != 1 || r.Stop.Type != "Point" || r.Stop.ID != idPoint {
+		t.Errorf("panic: stop %+v, err %#v, %d fields; want detail %q, Point %#x", *r.Stop, r.Stop.Err, len(r.Fields), `panic: "budget"`, idPoint)
+	}
+	// A long panic value is quoted and capped at 200 bytes (as typedstream.guard).
+	r = Decode(pointBlob(1, 5, 6), "Point", tab, &panicBudget{after: 0, msg: strings.Repeat("\xff", 300)})
+	if te := new(Error); !errors.As(r.Stop.Err, &te) || len(te.Detail) != len("panic: ")+200 || !strings.HasPrefix(te.Detail, `panic: "\xff`) {
+		t.Errorf("long panic: err %v", r.Stop.Err)
 	}
 
 	// A table defect (a gated field before its flags word, a KTrue with no gate, a flags word
@@ -460,13 +503,58 @@ func TestTLDecodeStopKinds(t *testing.T) {
 		bad := Table{1: {ID: 1, Type: "T", Body: BodyFull, Fields: c.f}}
 		r := Decode(cat(le32(1), make([]byte, 8)), "T", bad, open())
 		checkStop(t, name, r, StopMalformed, ErrInternal, c.f[len(c.f)-1].Name, c.off)
+		if te := new(Error); !errors.As(r.Stop.Err, &te) || !strings.HasPrefix(te.Detail, "table: ") || r.Stop.ID != 1 || r.Stop.Type != "T" {
+			t.Errorf("%s: stop %+v, err %#v; want a table detail, T 1", name, *r.Stop, r.Stop.Err)
+		}
 	}
+
+	// M6: the Stop names the ID read (the table key), never a differing Constructor.ID.
+	skew := Table{
+		1: {ID: 99, Type: "T", Body: BodyPrefix, Fields: []Field{{Name: "a", Kind: KInt32}}},
+		2: {ID: 98, Type: "T", Body: BodyOpaque},
+	}
+	r = Decode(cat(le32(1), le32(5)), "T", skew, open())
+	checkStop(t, "prefix key", r, StopPrefix, nil, "", 8)
+	if r.Stop.ID != 1 {
+		t.Errorf("prefix key: stop ID %d, want 1", r.Stop.ID)
+	}
+	r = Decode(le32(2), "T", skew, open())
+	checkStop(t, "opaque key", r, StopOpaque, nil, "", 0)
+	if r.Stop.ID != 2 {
+		t.Errorf("opaque key: stop ID %d, want 2", r.Stop.ID)
+	}
+	r = Decode(cat(le32(1), le32(5)), "T", skew, &countBudget{limit: 0})
+	checkStop(t, "budget key", r, StopBudget, ErrNoBudget, "a", 4)
+	if r.Stop.ID != 1 {
+		t.Errorf("budget key: stop ID %d, want 1", r.Stop.ID)
+	}
+
+	// M4: ErrSteps through Decode, inside a vector of objects with vectors. A crate of 40
+	// boxes of 10,000 points: 2 reads for the crate, 30,006 per box (ID, flags, items header,
+	// 3 per point, ids header, key, who), so read MaxSteps+1 falls in box 33 after 3 + 3 x
+	// 3,265 + 2 of its reads: the y of point 3,265.
+	box := pointsBox(10000)
+	r = Decode(crateBlob(box, 40), "Crate", tab, open())
+	off := 12 + 33*len(box) + 16 + 3265*16 + 8
+	checkStop(t, "steps", r, StopCap, ErrSteps, "boxes[33].items[3265].y", off)
+	if r.Steps != MaxSteps || r.Stop.Type != "Point" || r.Stop.ID != idPoint {
+		t.Errorf("steps: %d steps, stop %+v", r.Steps, *r.Stop)
+	}
+	// ErrDepth inside a vector element: nodes[0] is at depth 2, so its 31st next is depth 33.
+	r = Decode(crateBlob(nil, 0, bytes.Repeat(le32(idNode), 64)), "Crate", tab, open())
+	checkStop(t, "depth in vector", r, StopCap, ErrDepth, "nodes[0]"+strings.Repeat(".next", 31), 20+4*31)
 }
 
-type panicBudget struct{ after int }
+type panicBudget struct {
+	after int
+	msg   string
+}
 
 func (b *panicBudget) Alloc(int64) error {
 	if b.after == 0 {
+		if b.msg != "" {
+			panic(b.msg)
+		}
 		panic("budget")
 	}
 	b.after--
@@ -569,4 +657,37 @@ func TestTLDecodeFlagsUnknownBits(t *testing.T) {
 	if r.Stop != nil || !slices.Equal(r.Flags, []string{FlagPaddingNonzero}) {
 		t.Errorf("padding: stop %v flags %v", r.Stop, r.Flags)
 	}
+}
+
+// liveFactor is the documented gap between the budget charge and the live heap of a result
+// (Task 3 review I1; docs/limitations/parsers.md, Decoders): the charge covers each Named
+// (104 bytes on 64-bit) and its path, while the Fields slice's append regrowth (spare
+// capacity up to a quarter of a large slice) and the allocator's size classes stay uncharged.
+const liveFactor = 1.25
+
+// Task 3 review I1 (F8): the charge bounds what a decode keeps alive. A large synthetic
+// decode (10 boxes of 10,000 points, 300,062 fields) charges 128 bytes and the path's length
+// per field, and the live heap of its result is at most liveFactor times that charge.
+func TestTLDecodeBudgetCoversLiveHeap(t *testing.T) {
+	blob := crateBlob(pointsBox(10000), 10)
+	tab := synthTable()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	bud := open()
+	r := Decode(blob, "Crate", tab, bud)
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	live := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	if r.Stop != nil || len(r.Fields) != 300062 {
+		t.Fatalf("stop %v, %d fields", r.Stop, len(r.Fields))
+	}
+	if bud.held != wantCharge(r) || r.Charged() != bud.held {
+		t.Errorf("budget holds %d, Charged %d; want %d", bud.held, r.Charged(), wantCharge(r))
+	}
+	if float64(live) > liveFactor*float64(bud.held) {
+		t.Errorf("live heap %d bytes > %.2f x charge %d (%.2fx)", live, liveFactor, bud.held, float64(live)/float64(bud.held))
+	}
+	t.Logf("live %d bytes, charged %d (%.2fx)", live, bud.held, float64(live)/float64(bud.held))
+	runtime.KeepAlive(r)
 }

@@ -9,7 +9,7 @@ import (
 // the parser package): Decode over random bytes with the synthetic table and a counting
 // budget never panics; End <= len(b); a decode without a stop ends at the end of the top
 // object (decoding b[:End] gives the same result); every path is unique; no KSecret field
-// holds bytes; the budget holds exactly 64 bytes per field (F8).
+// holds bytes; the budget holds exactly 128 bytes and the path's length per field (F8, I1).
 func FuzzTLDecodeSynthetic(f *testing.F) {
 	f.Add(fullBox(), uint8(0))
 	f.Add(boxBlob(nil, nil, nil, nil, 0), uint8(0))
@@ -18,7 +18,8 @@ func FuzzTLDecodeSynthetic(f *testing.F) {
 	f.Add(pointBlob(3, 1, 2), uint8(1))
 	f.Add(cat(le32(idNode), le32(idNode), le32(idNode)), uint8(2))
 	f.Add(cat(le32(idKinds), le32(IDBoolTrue), le64(0), tlBytes([]byte("hi")), tlBytes(nil), le32(IDVector), le32(1), le32(7), le64(9)), uint8(3))
-	types := []string{"Box", "Point", "Node", "Kinds"}
+	f.Add(crateBlob(pointsBox(2), 2, cat(le32(idNode), le32(idNode))), uint8(4))
+	types := []string{"Box", "Point", "Node", "Kinds", "Crate"}
 	tab := synthTable()
 	f.Fuzz(func(t *testing.T, b []byte, which uint8) {
 		typ := types[int(which)%len(types)]
@@ -27,8 +28,8 @@ func FuzzTLDecodeSynthetic(f *testing.F) {
 		if r.End < 0 || r.End > len(b) {
 			t.Fatalf("end %d of %d", r.End, len(b))
 		}
-		if bud.held != 64*int64(len(r.Fields)) {
-			t.Fatalf("budget holds %d for %d fields", bud.held, len(r.Fields))
+		if bud.held != wantCharge(r) || r.Charged() != bud.held {
+			t.Fatalf("budget holds %d, Charged %d; want %d", bud.held, r.Charged(), wantCharge(r))
 		}
 		seen := make(map[string]bool, len(r.Fields))
 		for _, n := range r.Fields {
