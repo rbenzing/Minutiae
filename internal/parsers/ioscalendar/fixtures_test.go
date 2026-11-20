@@ -13,6 +13,7 @@ import (
 // variants are the committed fixtures of plan 4I3 Task 7 (tools/fixtures/calendar_ios.py, spec 11).
 var variants = []string{
 	"calendar-ios", "calendar-ios-deleted", "calendar-ios-extract", "calendar-ios-noentitytype", "calendar-ios-oldlayout",
+	"calendar-ios-participant-owner",
 }
 
 func TestFixturesArePinnedByHash(t *testing.T) {

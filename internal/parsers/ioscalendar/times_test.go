@@ -11,7 +11,7 @@ import (
 
 // recordedVariants are the fixtures whose oracle has records.
 func recordedVariants() []string {
-	return []string{"calendar-ios", "calendar-ios-deleted", "calendar-ios-extract", "calendar-ios-noentitytype"}
+	return []string{"calendar-ios", "calendar-ios-deleted", "calendar-ios-extract", "calendar-ios-noentitytype", "calendar-ios-participant-owner"}
 }
 
 // at is a record time: an RFC 3339 instant ("...Z", basis utc) or a wall-clock reading without a zone (basis

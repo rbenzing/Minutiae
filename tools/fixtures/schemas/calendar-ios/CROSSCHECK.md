@@ -14,6 +14,8 @@ fixture proves that the parser reads the remembered layout, never that a real da
 differs degrades through the parser's probe (`unsupported-schema` at the system path) or through absent optional
 joins. The real-data run of plan 4I3 is required before relying on any of it.
 
+A real iOS 13 store has `owner_id` and `entity_type` in `Participant` rather than `item_id`, and that table was empty.
+
 ## DDL verdicts
 
 | File | Table | Verdict | Evidence |

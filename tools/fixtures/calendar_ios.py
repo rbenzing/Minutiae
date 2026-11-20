@@ -10,7 +10,7 @@ no-public-source, CROSSCHECK.md there): every table, column, type, join column, 
 marker, the Cocoa-seconds storage and the all-day midnight convention are memory, so these fixtures prove that the
 parser reads the remembered layout and nothing about a real database. The oracle reads the stored values back from the
 engine on a COPY of the finished files and states the expected parser output literally, from spec 5, 6.2, 6.4 and 8.2
-of plan 4I3, the builder-check rulings B1, B2, B5, B6, B8 and B10, and the plan's state vocabularies. It is a second reading
+of plan 4I3, the builder-check rulings B1, B2, B5, B6, B8, B10, B12 and B13, and the plan's state vocabularies. It is a second reading
 of the spec, not independent of the design: it shares no code with the Go parser, but both follow the same text. A
 branch the scenario never reaches is not restated: the oracle stops with an AssertionError there instead of guessing.
 
@@ -22,7 +22,7 @@ Text is read by go_text, ident, free_text and summarize, imported from calendar_
 sequence becomes its own U+FFFD, exactly as the parser's validText; never Python's errors="replace".
 
 Placement (the Go tests bundle each variant; the oracle holds file "any" rows, so the source path follows the role):
-calendar-ios, calendar-ios-noentitytype, calendar-ios-oldlayout and calendar-ios-deleted as an iOS backup file of
+calendar-ios, calendar-ios-noentitytype, calendar-ios-oldlayout, calendar-ios-deleted and calendar-ios-participant-owner as an iOS backup file of
 HomeDomain at Library/Calendar/Calendar.sqlitedb (parsertest BundleIOSBackup), calendar-ios-extract as an extraction at
 /private/var/mobile/Library/Calendar/Calendar.sqlitedb with logical path ios:HomeDomain/Library/Calendar/Calendar.sqlitedb
 (parsertest BundleIOS).
@@ -65,6 +65,9 @@ MAX_LIST = 1000
 MAPPED_TABLES = ("CalendarItem", "Location", "Participant", "Identity", "Calendar", "Store", "Recurrence",
                  "ExceptionDate", "Alarm")
 JOIN_TABLES = MAPPED_TABLES[1:]
+# The Match joins by owner (spec 8.2): table -> owner column.
+MATCH_KEYS = (("Participant", "item_id"), ("Recurrence", "owner_id"), ("ExceptionDate", "owner_id"),
+              ("Alarm", "calendaritem_owner_id"))
 # Columns kept in raw exactly as stored when the cell is not NULL (the plan's "As stored" list for ios.calendar).
 AS_STORED = ("hidden", "has_recurrences", "has_attendees", "invitation_status", "sequence_num", "birthday_id")
 # The coded columns kept as "unknown" with the stored code (Q1): column -> payload field.
@@ -181,13 +184,15 @@ def plain_text(v, limit, what):
 class Env:
     """The live view of the join tables; None in the typed recovery pass (B2: a recovered row joins nothing)."""
 
-    def __init__(self, view):
+    def __init__(self, view, lacking=()):
+        """lacking: the Match tables whose declared columns lack the owner column (the join is undecided, spec 9 and
+        B12: a Participant with owner_id and no item_id is never joined by owner_id)."""
         for t in JOIN_TABLES:
             assert t in view, "a join table absent from the store is not part of the scenario (not restated)"
         self.rows = {t: {r["rowid"]: r for r in view[t]} for t in JOIN_TABLES}
         self.by = {}
-        for t, col in (("Participant", "item_id"), ("Recurrence", "owner_id"), ("ExceptionDate", "owner_id"),
-                       ("Alarm", "calendaritem_owner_id")):
+        self.undecided = set(lacking)
+        for t, col in MATCH_KEYS:
             m = {}
             for r in view[t]:
                 m.setdefault(r.get(col), []).append(r)
@@ -305,8 +310,13 @@ def get_join(raw, unknown, env, state_key, table, key_col, key):
         return None
     row = env.rows[table].get(key)
     if row is None:
-        raw[state_key] = "no-%s-row" % table
+        raw[state_key] = miss_state(table, key)
     return row
+
+
+def miss_state(table, key):
+    """The state of a Get key naming no row: "zero-key" for a key stored as 0 (spec B13), else "no-<Table>-row"."""
+    return "zero-key" if key == 0 else "no-%s-row" % table
 
 
 def person_of(p, env, tf, field):
@@ -323,7 +333,7 @@ def person_of(p, env, tf, field):
         assert is_int(iid), "an undecidable identity key is not restated"
         ident_row = env.rows["Identity"].get(iid)
         if ident_row is None:
-            state = "no-Identity-row"
+            state = miss_state("Identity", iid)
         else:
             a = ident_row.get("address")
             if addr is None and a is not None:
@@ -490,7 +500,10 @@ def expect_item(r, env, file="any"):
 
 def children(p, raw, tf, env, rid):
     att, att_raw, unnamed, unnamed_raw = [], [], 0, []
-    for x in env.match("Participant", rid):
+    for t in sorted(env.undecided):
+        assert t == "Participant", "an undecided Match other than Participant is not part of the scenario (not restated)"
+        raw["join_undecided"] = [t]
+    for x in ([] if "Participant" in env.undecided else env.match("Participant", rid)):
         addr, name, state = person_of(x, env, tf, "attendees")
         codes = entry_of(x, ("role", "type", "status"))
         for col in ("role", "type", "status"):
@@ -671,8 +684,18 @@ def oracle(files, variant, ddl=DDL, refused=False):
     if refused:
         return exp
     view = C.engine_view(files, ["CalendarItem", "OccurrenceCache", "sqlite_master"] + list(JOIN_TABLES))
-    env = Env(view)
+    lacking = []
+    for t, col in MATCH_KEYS:
+        tsql = [jv(m["sql"]) for m in view["sqlite_master"] if m["type"] == b"table" and jv(m["name"]) == t]
+        if tsql and col not in [c for c, _ in A.declared_columns(tsql[0])]:
+            lacking.append(t)
+    env = Env(view, lacking)
     notes = exp["notes"]
+    for t in lacking:  # the guard (spec 9): one note and one schema warning before the run
+        why = "the table lacks column(s) %s of its join by owner" % dict(MATCH_KEYS)[t]
+        notes["join_undecided." + t] = why
+        exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:schema",
+                                "contains": "calendar-join-undecided: table %s: %s; every join through it by owner is undecided" % (t, why)})
     sql = [jv(m["sql"]) for m in view["sqlite_master"] if m["type"] == b"table" and jv(m["name"]) == "CalendarItem"]
     has_kind = any(c == "entity_type" for c, _ in A.declared_columns(sql[0]))  # the declared columns, not a row's keys
     kinds = {}
@@ -684,6 +707,11 @@ def oracle(files, variant, ddl=DDL, refused=False):
             exp["records"].append(e)
         if has_kind and is_int(r.get("entity_type")):
             kinds[r["entity_type"]] = kinds.get(r["entity_type"], 0) + 1
+    for t in lacking:  # after the run: the records whose raw.join_undecided names the table (B9, 4I3-P9)
+        n = sum(1 for e in exp["records"] if t in e["payload"]["raw"].get("join_undecided", []))
+        if n:
+            exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:table=" + t,
+                                    "contains": "calendar-join-undecided: %s: %d records" % (t, n)})
     # 4I3-P10: the item kinds of the live rows (NULL is no value), or the column's absence
     if not has_kind:
         notes["entity_type"] = "absent"
@@ -776,6 +804,42 @@ def variant_noentitytype(work):
     if without == ddl:
         raise SystemExit("calendar-ios-noentitytype: the snapshot has no entity_type column to drop")
     return variant_lone(work, "calendar-ios-noentitytype", without)
+
+
+def variant_participant_owner(work):
+    """CORE-iOS rows 1-3 in a store whose Participant has the columns a real iOS 13 store has (owner_id and
+    entity_type, no item_id; plan 4I3 Task 12 run 3, spec B12): the attendees are never joined by owner_id, so every
+    record states the join undecided and it is counted; the organizer (a Get by ROWID) is still joined. The
+    entity_type value is invented."""
+    ddl = snapshot()
+    old = "CREATE TABLE Participant (ROWID INTEGER PRIMARY KEY, item_id INTEGER, identity_id INTEGER, email TEXT, role INTEGER, type INTEGER, status INTEGER);"
+    new = ("CREATE TABLE Participant (ROWID INTEGER PRIMARY KEY, entity_type INTEGER, type INTEGER, status INTEGER, "
+           "role INTEGER, identity_id INTEGER, owner_id INTEGER, email TEXT);")
+    if old not in ddl:
+        raise SystemExit("calendar-ios-participant-owner: the snapshot's Participant is not the expected one")
+    path = os.path.join(work, "Calendar.sqlitedb")
+    con = create_db(path, ddl.replace(old, new))
+    ids = set(range(1, 4))
+    kids = core_children(ids)
+    parts = kids.pop("Participant")
+    with C.batch(con):
+        for t, rows in (("Store", STORES), ("Calendar", CALENDARS), ("Location", LOCATIONS), ("Identity", IDENTITIES),
+                        ("CalendarItemChanges", CHANGES)):
+            for r in rows:
+                C.insert(con, t, r)
+        for r in core_subset(ids):
+            C.insert(con, "CalendarItem", r)
+        for t, rows in kids.items():
+            for r in rows:
+                C.insert(con, t, r)
+        for r in parts:
+            r = dict(r)
+            r["owner_id"] = r.pop("item_id")
+            r["entity_type"] = 7
+            C.insert(con, "Participant", r)
+    con.close()
+    files = {"db": C.read(path)}
+    return files, oracle(files, "calendar-ios-participant-owner")
 
 
 def variant_oldlayout(work):
@@ -879,7 +943,7 @@ def reader_form(out):
 
 VARIANTS = {"calendar-ios": variant_core, "calendar-ios-extract": variant_extract,
             "calendar-ios-noentitytype": variant_noentitytype, "calendar-ios-oldlayout": variant_oldlayout,
-            "calendar-ios-deleted": variant_deleted}
+            "calendar-ios-deleted": variant_deleted, "calendar-ios-participant-owner": variant_participant_owner}
 
 
 def _selfcheck():

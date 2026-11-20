@@ -421,3 +421,33 @@ func TestIOSCalendarZeroKeyIsStated(t *testing.T) {
 		t.Errorf("rowid-0 rows: location %v, organizer %v, calendar %v; want each joined", r.Payload["location"], r.Payload["organizer"], r.Payload["calendar"])
 	}
 }
+
+// Spec B12 (plan 4I3 Task 12 fix 1): a Participant with the columns a real iOS 13 store has (owner_id and entity_type,
+// no item_id; calendar-ios-participant-owner) is never joined by owner_id. Every record states the attendee join
+// undecided (raw.join_undecided names Participant, never "no attendees") and one warning counts them; the organizer,
+// a Get by ROWID, is still joined.
+func TestIOSCalendarParticipantOwnerColumnLeavesAttendeesUndecided(t *testing.T) {
+	res := parseVariant(t, "calendar-ios-participant-owner")
+	if res.Err != nil || len(res.Records) != 3 || len(res.Violations) != 0 {
+		t.Fatalf("err %v, %d records, violations %v; want 3 records", res.Err, len(res.Records), res.Violations)
+	}
+	recs := byRowid(t, res)
+	for id, r := range recs {
+		if r.Payload["attendees"] != nil || !sameJSON(t, rawOf(r)["join_undecided"], []any{"Participant"}) || rawOf(r)["attendees"] != nil {
+			t.Errorf("row %d: attendees %v, raw.attendees %v, join_undecided %v; want none, none and [Participant]", id, r.Payload["attendees"], rawOf(r)["attendees"], rawOf(r)["join_undecided"])
+		}
+	}
+	if !sameJSON(t, recs[1].Payload["organizer"], map[string]any{"name": "Ann", "address": "mailto:ann@example.test"}) {
+		t.Errorf("row 1: organizer %v; the Get by ROWID is not guarded", recs[1].Payload["organizer"])
+	}
+	if res.Notes["join_undecided.Participant"] != "the table lacks column(s) item_id of its join by owner" {
+		t.Errorf("note join_undecided.Participant = %q", res.Notes["join_undecided.Participant"])
+	}
+	var counted bool
+	for _, w := range res.Warnings {
+		counted = counted || (w.Locator == "sqlite:table=Participant" && w.Reason == "calendar-join-undecided: Participant: 3 records")
+	}
+	if !counted {
+		t.Errorf("warnings %v; want the 3 records counted", res.Warnings)
+	}
+}

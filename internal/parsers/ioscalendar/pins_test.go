@@ -5,10 +5,11 @@ package ioscalendar_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
-	"calendar-ios-deleted.db":      "5906138e91cdf1f18dd3b74079152ac29b908110d5c213a733ce2933559af245",
-	"calendar-ios-extract.db":      "4dc22a160e5142b3ab6fa2a252576e130b000f24c7de22a3735d2d3515416d13",
-	"calendar-ios-noentitytype.db": "40e417f7461e6ecf1ce9c724323a035e1868cf37c34a76546569c99b552d5e97",
-	"calendar-ios-oldlayout.db":    "76d9a600585f28448418522d55439efea76108defc70b33e99b54e8dc479965f",
-	"calendar-ios.db":              "0eaa53a9a29469e11d1ee920846c3a7839ee171a1340a59c4708edffb46154db",
-	"calendar-ios.wal":             "f5a1fc1810fb8c87d52d79eaacdfcd188415d53a74096580414459076a7af158",
+	"calendar-ios-deleted.db":           "5906138e91cdf1f18dd3b74079152ac29b908110d5c213a733ce2933559af245",
+	"calendar-ios-extract.db":           "4dc22a160e5142b3ab6fa2a252576e130b000f24c7de22a3735d2d3515416d13",
+	"calendar-ios-noentitytype.db":      "40e417f7461e6ecf1ce9c724323a035e1868cf37c34a76546569c99b552d5e97",
+	"calendar-ios-oldlayout.db":         "76d9a600585f28448418522d55439efea76108defc70b33e99b54e8dc479965f",
+	"calendar-ios-participant-owner.db": "97b78cbd5cbbcef8e3c82d641b0027d1eb3426a76fc64d4b9d7d862d98d144fa",
+	"calendar-ios.db":                   "0eaa53a9a29469e11d1ee920846c3a7839ee171a1340a59c4708edffb46154db",
+	"calendar-ios.wal":                  "f5a1fc1810fb8c87d52d79eaacdfcd188415d53a74096580414459076a7af158",
 }
