@@ -34,7 +34,7 @@ change:
 | Recovery, carving or slack: `internal/carve`, a reader's `Recoverer`, recovery in `internal/examine` | [invariants/recovery](invariants/recovery.md), [limitations/recovery](limitations/recovery.md), and the reader's files |
 | `internal/sqlitefile`, `internal/decode/sqlitedb/...`, `internal/dbrecover` | [invariants/sqlite](invariants/sqlite.md), [limitations/sqlite](limitations/sqlite.md) |
 | `internal/records`, or the record tables and full-text index in `internal/evidence` | [invariants/records](invariants/records.md), [limitations/records](limitations/records.md); [performance.md](performance.md) for scale work |
-| `internal/parse`, `internal/artparse`, `internal/recordtypes`, `internal/decode/{ts,plist,typedstream,iosbackup}`, `internal/parsers/...` | [invariants/parsers](invariants/parsers.md), [limitations/parsers](limitations/parsers.md); add [sqlite](invariants/sqlite.md) when a parser maps tables |
+| `internal/parse`, `internal/artparse`, `internal/recordtypes`, `internal/decode/{ts,plist,typedstream,iosbackup,tl}`, `internal/parsers/...` | [invariants/parsers](invariants/parsers.md), [limitations/parsers](limitations/parsers.md); add [sqlite](invariants/sqlite.md) when a parser maps tables |
 | `internal/cli` | The area of the command you change |
 | A new package or a new import edge | [architecture.md](architecture.md) |
 | `tools/check`, `tools/fuzzcampaign`, `tools/parserhash`, `tools/recoveryaccept`, how tests or fixtures run | [testing.md](testing.md) |

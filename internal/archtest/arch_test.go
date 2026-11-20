@@ -75,6 +75,7 @@ var allowed = map[string][]string{
 	"internal/decode/wajid":                {},
 	"internal/decode/plist":                {},
 	"internal/decode/typedstream":          {},
+	"internal/decode/tl":                   {},
 	"internal/decode/iosbackup":            {"internal/decode/sqlitedb", "internal/decode/plist"},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
 	"internal/parse":                       {"internal/records"},
