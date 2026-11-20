@@ -27,6 +27,12 @@
 //     fields carry no bytes (TLO:15-54); FlagUnknownFlagBits names a set bit that gates nothing
 //     in a pinned constructor, which only a table-driven walker can decide.
 //
+// Decode (walker.go) reads one object by a constructor Table the caller owns (the package
+// holds no Telegram data): fields in table order, gated fields by their flags bit, nested
+// objects to MaxDepth. It never skips: an object it cannot read (unknown, opaque, a prefix
+// body, a bound) ends the whole decode, and every field read before it is returned with a
+// Stop saying where (offset and path) and why.
+//
 // Bounds (limits.go) are package constants a caller cannot widen. Every bound is a typed
 // error: an *Error wrapping one sentinel of errors.go, carrying the offset where the failed
 // read began. A failed read consumes nothing, and every reading call is one step of the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -70,6 +71,7 @@ type stringCase struct {
 func stringCases() []stringCase {
 	short253 := cat([]byte{253}, bytes.Repeat([]byte{'x'}, 253), []byte{0, 0})
 	long254 := cat([]byte{0xfe, 0xfe, 0, 0}, bytes.Repeat([]byte{'y'}, 254), []byte{0, 0})
+	prefix255 := cat([]byte{0xff, 0xfe, 0, 0}, bytes.Repeat([]byte{'z'}, 254), []byte{0, 0})
 	return []stringCase{
 		{"short", []byte{3, 'a', 'b', 'c'}, []byte("abc"), 4, nil},
 		{"empty", []byte{0, 0, 0, 0}, []byte{}, 4, nil},
@@ -77,6 +79,10 @@ func stringCases() []stringCase {
 		{"long-254", long254, bytes.Repeat([]byte{'y'}, 254), 260, nil},
 		{"prefix-255", []byte{0xff, 3, 0, 0, 'a', 'b', 'c', 0}, []byte("abc"), 8, []string{FlagLengthPrefix255, FlagNonCanonicalLength}},
 		{"padding-nonzero", []byte{1, 'a', 0, 1}, []byte("a"), 4, []string{FlagPaddingNonzero}},
+		// The two framing flags apart (Task 2 review M1): the 0xfe long form of a short length,
+		// and the 0xff prefix of a canonical long length.
+		{"non-canonical-fe", []byte{0xfe, 3, 0, 0, 'a', 'b', 'c', 0}, []byte("abc"), 8, []string{FlagNonCanonicalLength}},
+		{"prefix-255-long", prefix255, bytes.Repeat([]byte{'z'}, 254), 260, []string{FlagLengthPrefix255}},
 	}
 }
 
@@ -127,8 +133,9 @@ type boundCase struct {
 	in   []byte
 	op   func(r *Reader) error
 	want error
-	off  int // the offset where the failed read began
-	pre  int // primitive Int32 reads made before the failing one
+	off  int  // the offset where the failed read began
+	pre  int  // primitive Int32 reads made before the failing one
+	fop  byte // the FuzzTLReader op byte of op (fuzz_test.go)
 }
 
 func opInt32(r *Reader) error  { _, err := r.Int32(); return err }
@@ -144,22 +151,22 @@ func vec(count int32, tail int) []byte {
 
 func boundCases() []boundCase {
 	return []boundCase{
-		{"int32-3-bytes", []byte{1, 2, 3}, opInt32, ErrTruncated, 0, 0},
-		{"int32-after-one", []byte{1, 0, 0, 0, 2, 0}, opInt32, ErrTruncated, 4, 1},
-		{"bool-not-an-id", []byte{1, 0, 0, 0}, opBool, ErrBadBool, 0, 0},
-		{"bool-truncated", []byte{0xb5, 0x75}, opBool, ErrTruncated, 0, 0},
-		{"vector-bad-id", []byte{0x16, 0xc4, 0xb5, 0x1c, 0, 0, 0, 0}, opVector(4), ErrBadVector, 0, 0},
-		{"vector-count-missing", le32(IDVector), opVector(4), ErrTruncated, 0, 0},
-		{"vector-count-negative", vec(-1, 0), opVector(4), ErrVectorCount, 0, 0},
-		{"vector-count-above-max", vec(MaxVector+1, 0), opVector(0), ErrVectorCount, 0, 0},
-		{"vector-count-past-end", vec(5, 8), opVector(4), ErrVectorCount, 0, 0},
-		{"vector-count-2^31-1", vec(math.MaxInt32, 8), opVector(4), ErrVectorCount, 0, 0},
-		{"string-long-past-end", []byte{0xfe, 0xff, 0xff, 0xff}, opString, ErrStringLength, 0, 0},
-		{"string-short-past-end", []byte{5, 'a'}, opString, ErrStringLength, 0, 0},
-		{"string-pad-missing", []byte{2, 'a', 'b'}, opString, ErrTruncated, 0, 0},
-		{"string-empty-input", []byte{}, opString, ErrTruncated, 0, 0},
-		{"string-long-prefix-cut", []byte{0xfe, 1, 0}, opString, ErrTruncated, 0, 0},
-		{"string-after-one", []byte{1, 0, 0, 0, 9, 'a'}, opString, ErrStringLength, 4, 1},
+		{"int32-3-bytes", []byte{1, 2, 3}, opInt32, ErrTruncated, 0, 0, 0},
+		{"int32-after-one", []byte{1, 0, 0, 0, 2, 0}, opInt32, ErrTruncated, 4, 1, 0},
+		{"bool-not-an-id", []byte{1, 0, 0, 0}, opBool, ErrBadBool, 0, 0, 3},
+		{"bool-truncated", []byte{0xb5, 0x75}, opBool, ErrTruncated, 0, 0, 3},
+		{"vector-bad-id", []byte{0x16, 0xc4, 0xb5, 0x1c, 0, 0, 0, 0}, opVector(4), ErrBadVector, 0, 0, 38},
+		{"vector-count-missing", le32(IDVector), opVector(4), ErrTruncated, 0, 0, 38},
+		{"vector-count-negative", vec(-1, 0), opVector(4), ErrVectorCount, 0, 0, 38},
+		{"vector-count-above-max", vec(MaxVector+1, 0), opVector(0), ErrVectorCount, 0, 0, 6},
+		{"vector-count-past-end", vec(5, 8), opVector(4), ErrVectorCount, 0, 0, 38},
+		{"vector-count-2^31-1", vec(math.MaxInt32, 8), opVector(4), ErrVectorCount, 0, 0, 38},
+		{"string-long-past-end", []byte{0xfe, 0xff, 0xff, 0xff}, opString, ErrStringLength, 0, 0, 5},
+		{"string-short-past-end", []byte{5, 'a'}, opString, ErrStringLength, 0, 0, 5},
+		{"string-pad-missing", []byte{2, 'a', 'b'}, opString, ErrTruncated, 0, 0, 5},
+		{"string-empty-input", []byte{}, opString, ErrTruncated, 0, 0, 5},
+		{"string-long-prefix-cut", []byte{0xfe, 1, 0}, opString, ErrTruncated, 0, 0, 5},
+		{"string-after-one", []byte{1, 0, 0, 0, 9, 'a'}, opString, ErrStringLength, 4, 1, 5},
 	}
 }
 
@@ -178,6 +185,13 @@ func TestTLReaderBoundsAreTypedErrors(t *testing.T) {
 		if r.Offset() != c.off {
 			t.Errorf("%s: a failed read moved the offset to %d, want %d", c.name, r.Offset(), c.off)
 		}
+		// The FuzzTLReader seed of this case (pre zero ops, then fop) reaches the same error.
+		r = mustReader(t, c.in)
+		var ferr error
+		for i, op := range append(make([]byte, c.pre), c.fop) {
+			ferr = fuzzOp(t, r, i, op)
+		}
+		checkBoundError(t, c.name+" fuzz seed", ferr, c.want, c.off)
 	}
 	// "03 61 62 63" needs no padding: it is not a truncation.
 	if _, err := mustReader(t, []byte{3, 'a', 'b', 'c'}).String(); err != nil {
@@ -239,4 +253,23 @@ func TestTLReaderVectorHeader(t *testing.T) {
 	checkBoundError(t, "minElem -1", err, ErrInternal, 0)
 	_, err = mustReader(t, vec(2, 8)).VectorHeader(math.MaxInt)
 	checkBoundError(t, "minElem MaxInt", err, ErrVectorCount, 0)
+}
+
+// A failed read charges its step and states no flag (Task 2 review M4): the 0xff prefix is
+// stated only by a read that succeeds.
+func TestTLReaderFailedReadChargesAStep(t *testing.T) {
+	for _, c := range []struct {
+		in   []byte
+		want error
+	}{
+		{[]byte{0xff, 3, 0, 0, 'a'}, ErrStringLength},
+		{[]byte{0xff, 3, 0, 0, 'a', 'b', 'c'}, ErrTruncated}, // the padding byte is missing
+	} {
+		r := mustReader(t, c.in)
+		_, err := r.String()
+		checkBoundError(t, fmt.Sprintf("% x", c.in), err, c.want, 0)
+		if r.Steps() != 1 || len(r.Flags()) != 0 || r.Offset() != 0 {
+			t.Errorf("% x: steps %d, flags %v, offset %d; want 1, none, 0", c.in, r.Steps(), r.Flags(), r.Offset())
+		}
+	}
 }
