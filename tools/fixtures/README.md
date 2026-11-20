@@ -3368,10 +3368,10 @@ new flags the 4D output is unchanged. `_sync_state` and `_sync_state_metadata` a
 define them (ruling F06).
 
 ```
-py -3 -I tools/fixtures/telephony_gen.py --family calendar-android --out internal/parsers/androidcalendar/testdata \
+py -3 -B -I tools/fixtures/telephony_gen.py --family calendar-android --out internal/parsers/androidcalendar/testdata \
     --pins-go internal/parsers/androidcalendar/pins_test.go --pins-package androidcalendar_test
-py -3 -I tools/fixtures/telephony_gen.py --family calendar-android --recover-oracle --out internal/parsers/androidcalendar/testdata
-py -3 -I tools/fixtures/telephony_gen.py --family calendar-android --check
+py -3 -B -I tools/fixtures/telephony_gen.py --family calendar-android --recover-oracle --out internal/parsers/androidcalendar/testdata
+py -3 -B -I tools/fixtures/telephony_gen.py --family calendar-android --check
 ```
 
 It needs Python 3 with its bundled `sqlite3` only, needs no Docker and is not part of `gen.sh all`. A WAL or journal never

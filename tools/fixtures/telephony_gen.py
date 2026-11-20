@@ -58,6 +58,9 @@ def main(argv):
     a = ap.parse_args(argv)
     if a.pins_go and (a.variant or not a.pins_package):
         ap.error("--pins-go needs every variant and --pins-package")
+    if a.check and a.out:
+        # --check generates into a temp directory of its own and removes it; it never removes a directory it was given
+        ap.error("--check takes no --out: it generates into a temp directory of its own and discards it")
     fam = FAMILIES[a.family]
     names = a.variant or list(fam.VARIANTS)
     if a.recover_oracle:

@@ -20,3 +20,6 @@ docs/superpowers/
 # large generated test images (tools/fixtures/apfs-big.sh): never committed
 *.big.img
 *.sparse.img
+
+# Python bytecode of the fixture generators (run them with -B; this covers a run without it)
+__pycache__/
