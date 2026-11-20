@@ -20,7 +20,8 @@
 //     reader accepts it too and states it with FlagLengthPrefix255. A long form for a length
 //     below 254 is stated with FlagNonCanonicalLength. The data is zero-padded to a multiple of
 //     4 counting the prefix; a non-zero padding byte is stated with FlagPaddingNonzero. A
-//     length past the end of the blob is refused, as the app refuses it.
+//     length past the end of the blob is refused, as the app refuses it, as ErrTruncated: the
+//     framing cannot declare a length above MaxString (spec ruling T7).
 //   - A boxed vector is the constructor 0x1cb5c415, an int32 count and the elements (VEC:8,35-37);
 //     bare int and long vectors exist (VEC:60-131) and are the walker's to read.
 //   - A flags:# field gates optional fields by bit in declaration order and flag-only true

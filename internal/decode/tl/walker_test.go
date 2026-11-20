@@ -296,17 +296,15 @@ func TestTLDecodeStopsAtUnknownConstructor(t *testing.T) {
 }
 
 // Spec section 7.2: everything decoded before a stop is returned. A box cut at every byte
-// boundary yields a prefix of the full result and an End within the cut. The stop is
-// `truncated`, except where the cut falls inside a declared size: the reader refuses that
-// length or count before any element (spec section 7.1, ErrStringLength and ErrVectorCount),
-// which is `cap` at the field that declared it (4I4-P10), never a skip.
+// boundary yields a prefix of the full result, an End within the cut and a `truncated` stop
+// (ErrTruncated): a blob that ends is never a limit hit, even inside a declared length or
+// count (spec ruling T7).
 func TestTLDecodePartialKeepsWhatWasRead(t *testing.T) {
 	blob := fullBox()
 	full := Decode(blob, "Box", synthTable(), open())
 	if full.Stop != nil {
 		t.Fatalf("full: %+v", *full.Stop)
 	}
-	truncated := 0
 	for cut := range len(blob) {
 		bud := open()
 		r := Decode(blob[:cut], "Box", synthTable(), bud)
@@ -323,29 +321,10 @@ func TestTLDecodePartialKeepsWhatWasRead(t *testing.T) {
 			t.Errorf("cut %d: budget holds %d for %d fields", cut, bud.held, len(r.Fields))
 		}
 		var te *Error
-		if !errors.As(r.Stop.Err, &te) || te.Offset != r.Stop.Offset || te.Path != r.Stop.Path {
-			t.Errorf("cut %d: stop %+v, err %v", cut, *r.Stop, r.Stop.Err)
-			continue
+		if r.Stop.Kind != StopTruncated || !errors.As(r.Stop.Err, &te) || te.Err != ErrTruncated ||
+			te.Offset != r.Stop.Offset || te.Path != r.Stop.Path {
+			t.Errorf("cut %d: stop %+v, err %v; want truncated with ErrTruncated", cut, *r.Stop, r.Stop.Err)
 		}
-		switch r.Stop.Kind {
-		case StopTruncated:
-			truncated++
-			if !errors.Is(te, ErrTruncated) {
-				t.Errorf("cut %d: truncated with %v", cut, te)
-			}
-		case StopCap:
-			if !errors.Is(te, ErrStringLength) && !errors.Is(te, ErrVectorCount) {
-				t.Errorf("cut %d: cap with %v", cut, te)
-			}
-			if p := r.Stop.Path; p != "items" && p != "ids" && p != "key" {
-				t.Errorf("cut %d: cap at %q, not a declared size", cut, p)
-			}
-		default:
-			t.Errorf("cut %d: stop kind %q", cut, r.Stop.Kind)
-		}
-	}
-	if truncated < len(blob)/2 {
-		t.Errorf("only %d of %d cuts are truncated", truncated, len(blob))
 	}
 }
 
@@ -388,7 +367,11 @@ func TestTLDecodeStopKinds(t *testing.T) {
 
 	str := cat(kindsHead, le32(IDBoolFalse), le64(0), []byte{0xfe, 0xff, 0xff, 0xff}, make([]byte, 8))
 	r = Decode(str, "Kinds", tab, open())
-	checkStop(t, "string fe ff ff ff", r, StopCap, ErrStringLength, "s", 16)
+	// T7: the framing maximum past the end of a short blob is a truncation, not a cap.
+	checkStop(t, "string fe ff ff ff", r, StopTruncated, ErrTruncated, "s", 16)
+	if te := new(Error); !errors.As(r.Stop.Err, &te) || te.Declared != MaxString || te.Remaining != 8 {
+		t.Errorf("string fe ff ff ff: err %#v; want declared %d, remaining 8", r.Stop.Err, MaxString)
+	}
 	if want := []string{"b", "d"}; !slices.Equal(paths(r.Fields), want) || r.End != 16 {
 		t.Errorf("string fe ff ff ff: paths %v end %d; want %v 16", paths(r.Fields), r.End, want)
 	}
@@ -548,10 +531,10 @@ func TestTLDecodeTerminates(t *testing.T) {
 	vecBomb := cat(le32(idBox), le32(0), le32(IDVector), le32(MaxVector), make([]byte, 8))
 	strBomb := cat(le32(idKinds), le32(IDBoolTrue), le64(0), []byte{0xfe, 0xff, 0xff, 0x7f}, make([]byte, 8))
 	allocs := testing.AllocsPerRun(100, func() {
-		if r := Decode(vecBomb, "Box", tab, open()); r.Stop == nil || r.Stop.Kind != StopCap {
+		if r := Decode(vecBomb, "Box", tab, open()); r.Stop == nil || r.Stop.Kind != StopTruncated { // T7
 			t.Fatal("vector bomb decoded")
 		}
-		if r := Decode(strBomb, "Kinds", tab, open()); r.Stop == nil || r.Stop.Kind != StopCap {
+		if r := Decode(strBomb, "Kinds", tab, open()); r.Stop == nil || r.Stop.Kind != StopTruncated {
 			t.Fatal("string bomb decoded")
 		}
 	})

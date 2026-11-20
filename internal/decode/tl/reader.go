@@ -53,6 +53,12 @@ func NewReader(b []byte) (*Reader, error) {
 // fail is the error of a read that began at the current offset.
 func (r *Reader) fail(err error) error { return &Error{Err: err, Offset: r.off} }
 
+// pastEnd is the ErrTruncated of a declared length or count that runs past the end, keeping
+// the declared value and the bytes that remained after its prefix or header (spec ruling T7).
+func (r *Reader) pastEnd(declared, remaining int) error {
+	return &Error{Err: ErrTruncated, Offset: r.off, Declared: declared, Remaining: remaining}
+}
+
 // step charges one read to the work budget.
 func (r *Reader) step() error {
 	if r.steps >= MaxSteps {
@@ -153,8 +159,10 @@ func (r *Reader) Bytes() ([]byte, error) {
 			flags |= flagNonCanonicalLength
 		}
 	}
-	if n > MaxString || n > rem-prefix {
-		return nil, r.fail(ErrStringLength)
+	// n <= MaxString always (the 3-byte framing maximum): a length past the end is a
+	// truncation, never a cap (spec ruling T7).
+	if n > rem-prefix {
+		return nil, r.pastEnd(n, rem-prefix)
 	}
 	pad := (4 - (prefix+n)%4) % 4
 	end := r.off + prefix + n
@@ -177,8 +185,9 @@ func (r *Reader) Bytes() ([]byte, error) {
 func (r *Reader) String() ([]byte, error) { return r.Bytes() }
 
 // VectorHeader reads a boxed vector's constructor (IDVector, else ErrBadVector) and count. A
-// count below 0, above MaxVector, or whose count elements of at least minElem bytes each
-// cannot fit the bytes after the header is ErrVectorCount, before any element is read.
+// count below 0 or above MaxVector is ErrVectorCount; a count within MaxVector whose
+// elements of at least minElem bytes each cannot fit the bytes after the header is
+// ErrTruncated (spec ruling T7). Both are decided before any element is read.
 func (r *Reader) VectorHeader(minElem int) (int, error) {
 	if minElem < 0 {
 		return 0, r.fail(ErrInternal)
@@ -196,8 +205,11 @@ func (r *Reader) VectorHeader(minElem int) (int, error) {
 	p = r.b[r.off : r.off+8]
 	count := int(int32(binary.LittleEndian.Uint32(p[4:]))) //nolint:gosec // the TL count is a signed int32
 	rem := r.Remaining() - 8
-	if count < 0 || count > MaxVector || (minElem > 0 && count > rem/minElem) {
+	if count < 0 || count > MaxVector {
 		return 0, r.fail(ErrVectorCount)
+	}
+	if minElem > 0 && count > rem/minElem {
+		return 0, r.pastEnd(count, rem)
 	}
 	r.off += 8
 	return count, nil

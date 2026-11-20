@@ -159,14 +159,20 @@ func boundCases() []boundCase {
 		{"vector-count-missing", le32(IDVector), opVector(4), ErrTruncated, 0, 0, 38},
 		{"vector-count-negative", vec(-1, 0), opVector(4), ErrVectorCount, 0, 0, 38},
 		{"vector-count-above-max", vec(MaxVector+1, 0), opVector(0), ErrVectorCount, 0, 0, 6},
-		{"vector-count-past-end", vec(5, 8), opVector(4), ErrVectorCount, 0, 0, 38},
+		// T7: a count within MaxVector whose elements run past the end is truncated; only a
+		// count above MaxVector is a cap, even when the bytes would hold it.
+		{"vector-count-past-end", vec(5, 8), opVector(4), ErrTruncated, 0, 0, 38},
+		{"vector-max-past-end", vec(MaxVector, MaxVector-1), opVector(1), ErrTruncated, 0, 0, 14},
+		{"vector-above-max-fits", vec(MaxVector+1, MaxVector+1), opVector(1), ErrVectorCount, 0, 0, 14},
 		{"vector-count-2^31-1", vec(math.MaxInt32, 8), opVector(4), ErrVectorCount, 0, 0, 38},
-		{"string-long-past-end", []byte{0xfe, 0xff, 0xff, 0xff}, opString, ErrStringLength, 0, 0, 5},
-		{"string-short-past-end", []byte{5, 'a'}, opString, ErrStringLength, 0, 0, 5},
+		// T7: the 3-byte framing cannot declare a length above MaxString, so a string past the
+		// end is always truncated, the framing maximum included.
+		{"string-long-past-end", []byte{0xfe, 0xff, 0xff, 0xff}, opString, ErrTruncated, 0, 0, 5},
+		{"string-short-past-end", []byte{5, 'a'}, opString, ErrTruncated, 0, 0, 5},
 		{"string-pad-missing", []byte{2, 'a', 'b'}, opString, ErrTruncated, 0, 0, 5},
 		{"string-empty-input", []byte{}, opString, ErrTruncated, 0, 0, 5},
 		{"string-long-prefix-cut", []byte{0xfe, 1, 0}, opString, ErrTruncated, 0, 0, 5},
-		{"string-after-one", []byte{1, 0, 0, 0, 9, 'a'}, opString, ErrStringLength, 4, 1, 5},
+		{"string-after-one", []byte{1, 0, 0, 0, 9, 'a'}, opString, ErrTruncated, 4, 1, 5},
 	}
 }
 
@@ -252,7 +258,11 @@ func TestTLReaderVectorHeader(t *testing.T) {
 	_, err = mustReader(t, vec(1, 4)).VectorHeader(-1)
 	checkBoundError(t, "minElem -1", err, ErrInternal, 0)
 	_, err = mustReader(t, vec(2, 8)).VectorHeader(math.MaxInt)
-	checkBoundError(t, "minElem MaxInt", err, ErrVectorCount, 0)
+	checkBoundError(t, "minElem MaxInt", err, ErrTruncated, 0)
+	// T7 boundary: MaxVector elements that fit are read; one more is a cap.
+	if n, err := mustReader(t, vec(MaxVector, MaxVector)).VectorHeader(1); err != nil || n != MaxVector {
+		t.Errorf("VectorHeader(MaxVector, fits) = %d, %v", n, err)
+	}
 }
 
 // A failed read charges its step and states no flag (Task 2 review M4): the 0xff prefix is
@@ -262,7 +272,7 @@ func TestTLReaderFailedReadChargesAStep(t *testing.T) {
 		in   []byte
 		want error
 	}{
-		{[]byte{0xff, 3, 0, 0, 'a'}, ErrStringLength},
+		{[]byte{0xff, 3, 0, 0, 'a'}, ErrTruncated},
 		{[]byte{0xff, 3, 0, 0, 'a', 'b', 'c'}, ErrTruncated}, // the padding byte is missing
 	} {
 		r := mustReader(t, c.in)
@@ -271,5 +281,39 @@ func TestTLReaderFailedReadChargesAStep(t *testing.T) {
 		if r.Steps() != 1 || len(r.Flags()) != 0 || r.Offset() != 0 {
 			t.Errorf("% x: steps %d, flags %v, offset %d; want 1, none, 0", c.in, r.Steps(), r.Flags(), r.Offset())
 		}
+	}
+}
+
+// Spec ruling T7: a length or count past the end is ErrTruncated and the error keeps the
+// declared value and the bytes that remained, so an implausible length stays visible.
+func TestTLReaderPastEndKeepsDeclaredLength(t *testing.T) {
+	for _, c := range []struct {
+		name                string
+		in                  []byte
+		op                  func(*Reader) error
+		declared, remaining int
+	}{
+		{"string fe ff ff ff", cat([]byte{0xfe, 0xff, 0xff, 0xff}, make([]byte, 8)), opString, MaxString, 8},
+		{"string 05 61", []byte{5, 'a'}, opString, 5, 1},
+		{"vector 5 of 4", vec(5, 8), opVector(4), 5, 8},
+		{"vector MaxVector of 1", vec(MaxVector, 3), opVector(1), MaxVector, 3},
+	} {
+		err := c.op(mustReader(t, c.in))
+		checkBoundError(t, c.name, err, ErrTruncated, 0)
+		var te *Error
+		if errors.As(err, &te) && (te.Declared != c.declared || te.Remaining != c.remaining) {
+			t.Errorf("%s: declared %d, remaining %d; want %d, %d", c.name, te.Declared, te.Remaining, c.declared, c.remaining)
+		}
+	}
+	// The text names them.
+	e := &Error{Err: ErrTruncated, Offset: 4, Path: "s", Declared: MaxString, Remaining: 8}
+	if got, want := e.Error(), `tl: truncated at offset 4 (path "s"; declared 16777215, 8 bytes remain)`; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	// Any other bound keeps them 0.
+	_, err := mustReader(t, vec(MaxVector+1, 0)).VectorHeader(0)
+	var te *Error
+	if !errors.As(err, &te) || te.Declared != 0 || te.Remaining != 0 {
+		t.Errorf("above MaxVector: %#v", err)
 	}
 }

@@ -25,7 +25,7 @@ func FuzzTLReader(f *testing.F) {
 	f.Add([]byte{6, 0, 0}, vec(2, 8))
 	f.Add([]byte{5}, []byte{0xff, 3, 0, 0, 'a'}) // a failed 0xff read states no flag (M3)
 	sentinels := []error{
-		ErrTruncated, ErrBadBool, ErrBadVector, ErrVectorCount, ErrStringLength,
+		ErrTruncated, ErrBadBool, ErrBadVector, ErrVectorCount,
 		ErrDepth, ErrSteps, ErrTooLarge, ErrNoBudget, ErrInternal,
 	}
 	f.Fuzz(func(t *testing.T, ops, in []byte) {

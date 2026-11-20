@@ -30,11 +30,11 @@ const (
 	StopOpaque = "opaque"
 	// StopPrefix: the last listed field of a prefix body was read (Err nil).
 	StopPrefix = "prefix"
-	// StopTruncated: ErrTruncated.
+	// StopTruncated: ErrTruncated (also a declared length or count past the end, T7).
 	StopTruncated = "truncated"
 	// StopMalformed: ErrBadBool, ErrBadVector or ErrInternal.
 	StopMalformed = "malformed"
-	// StopCap: ErrVectorCount, ErrStringLength, ErrDepth, ErrSteps or ErrTooLarge.
+	// StopCap: ErrVectorCount, ErrDepth, ErrSteps or ErrTooLarge.
 	StopCap = "cap"
 	// StopBudget: ErrNoBudget.
 	StopBudget = "budget"
@@ -193,7 +193,7 @@ func stopKind(err error) string {
 	switch err {
 	case ErrTruncated:
 		return StopTruncated
-	case ErrVectorCount, ErrStringLength, ErrDepth, ErrSteps, ErrTooLarge:
+	case ErrVectorCount, ErrDepth, ErrSteps, ErrTooLarge:
 		return StopCap
 	case ErrNoBudget:
 		return StopBudget
