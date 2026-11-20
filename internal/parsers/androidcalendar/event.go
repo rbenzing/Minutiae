@@ -184,8 +184,8 @@ func readDuration(r cells, ev *calendar.Event) {
 	if len(b) == 0 {
 		return
 	}
-	s := validText(b) // the limit holds for the text the payload would carry (U+FFFD grows an invalid byte)
-	if len(s) > maxDurationLen {
+	s, ok := cleanWithin(b, maxDurationLen) // the limit holds for the text the payload would carry
+	if !ok {
 		r.raw["duration_state"] = durUnparsed
 		r.raw["duration_len"] = int64(len(b))
 		r.raw["duration_sha256"] = sha256Hex(b)

@@ -166,6 +166,9 @@ func TestAndroidCalendarStateVocabularyIsPinned(t *testing.T) {
 		// is too long for the payload as well: never cut, never a payload value over the limit (FuzzMapAndroidCalendarRows)
 		{49, map[string]any{"eventTimezone": strings.Repeat("\xff", 100)}, map[string]any{"eventTimezone_state": "too-long", "eventTimezone_len": int64(100), "eventTimezone_sha256": sha(strings.Repeat("\xff", 100))}, map[string]any{"start_timezone": nil}},
 		{50, map[string]any{"duration": strings.Repeat("\x9d", 22)}, map[string]any{"duration_state": "unparsed", "duration_len": int64(22), "duration_sha256": sha(strings.Repeat("\x9d", 22))}, map[string]any{"duration": nil}},
+		// the case where the oracle once diverged (review M4): each byte that starts no valid sequence is one U+FFFD,
+		// so 15 x E2 82 (30 stored bytes) cleans to 90 bytes, over the limit, never the 45 of a maximal-subpart rule
+		{51, map[string]any{"duration": strings.Repeat("\xe2\x82", 15)}, map[string]any{"duration_state": "unparsed", "duration_len": int64(30), "duration_sha256": sha(strings.Repeat("\xe2\x82", 15))}, map[string]any{"duration": nil}},
 		// a wrongly typed attendee name is listed and kept as stored with name_state "undecided", as an address is; without
 		// an address its entry goes to raw.attendees_unnamed_entries and it is never counted unnamed (coordinator ruling h)
 		{

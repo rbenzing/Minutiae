@@ -3,9 +3,12 @@ package androidcalendar
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
+	"slices"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -61,9 +64,34 @@ func (fakeRow) Range() (records.Range, parse.FileRole) {
 
 func (r fakeRow) Locator() (string, bool) { return "sqlite:table=" + r.table + ";rowid=1", true }
 
-// fakeCtx knows the Events columns by their spec order. Every other table is missing, so every join of the live
-// mapping is undecided (a table the database lacks).
-type fakeCtx struct{ in *parse.Input }
+// joinOutcome is what the fake context answers for a join (review M3): a clean miss (Get: no row, the state
+// no-calendars-row; Match: a decided empty join), a table the database lacks (sqlitedb.ErrNoSuchTable) or a damaged
+// table (an error wrapping sqlitedb.ErrCorrupt). The last two must make the join undecided, never "no row".
+type joinOutcome byte
+
+const (
+	joinMiss joinOutcome = iota
+	joinNoTable
+	joinDamaged
+	numOutcomes
+)
+
+func (o joinOutcome) err() error {
+	switch o {
+	case joinNoTable:
+		return fmt.Errorf("%w: fake", sqlitedb.ErrNoSuchTable)
+	case joinDamaged:
+		return fmt.Errorf("%w: fake page 3", sqlitedb.ErrCorrupt)
+	}
+	return nil
+}
+
+// fakeCtx knows the Events columns by their spec order; every Get (the Calendars and original_id joins) answers get
+// and every Match (the child joins) answers match.
+type fakeCtx struct {
+	in         *parse.Input
+	get, match joinOutcome
+}
 
 func (c fakeCtx) Input() *parse.Input { return c.in }
 func (fakeCtx) Note(_, _ string)      {}
@@ -78,8 +106,15 @@ func (fakeCtx) Column(table, col string) int {
 	}
 	return -1
 }
-func (fakeCtx) Get(string, int64) (parse.Row, bool, error)               { return nil, false, nil }
-func (fakeCtx) Match(string, string, parse.JoinKey) ([]parse.Row, error) { return nil, nil }
+
+func (c fakeCtx) Get(string, int64) (parse.Row, bool, error) { return nil, false, c.get.err() }
+
+func (c fakeCtx) Match(string, string, parse.JoinKey) ([]parse.Row, error) { return nil, c.match.err() }
+
+// outcomesOf picks the Get and Match answers from a fuzz byte (the mapping takes its low bit).
+func outcomesOf(which byte) (get, match joinOutcome) {
+	return joinOutcome(which>>1) % numOutcomes, joinOutcome(which>>3) % numOutcomes
+}
 
 const fakeRemote = "/data/data/com.android.providers.calendar/databases/calendar.db"
 
@@ -91,7 +126,7 @@ func fakeInput() *parse.Input {
 }
 
 // mappingsUnderTest are the typed pass's mapping (no env: a recovered row joins nothing) and the live one (an empty
-// guard: every join reaches the fake context, whose tables are missing, or no row).
+// guard: every join reaches the fake context and gets its joinOutcome).
 func mappingsUnderTest() []parse.TableMapping {
 	return []parse.TableMapping{Parser{}.Mappings()[0], eventMappingWith(&env{})}
 }
@@ -106,10 +141,12 @@ func cellOf(cells []cell, name string) (cell, bool) {
 }
 
 // checkMapped holds a mapping to its contract on any row: no panic, and either a typed row error or exactly one record
-// that validates, carries its place, stamps no recovery, and invents nothing the cells do not say.
-func checkMapped(t testing.TB, mp parse.TableMapping, cells []cell) {
+// that validates, carries its place, stamps no recovery, and invents nothing the cells do not say; a join the context
+// cannot answer is undecided, never "no row" (live is the mapping with a Parse context).
+func checkMapped(t testing.TB, mp parse.TableMapping, live bool, ctx fakeCtx, cells []cell) {
 	t.Helper()
-	recs, err := mp.Map(fakeCtx{in: fakeInput()}, fakeRow{table: tableEvents, cells: cells})
+	ctx.in = fakeInput()
+	recs, err := mp.Map(ctx, fakeRow{table: tableEvents, cells: cells})
 	if err != nil {
 		var re *rowrun.RowError
 		if !errors.As(err, &re) {
@@ -132,6 +169,19 @@ func checkMapped(t testing.TB, mp parse.TableMapping, cells []cell) {
 	}
 	if r.Recovery != "" || r.Confidence != nil {
 		t.Errorf("the mapping stamped a recovery: %+v", r)
+	}
+	raw, _ := r.Payload["raw"].(map[string]any)
+	undecided, _ := raw["join_undecided"].([]any)
+	if live && ctx.get != joinMiss {
+		if raw["calendar_state"] == stateNoCalendars || r.Payload["calendar"] != nil || !slices.Contains(undecided, any(tableCalendars)) {
+			t.Errorf("Get answers %d: calendar_state %v, calendar %v, join_undecided %v; want the Calendars join undecided", ctx.get, raw["calendar_state"], r.Payload["calendar"], undecided)
+		}
+	}
+	if live && ctx.match != joinMiss && !slices.Contains(undecided, any(tableAttendees)) {
+		t.Errorf("Match answers %d: join_undecided %v; want the child joins undecided", ctx.match, undecided)
+	}
+	if live && ctx.match == joinMiss && slices.Contains(undecided, any(tableAttendees)) {
+		t.Errorf("a decided empty child join is listed undecided: %v", undecided)
 	}
 	// a start only from an INTEGER dtstart cell
 	if c, _ := cellOf(cells, "dtstart"); r.Time != nil && c.kind != cInt {
@@ -207,24 +257,48 @@ func cellsFrom(n int, kinds, nums, texts []byte) []cell {
 	return cs
 }
 
+// Every join answer of the context reaches the live mapping (review M3): a clean miss is no-calendars-row and a
+// decided empty child join, a missing or damaged table makes the join undecided, never "no row".
+func TestMapRowsJoinOutcomesAreStated(t *testing.T) {
+	live := mappingsUnderTest()[1]
+	for get := range numOutcomes {
+		for match := range numOutcomes {
+			checkMapped(t, live, true, fakeCtx{get: get, match: match}, goodCells())
+		}
+	}
+	recs, err := live.Map(fakeCtx{in: fakeInput()}, fakeRow{table: tableEvents, cells: goodCells()})
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("%v %v", err, recs)
+	}
+	if raw, _ := recs[0].Payload["raw"].(map[string]any); raw["calendar_state"] != stateNoCalendars || raw["join_undecided"] != nil {
+		t.Errorf("a clean miss: calendar_state %v, join_undecided %v; want no-calendars-row and no undecided join", raw["calendar_state"], raw["join_undecided"])
+	}
+}
+
 func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 	for i, mp := range mappingsUnderTest() {
 		recs, err := mp.Map(fakeCtx{in: fakeInput()}, fakeRow{table: tableEvents, cells: goodCells()})
 		if err != nil || len(recs) != 1 || recs[0].Time == nil {
 			t.Fatalf("mapping %d: a good row did not map to a timed record: %v %v", i, err, recs)
 		}
-		checkMapped(t, mp, goodCells())
+		check := func(t testing.TB, mp parse.TableMapping, cells []cell) {
+			t.Helper()
+			for _, c := range []fakeCtx{{}, {get: joinDamaged, match: joinNoTable}} {
+				checkMapped(t, mp, i == 1, c, cells)
+			}
+		}
+		check(t, mp, goodCells())
 		for _, k := range []byte{cNull, cInt, cFloat, cText, cBlob} {
 			for col := range goodCells() {
 				cs := goodCells()
 				cs[col] = cell{kind: k, i: -1, f: math.NaN(), b: []byte{0xff, 0xfe, 0}}
-				checkMapped(t, mp, cs)
+				check(t, mp, cs)
 			}
 			cs := goodCells()
 			for j := range cs {
 				cs[j] = cell{kind: k, f: math.NaN(), b: []byte{0xff, 0xfe}}
 			}
-			checkMapped(t, mp, cs)
+			check(t, mp, cs)
 		}
 		for _, v := range []int64{math.MinInt64, -1, 0, 1, 2, 4242, 1 << 53, math.MaxInt64} {
 			cs := goodCells()
@@ -233,13 +307,14 @@ func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 					cs[j].i = v
 				}
 			}
-			checkMapped(t, mp, cs)
+			check(t, mp, cs)
 		}
 	}
 }
 
 // FuzzMapAndroidCalendarRows fuzzes both Events mappings on decoded column values directly: every column of the row
-// takes any storage class and value.
+// takes any storage class and value, and which picks the mapping (low bit) and the Get and Match answers of the
+// context (outcomesOf).
 func FuzzMapAndroidCalendarRows(f *testing.F) {
 	f.Add(byte(0), []byte{cNull, cInt, cInt, cInt, cInt}, []byte{1, 0, 0, 0, 0, 0, 0, 0}, []byte("T\x00P1D"))
 	f.Add(byte(1), []byte{cInt, cBlob, cFloat, cNull, cText}, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, []byte("\xff\xfe\x00 12"))
@@ -247,7 +322,8 @@ func FuzzMapAndroidCalendarRows(f *testing.F) {
 	f.Add(byte(1), []byte{cInt, cInt, cInt, cInt, cInt, cInt, cText, cText}, []byte{0, 0x10, 0xa5, 0xd4, 0xe8, 0, 0, 0}, []byte("PT1H\x00Europe/Berlin\x00FREQ=DAILY"))
 	f.Fuzz(func(t *testing.T, which byte, kinds, nums, texts []byte) {
 		ms := mappingsUnderTest()
-		mp := ms[int(which)%len(ms)]
-		checkMapped(t, mp, cellsFrom(len(mp.Columns), kinds, nums, texts))
+		i := int(which) % len(ms)
+		get, match := outcomesOf(which)
+		checkMapped(t, ms[i], i == 1, fakeCtx{get: get, match: match}, cellsFrom(len(ms[i].Columns), kinds, nums, texts))
 	})
 }

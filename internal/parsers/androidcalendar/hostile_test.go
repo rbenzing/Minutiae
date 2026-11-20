@@ -71,16 +71,13 @@ func TestAndroidCalendarTruncatedDatabaseIsStated(t *testing.T) {
 	}
 }
 
-// A hot journal is rolled back (calendar-600): row 6 keeps its committed title and the reader's journal-hot warning
-// says so; the interrupted rewrite is never a record.
+// A hot journal is rolled back (calendar-600): row 6 keeps its committed title, "Holiday" (the oracle's, from the
+// engine's view of the same files), and the interrupted rewrite is never a record. The reader's journal-hot warning is
+// a warning of the oracle, held by TestAndroidCalendarMatchesOracle.
 func TestAndroidCalendarHotJournalIsRolledBack(t *testing.T) {
 	p := parseVariant(t, "calendar-600")
-	r := p.rec(t, 6)
-	if title, _ := r.Payload["title"].(string); strings.HasPrefix(title, "Interrupted") || title == "" {
-		t.Errorf("row 6: title %.40q, want its committed title", title)
-	}
-	if len(warningsWith(p.res, "journal-hot")) == 0 && !slices.ContainsFunc(p.res.Warnings, func(w parsertest.Warning) bool { return strings.Contains(w.Reason, "journal-hot") }) {
-		t.Errorf("no journal-hot warning: %v", p.res.Warnings)
+	if title := p.rec(t, 6).Payload["title"]; title != "Holiday" {
+		t.Errorf("row 6: title %.40q, want its committed title \"Holiday\"", title)
 	}
 	for _, rec := range p.res.Records {
 		if title, _ := rec.Payload["title"].(string); strings.HasPrefix(title, "Interrupted") {

@@ -1205,6 +1205,13 @@ func calendarDecode(t *testing.T, e scaleEnv) {
 	if testing.Short() {
 		t.Skip("calendar-decode parses a database of several hundred MiB with a 1 GiB budget: skipped under -short")
 	}
+	calendarDecodeRun(t, e)
+}
+
+// calendarDecodeRun is the body of calendar-decode on whatever store calendar-gen.json describes (TestScaleParseSmoke
+// runs it on a small one, under -short too).
+func calendarDecodeRun(t *testing.T, e scaleEnv) {
+	t.Helper()
 	b, err := os.ReadFile(genPath(e, "calendar-gen.json")) //nolint:gosec // the operator's work directory
 	if err != nil {
 		t.Fatalf("run the calendar-gen phase first: %v", err)
@@ -1280,16 +1287,6 @@ func TestScaleParseSmoke(t *testing.T) {
 		parsePhase(t, e, name, genPath(e, "smoke.db"), gi, 0, counting, false, 0)
 	}
 	manyJobsPhase(t, e, "smoke-jobs", 5, 0, 0)
-	// the calendar phases on a small store: calendar-decode reads what genCalendar wrote
-	g, err := genCalendar(genPath(e, "calendar-500k.db"), 500, 900, 500)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cb, _ := json.Marshal(g)
-	if err := os.WriteFile(genPath(e, "calendar-gen.json"), cb, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	calendarDecode(t, e)
 	var res phaseResult
 	b, err := os.ReadFile(filepath.Join(e.dir, "parse-results", "smoke", "smoke-ingest.json")) //nolint:gosec // this test's own directory
 	if err != nil {
@@ -1298,4 +1295,15 @@ func TestScaleParseSmoke(t *testing.T) {
 	if err := json.Unmarshal(b, &res); err != nil || res.Records != gi.Rows || res.RecordsPerSec <= 0 {
 		t.Errorf("result record = %+v (%v), want %d records and a rate", res, err, gi.Rows)
 	}
+	// the calendar phases on a small store, through the bodies without the -short skip of the real phases (review
+	// M5): calendarDecodeRun reads what genCalendar wrote
+	g, err := genCalendar(genPath(e, "calendar-500k.db"), 500, 900, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, _ := json.Marshal(g)
+	if err := os.WriteFile(genPath(e, "calendar-gen.json"), cb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calendarDecodeRun(t, e)
 }

@@ -29,11 +29,25 @@ const stateTooLong = "too-long"
 // payload would carry: a stored text within it whose invalid bytes grow past it as U+FFFD is too long as well
 // (FuzzMapAndroidCalendarRows).
 func ident(raw map[string]any, col string, b []byte, limit int) (string, bool) {
-	s := validText(b)
-	if len(s) > limit {
+	s, ok := cleanWithin(b, limit)
+	if !ok {
 		raw[col+"_state"] = stateTooLong
 		raw[col+"_len"] = int64(len(b))
 		raw[col+"_sha256"] = sha256Hex(b)
+		return "", false
+	}
+	return s, true
+}
+
+// cleanWithin is validText(b) when that text is at most limit bytes, else false. validText never shrinks its input, so
+// a stored text over the limit is refused before any copy (a 1 MiB hostile cell costs nothing); one within it is
+// cleaned and checked again, because each invalid byte grows to the three bytes of U+FFFD.
+func cleanWithin(b []byte, limit int) (string, bool) {
+	if len(b) > limit {
+		return "", false
+	}
+	s := validText(b)
+	if len(s) > limit {
 		return "", false
 	}
 	return s, true

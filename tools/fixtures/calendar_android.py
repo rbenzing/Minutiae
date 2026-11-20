@@ -79,12 +79,45 @@ def is_text(v):
     return isinstance(v, bytes) and not isinstance(v, C.Blob)
 
 
+def go_text(b):
+    """b as text by the stated rule of the parser's validText (review M4): each byte that does not start a valid UTF-8
+    sequence becomes U+FFFD on its own, so an invalid byte grows to three. This is NOT Python's errors="replace", which
+    replaces a maximal invalid subpart with one U+FFFD (b"\xe2\x82" is two U+FFFD here, one there); the post-cleaning
+    length limits of identifiers and durations depend on the difference."""
+    out, i = [], 0
+    while i < len(b):
+        if b[i] < 0x80:
+            out.append(chr(b[i]))
+            i += 1
+            continue
+        for n in (2, 3, 4):
+            try:
+                ch = b[i:i + n].decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if len(ch) == 1:
+                out.append(ch)
+                i += n
+                break
+        else:
+            out.append("\ufffd")
+            i += 1
+    return "".join(out)
+
+
+# The case that diverged before the rule was stated: a duration of 15 x E2 82 is 30 stored bytes, 90 once cleaned
+# byte by byte (over the 64-byte limit: unparsed), 45 under Python's replace. The Go side pins the same case
+# (TestAndroidCalendarStateVocabularyIsPinned row 51, TestCleanWithinRefusesAnOverLongTextWithoutACopy).
+assert len(go_text(b"\xe2\x82" * 15).encode("utf-8")) == 90
+assert go_text(b"a\xffb\xe2\x82\xac") == "a\ufffdb\u20ac"
+
+
 def jv(v):
     """A stored value as raw JSON: a TEXT cell as its string, a BLOB as {"blob_b64": ...}."""
     if isinstance(v, C.Blob):
         return {"blob_b64": base64.b64encode(bytes(v)).decode()}
     if isinstance(v, bytes):
-        return v.decode("utf-8", errors="replace")
+        return go_text(v)
     return v
 
 
@@ -173,7 +206,7 @@ def ident(raw, unknown, col, v, limit):
     if not is_text(v):
         unknown["Events." + col] = "type-mismatch"
         return None
-    s = v.decode("utf-8", errors="replace")
+    s = go_text(v)
     if len(s.encode("utf-8")) > limit:  # the limit holds for the text the payload carries (U+FFFD grows a byte)
         raw[col + "_state"] = "too-long"
         raw[col + "_len"] = len(v)
@@ -368,12 +401,12 @@ def expect_event(r, env, remote, file="any"):
         unknown["Events.duration"] = "type-mismatch"
         raw["duration"] = jv(dv)
     if is_text(dv) and dv:
-        if len(dv.decode("utf-8", errors="replace").encode("utf-8")) > MAX_DURATION:  # as the payload carries it
+        if len(go_text(dv).encode("utf-8")) > MAX_DURATION:  # as the payload carries it
             # unparsed in every case, also with no start or an unknown timing (coordinator ruling, Task 4)
             raw["duration_state"] = "unparsed"
             raw["duration_len"], raw["duration_sha256"] = len(dv), hashlib.sha256(dv).hexdigest()
         else:
-            p["duration"] = dv.decode("utf-8", errors="replace")
+            p["duration"] = go_text(dv)
     title = free_text(raw, tf, "title", r.get("title"), MAX_TITLE, truncated, unknown, "title")
     if title:
         p["title"] = title
@@ -466,11 +499,11 @@ def expect_event(r, env, remote, file="any"):
             acct = {}
             for col, key in (("account_type", "type"), ("account_name", "name")):
                 if is_text(cal.get(col)) and cal.get(col):
-                    acct[key] = cal[col].decode("utf-8", errors="replace")
+                    acct[key] = go_text(cal[col])
             if acct:
                 cp["account"] = acct
             if is_text(cal.get("ownerAccount")) and cal.get("ownerAccount"):
-                cp["owner"] = cal["ownerAccount"].decode("utf-8", errors="replace")
+                cp["owner"] = go_text(cal["ownerAccount"])
             p["calendar"] = cp
             rc = {k: jv(cal[k]) for k in CAL_RAW if cal.get(k) is not None}
             if rc:
@@ -571,7 +604,7 @@ def children(p, raw, tf, unknown, env, rid):
         e, extra, undecided = {}, {}, False
         addr = a.get("attendeeEmail")
         if is_text(addr) and addr and len(addr) <= MAX_ID:
-            e["address"] = addr.decode("utf-8", errors="replace")
+            e["address"] = go_text(addr)
         elif is_text(addr) and addr:  # C5: never cut, never dropped silently (F27, fix round 1, M4)
             extra = {"address_state": "too-long", "address_len": len(addr), "address_sha256": hashlib.sha256(addr).hexdigest()}
         elif addr is not None and not is_text(addr):  # kept as stored, its address undecided (Task 5 fix round 1, I3)
