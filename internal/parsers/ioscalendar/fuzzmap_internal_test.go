@@ -196,7 +196,7 @@ func checkMapped(t testing.TB, mp parse.TableMapping, live bool, ctx fakeCtx, ce
 	}
 	for _, j := range getJoins() {
 		_, i := cellOf(cells, j[0])
-		_, k := intCellOf(row, i)
+		v, k := intCellOf(row, i)
 		holds := k == rowrun.CellValue || k == rowrun.CellOther || k == rowrun.CellUnknown
 		switch {
 		case !live && holds:
@@ -208,8 +208,12 @@ func checkMapped(t testing.TB, mp parse.TableMapping, live bool, ctx fakeCtx, ce
 				t.Errorf("%s of kind %d: raw.%s = %v; a NULL key joins nothing and states nothing", j[0], k, j[2], raw[j[2]])
 			}
 		case k == rowrun.CellValue && ctx.get == joinMiss:
-			if raw[j[2]] != noRow(j[1]) {
-				t.Errorf("Get answers a clean miss: raw.%s = %v, want %q", j[2], raw[j[2]], noRow(j[1]))
+			want := noRow(j[1])
+			if v == 0 {
+				want = stateZeroKey // B13: a key stored as 0 that finds no row
+			}
+			if raw[j[2]] != want {
+				t.Errorf("Get answers a clean miss: raw.%s = %v, want %q", j[2], raw[j[2]], want)
 			}
 		default: // an undecidable key, or a missing or damaged table
 			if raw[j[2]] != nil || !slices.Contains(undecided, any(j[1])) {

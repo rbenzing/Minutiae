@@ -364,3 +364,60 @@ func TestIOSCalendarUndecidedJoinsAreStated(t *testing.T) {
 		t.Errorf("Participant without its alias: organizer %v, attendees %v, join_undecided %v", r.Payload["organizer"], r.Payload["attendees"], rawOf(r)["join_undecided"])
 	}
 }
+
+// Spec B13 (plan 4I3 Task 12 fix 1): a Get join key stored as integer 0 that finds no row is "zero-key", never
+// "no-<Table>-row" (the real store writes 0 for no key); the field stays absent. A row whose rowid is 0 joins
+// normally, and a non-zero key naming no row keeps "no-<Table>-row".
+func TestIOSCalendarZeroKeyIsStated(t *testing.T) {
+	s := newBuilt()
+	s.add("Store", 1, map[string]any{"name": "Local", "type": int64(0)})
+	s.add("Calendar", 1, map[string]any{"title": "Home", "store_id": int64(1)})
+	s.add("Calendar", 2, map[string]any{"title": "No store", "store_id": int64(0)})
+	s.add("Participant", 5, map[string]any{"identity_id": int64(0), "email": "org@example.test"})
+	s.add("Participant", 6, map[string]any{"identity_id": int64(99), "email": "org2@example.test"})
+	s.event(1, map[string]any{"location_id": int64(0), "organizer_id": int64(0), "calendar_id": int64(0)})
+	s.event(2, map[string]any{"calendar_id": int64(2), "organizer_id": int64(5)})
+	s.event(3, map[string]any{"location_id": int64(99), "organizer_id": int64(98), "calendar_id": int64(97)})
+	s.event(4, map[string]any{"organizer_id": int64(6)})
+	recs := byRowid(t, parseBuilt(t, s.bytes(), false))
+	want := map[int64]map[string]any{
+		1: {"location_state": "zero-key", "organizer_state": "zero-key", "calendar_state": "zero-key"},
+		2: {"store_state": "zero-key", "organizer_state": "zero-key"}, // Identity by identity_id 0
+		3: {"location_state": "no-Location-row", "organizer_state": "no-Participant-row", "calendar_state": "no-Calendar-row"},
+		4: {"organizer_state": "no-Identity-row"},
+	}
+	for id, kv := range want {
+		raw := rawOf(recs[id])
+		for k, v := range kv {
+			if raw[k] != v {
+				t.Errorf("row %d: raw.%s = %v, want %v", id, k, raw[k], v)
+			}
+		}
+	}
+	if r := recs[1]; r.Payload["location"] != nil || r.Payload["organizer"] != nil || r.Payload["calendar"] != nil {
+		t.Errorf("row 1: location %v, organizer %v, calendar %v; want all absent", r.Payload["location"], r.Payload["organizer"], r.Payload["calendar"])
+	}
+	if r := recs[2]; !sameJSON(t, r.Payload["calendar"], map[string]any{"id": "2", "title": "No store"}) || !sameJSON(t, r.Payload["organizer"], map[string]any{"address": "org@example.test"}) {
+		t.Errorf("row 2: calendar %v, organizer %v", r.Payload["calendar"], r.Payload["organizer"])
+	}
+
+	// a row whose rowid is 0 joins normally
+	s = newBuilt()
+	s.add("Store", 1, map[string]any{"name": "Local", "type": int64(0)})
+	s.add("Calendar", 0, map[string]any{"title": "Zero", "store_id": int64(1)})
+	s.add("Location", 0, map[string]any{"title": "Here"})
+	s.add("Identity", 0, map[string]any{"display_name": "Ann"})
+	s.add("Participant", 0, map[string]any{"identity_id": int64(0)})
+	s.event(1, map[string]any{"location_id": int64(0), "organizer_id": int64(0), "calendar_id": int64(0)})
+	r := byRowid(t, parseBuilt(t, s.bytes(), false))[1]
+	raw := rawOf(r)
+	for _, k := range []string{"location_state", "organizer_state", "calendar_state", "store_state"} {
+		if raw[k] != nil {
+			t.Errorf("rowid-0 rows: raw.%s = %v, want none", k, raw[k])
+		}
+	}
+	if !sameJSON(t, r.Payload["location"], map[string]any{"text": "Here"}) || !sameJSON(t, r.Payload["organizer"], map[string]any{"name": "Ann"}) ||
+		!sameJSON(t, r.Payload["calendar"], map[string]any{"id": "0", "title": "Zero", "account": map[string]any{"name": "Local"}}) {
+		t.Errorf("rowid-0 rows: location %v, organizer %v, calendar %v; want each joined", r.Payload["location"], r.Payload["organizer"], r.Payload["calendar"])
+	}
+}

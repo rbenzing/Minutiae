@@ -15,7 +15,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.calendar"
-	Version = "1.0.1"
+	Version = "1.0.2"
 )
 
 // The errors of Parse, wrapped with %w.

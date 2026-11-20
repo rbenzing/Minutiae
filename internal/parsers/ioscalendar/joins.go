@@ -25,6 +25,18 @@ const (
 
 func noRow(table string) string { return "no-" + table + "-row" }
 
+// stateZeroKey is the state of a Get join whose key is stored as integer 0 and finds no row (spec B13): the store
+// writes 0 for "no key", so it is not stated as a key naming a missing row. A row whose rowid is 0 joins normally.
+const stateZeroKey = "zero-key"
+
+// missState is the state of a Get join whose key id names no row: "zero-key" for 0 (B13), else "no-<Table>-row".
+func missState(table string, id int64) string {
+	if id == 0 {
+		return stateZeroKey
+	}
+	return noRow(table)
+}
+
 // matchStateKeys are the raw state keys of the four Match joins by owner: a recovered row (nil env) joins none of them
 // and states each as "not-joined-recovered" (4I3-P4, B2, F15). A fresh slice per call.
 func matchStateKeys() []string {
@@ -73,7 +85,7 @@ func (x *item) get(table string, id int64) (parse.Row, joinState, error) {
 // getBy reads the key column of the item and joins table by it, stating the outcome in raw: a NULL or missing key
 // joins nothing and states nothing; a key that cannot be read, or a join that cannot be decided, names the table in
 // raw.join_undecided; a recovered row states stateKey "not-joined-recovered"; a key naming no row states stateKey
-// "no-<Table>-row". The row is returned only when found.
+// "no-<Table>-row", or "zero-key" when the key is 0 (B13). The row is returned only when found.
 func (x *item) getBy(keyCol, table, stateKey string) (parse.Row, int64, error) {
 	id, ok, undecided := x.r.key(keyCol)
 	switch {
@@ -93,7 +105,7 @@ func (x *item) getBy(keyCol, table, stateKey string) (parse.Row, int64, error) {
 	case st == jUndecided:
 		undecidedJoin(x.r.raw, table)
 	case st == jNoRow:
-		x.r.raw[stateKey] = noRow(table)
+		x.r.raw[stateKey] = missState(table, id)
 	}
 	return row, id, nil
 }
@@ -251,7 +263,7 @@ func (x *item) personOf(row parse.Row, entry map[string]any, field string) (pers
 		p.undecided = true
 		return p, nil
 	case st == jNoRow:
-		entry["identity_state"] = noRow(tableIdentity)
+		entry["identity_state"] = missState(tableIdentity, iid)
 		return p, nil
 	}
 	ic := x.joined(tableIdentity, irow, entry, "display_name", "address")
