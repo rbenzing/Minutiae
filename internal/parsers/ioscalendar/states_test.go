@@ -87,7 +87,7 @@ func TestIOSCalendarStateVocabularyIsPinned(t *testing.T) {
 		{18, map[string]any{"organizer_id": int64(99)}, map[string]any{"organizer_state": "no-Participant-row"}, map[string]any{"organizer": absent{}}, "no-Participant-row"},
 		{19, map[string]any{"calendar_id": int64(2)}, map[string]any{"store_state": "no-Store-row", "store_type": absent{}}, map[string]any{"calendar": map[string]any{"id": "2", "title": "Orphan"}}, "no-Store-row"},
 		{20, nil, map[string]any{"store_type": 2, "calendar_state": absent{}}, map[string]any{"calendar": map[string]any{"id": "1", "title": "Home", "account": map[string]any{"name": "iCloud"}}}, "store_type"},
-		{21, map[string]any{"organizer_id": int64(30)}, map[string]any{"organizer_state": "no-Identity-row"}, map[string]any{"organizer": absent{}}, "no-Identity-row"},
+		{21, map[string]any{"organizer_id": int64(30)}, map[string]any{"organizer_identity_state": "no-Identity-row", "organizer_state": absent{}}, map[string]any{"organizer": absent{}}, "no-Identity-row"},
 		{
 			22, nil,
 			map[string]any{

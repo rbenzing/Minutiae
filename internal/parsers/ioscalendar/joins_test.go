@@ -205,11 +205,11 @@ func TestIOSCalendarParticipants(t *testing.T) {
 	if unknownOf(got[1])["Participant.email"] != "type-mismatch" || raw1["organizer_state"] != "no-Participant-row" || got[1].Payload["organizer"] != nil {
 		t.Errorf("row 1: unknown_columns %v, organizer_state %#v, organizer %v", unknownOf(got[1]), raw1["organizer_state"], got[1].Payload["organizer"])
 	}
-	if !sameJSON(t, got[2].Payload["organizer"], map[string]any{"address": "org@example.test"}) || rawOf(got[2])["organizer_state"] != "no-Identity-row" {
-		t.Errorf("organizer with a dangling identity: organizer %v, organizer_state %#v", got[2].Payload["organizer"], rawOf(got[2])["organizer_state"])
+	if !sameJSON(t, got[2].Payload["organizer"], map[string]any{"address": "org@example.test"}) || rawOf(got[2])["organizer_identity_state"] != "no-Identity-row" || rawOf(got[2])["organizer_state"] != nil {
+		t.Errorf("organizer with a dangling identity: organizer %v, organizer_identity_state %#v, organizer_state %#v", got[2].Payload["organizer"], rawOf(got[2])["organizer_identity_state"], rawOf(got[2])["organizer_state"])
 	}
-	if got[3].Payload["organizer"] != nil || rawOf(got[3])["organizer_state"] != "no-Identity-row" {
-		t.Errorf("organizer with neither: organizer %v, organizer_state %#v", got[3].Payload["organizer"], rawOf(got[3])["organizer_state"])
+	if got[3].Payload["organizer"] != nil || rawOf(got[3])["organizer_identity_state"] != "no-Identity-row" || rawOf(got[3])["organizer_state"] != nil {
+		t.Errorf("organizer with neither: organizer %v, organizer_identity_state %#v, organizer_state %#v", got[3].Payload["organizer"], rawOf(got[3])["organizer_identity_state"], rawOf(got[3])["organizer_state"])
 	}
 }
 
@@ -381,10 +381,10 @@ func TestIOSCalendarZeroKeyIsStated(t *testing.T) {
 	s.event(4, map[string]any{"organizer_id": int64(6)})
 	recs := byRowid(t, parseBuilt(t, s.bytes(), false))
 	want := map[int64]map[string]any{
-		1: {"location_state": "zero-key", "organizer_state": "zero-key", "calendar_state": "zero-key"},
-		2: {"store_state": "zero-key", "organizer_state": "zero-key"}, // Identity by identity_id 0
+		1: {"location_state": "zero-key", "organizer_state": "zero-key", "calendar_state": "zero-key", "organizer_identity_state": nil},
+		2: {"store_state": "zero-key", "organizer_identity_state": "zero-key", "organizer_state": nil}, // Identity by identity_id 0 (review I2)
 		3: {"location_state": "no-Location-row", "organizer_state": "no-Participant-row", "calendar_state": "no-Calendar-row"},
-		4: {"organizer_state": "no-Identity-row"},
+		4: {"organizer_identity_state": "no-Identity-row", "organizer_state": nil},
 	}
 	for id, kv := range want {
 		raw := rawOf(recs[id])

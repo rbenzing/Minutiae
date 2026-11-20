@@ -15,8 +15,8 @@ import (
 )
 
 // The join states (the plan's ios.calendar vocabulary): a recovered row joins nothing (4I3-P4, B2); a Get join whose
-// key names no row is "no-<Table>-row"; a Match join by owner states only "not-joined-recovered" (an empty match is no
-// children, F15); a cell that holds no usable value is "undecided".
+// key names no row is "no-<Table>-row", or "zero-key" when the key is stored as 0 (B13); a Match join by owner states
+// only "not-joined-recovered" (an empty match is no children, F15); a cell that holds no usable value is "undecided".
 const (
 	notJoinedRecovered = "not-joined-recovered"
 	stateOutOfRange    = "out-of-range"
@@ -212,8 +212,8 @@ func (x *item) getByOf(c cells, keyCol, table, stateKey string) (parse.Row, int6
 // person is one Participant row read as a person (spec 8.2): address = Participant.email, else Identity.address;
 // name = Identity.display_name. Its states go to entry: address_state ("too-long" with address_len and
 // address_sha256, F27; "undecided" with the stored email when the email cannot be read), name_state "undecided" (the
-// stored display_name kept), identity_state ("no-Identity-row", or "undecided" when the identity key or join cannot be
-// decided). undecided is true when the address or the name is unknown: such a participant is never one with "neither
+// stored display_name kept), identity_state ("no-Identity-row", "zero-key" for an identity_id of 0 naming no row (B13),
+// or "undecided" when the identity key or join cannot be decided). undecided is true when the address or the name is unknown: such a participant is never one with "neither
 // address nor name".
 type person struct {
 	calendar.Person
@@ -305,9 +305,10 @@ func (x *item) personOf(row parse.Row, entry map[string]any, field string) (pers
 }
 
 // organizerOf joins the item's organizer (spec 8.2): Participant by organizer_id (Get), then Identity by identity_id
-// (Get). The states of the chain are raw.organizer_state ("no-Participant-row", "no-Identity-row",
-// "not-joined-recovered"); those of its address and name are raw.organizer_<key> (address_state, address_len,
-// address_sha256, email, name_state, display_name).
+// (Get). The state of the organizer_id link is raw.organizer_state ("no-Participant-row", "zero-key" (B13),
+// "not-joined-recovered"); that of the Identity link raw.organizer_identity_state ("no-Identity-row", "zero-key",
+// "undecided"), so the two links are never merged (Task 12 fix 2, I2); those of its address and name are
+// raw.organizer_<key> (address_state, address_len, address_sha256, email, name_state, display_name).
 func (x *item) organizerOf() (*calendar.Person, error) {
 	row, _, err := x.getBy("organizer_id", tableParticipant, "organizer_state")
 	if err != nil || row == nil {
@@ -321,11 +322,8 @@ func (x *item) organizerOf() (*calendar.Person, error) {
 	for k, v := range entry {
 		switch k {
 		case "identity_state":
-			if v == stateUndecided {
-				x.r.raw["organizer_identity_state"] = v // the identity key or join cannot be decided (m2)
-			} else {
-				x.r.raw["organizer_state"] = v
-			}
+			// the Identity link has its own key (m2; Task 12 fix 2, I2): organizer_state states the organizer_id link only
+			x.r.raw["organizer_identity_state"] = v
 		case "role", "type", "status":
 		default:
 			x.r.raw["organizer_"+k] = v

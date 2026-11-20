@@ -192,7 +192,7 @@ func TestMetaIsValid(t *testing.T) {
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "ios.calendar" || m.Version != "1.0.2" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
+	if m.Name != "ios.calendar" || m.Version != "1.0.3" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
 		t.Errorf("meta %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformIOS {
@@ -295,7 +295,7 @@ func TestIOSCalendarProbeByPlace(t *testing.T) {
 
 	// with a companion Probe defers; Parse at the system path then fails loudly without CalendarItem
 	old["wal"] = []byte{}
-	if got := probeAt(t, old, true); got.Status != parse.Applicable || got.Reason != reasonDefer {
+	if got := probeAt(t, old, true); got.Status != parse.Applicable {
 		t.Errorf("calendar-ios-oldlayout with an empty -wal: Probe = %+v, want the deferral", got)
 	}
 	res := parseAt(t, old, true)
@@ -391,5 +391,23 @@ func TestIOSCalendarJoinTableWithoutARowidColumnIsKeyedByItsRowid(t *testing.T) 
 	}
 	if res := parseBuilt(t, db, true); !strings.Contains(res.Notes["join_undecided.Identity"], "rowid") {
 		t.Errorf("WITHOUT ROWID Identity, deferred: note join_undecided.Identity = %q", res.Notes["join_undecided.Identity"])
+	}
+}
+
+// Plan 4I3 Task 12 fix 2 (review I1, spec 8.1): beside a -wal or -journal companion the main file's schema proves
+// nothing, so Probe defers the key check of the join tables to Parse's guard at any place, not only at the system path;
+// without a companion a Get table whose ROWID is not the rowid alias is refused there too.
+func TestIOSCalendarProbeDefersTheJoinKeysBesideACompanion(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	b.CreateTable("CalendarItem", itemDDL)
+	b.CreateTable("Calendar", `CREATE TABLE Calendar (ROWID INTEGER, title TEXT, store_id INTEGER)`)
+	db := b.Bytes()
+	for _, comp := range []string{"wal", "journal"} {
+		if got := probeAt(t, map[string][]byte{"db": db, comp: {}}, false); got.Status != parse.Applicable {
+			t.Errorf("elsewhere with a %s: Probe = %+v, want applicable (the guard decides at Parse)", comp, got)
+		}
+	}
+	if got := probeAt(t, map[string][]byte{"db": db}, false); got.Status != parse.UnsupportedSchema || !strings.Contains(got.Reason, "Calendar") {
+		t.Errorf("elsewhere without a companion: Probe = %+v, want unsupported-schema naming Calendar", got)
 	}
 }

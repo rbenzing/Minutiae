@@ -15,7 +15,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.calendar"
-	Version = "1.0.2"
+	Version = "1.0.3"
 )
 
 // The errors of Parse, wrapped with %w.
@@ -97,11 +97,17 @@ func reqs() []rowrun.Req {
 }
 
 // probe is rowrun.Probe with reqs, then, when it found the schema applicable from the main file, the key check of
-// each present join table read by key (probeGetKeys).
+// each present join table read by key (probeGetKeys). Beside a -wal or -journal companion the main file's schema
+// proves nothing, so rowrun's outcome holds and Parse's guard decides the keys on the live view (Task 12 fix 2, I1).
 func probe(ctx context.Context, in *parse.Input) (parse.Applicability, error) {
 	got, err := rowrun.Probe(ctx, in, reqs())
-	if err != nil || got.Status != parse.Applicable || got.Reason == reasonDeferred {
+	if err != nil || got.Status != parse.Applicable {
 		return got, err
+	}
+	_, wal := in.Artifacts["wal"]
+	_, jr := in.Artifacts["journal"]
+	if wal || jr {
+		return got, nil
 	}
 	return probeGetKeys(ctx, in, got)
 }

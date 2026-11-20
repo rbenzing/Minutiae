@@ -475,11 +475,10 @@ def expect_item(r, env, file="any"):
             o["address"] = addr
         if name:
             o["name"] = name
-        assert not (o and state), "an organizer with an address and a dangling identity is not restated"
         if o:
             p["organizer"] = o
-        elif state:
-            raw["organizer_state"] = state
+        if state:  # the Identity link has its own key; organizer_state is the organizer_id link only (Task 12 fix 2, I2)
+            raw["organizer_identity_state"] = state
     # the four Match joins by owner: an empty match is no children and states nothing (F15)
     if env is None:
         for k in ("participants_state", "recurrence_state", "exception_dates_state", "alarms_state"):
