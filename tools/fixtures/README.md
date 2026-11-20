@@ -3441,3 +3441,40 @@ the Get joins whose key is stored (`location_state`, `calendar_state`, `organize
 
 The generator, like the other families of `telephony_gen.py`, writes its work files under the system temporary directory
 and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep them inside the project.
+
+## Telegram Android fixtures (plan 4I4)
+
+- Telegram facts (plan 4I4): `schemas/telegram-android/constructors.tsv` (the TL constructor table: header
+  `type id class body pin source fields`, one row per constructor ID with its class, its body `full`, `prefix` or
+  `opaque`, its pin and `<File>.java:<line>`, and its field order in the 4I4-P4 notation) and `facts.tsv` (the other
+  pinned facts: the message write verbs, the time units, the dialog-id predicates and cast, the v85 line, the v64
+  `messages` columns and the class of every inline id, each with `key value pin source note`), checked by
+  `TestTelegramFactsCiteTheirSource` (`internal/archtest`). Their source is the app repository
+  TelegramMessenger/Telegram-Android at four pins: A-HEAD `21f7d109da6ab3506c9e9577f98c6a38771ab335`, A-11.4.2
+  (`release-11.4.2-5469`, `fb2e545101f41303f1e2712de2e7611a9335f1c3`), `release-8.1.1_2431`
+  (`58aded63e9713ef796d76f3e29a60a5254f803b4`) and `release-5.14.0_1851` (`7d6fa267c13bacd48f8d8f10d31a61f38b77bfe4`);
+  a tag's commit is confirmed with `git ls-remote <repository> refs/tags/<tag> refs/tags/<tag>^{}`. Fetch into a
+  scratch directory per pin, one file at a time, these files below `TMessagesProj/src/main/java/org/telegram/` where
+  they exist at the pin: `tgnet/TLRPC.java`, `tgnet/tl/legacy/TL_legacy_message.java`, `tgnet/SerializedData.java`,
+  `tgnet/NativeByteBuffer.java`, `tgnet/Vector.java`, `tgnet/TLObject.java`, `ui/Stories/MessageMediaStoryFull.java`,
+  `ui/Stories/MessageMediaStoryFull_old.java`, `messenger/MessagesStorage.java`, `messenger/DatabaseMigrationHelper.java`,
+  `messenger/MessagesController.java`, `messenger/MessageObject.java`, `messenger/DialogObject.java`,
+  `messenger/SecretChatHelper.java` and, at A-HEAD, `messenger/LocaleController.java` (their SHA-256 are in
+  `CROSSCHECK.md`; no other `tgnet/tl/*.java` defines a class of the pinned types). The script
+  `tools/fixtures/telegram_tl_facts.py` reads the sources as untrusted text with regular expressions (it never runs,
+  imports or opens a path from them) and has two modes:
+
+  ```
+  py -3 -I tools/fixtures/telegram_tl_facts.py --emit <src>/A-HEAD > rows.tsv
+  py -3 -I tools/fixtures/telegram_tl_facts.py --emit <src>/<pin> --pin <pin> --absent-from constructors.tsv
+  py -3 -I tools/fixtures/telegram_tl_facts.py --check tools/fixtures/schemas/telegram-android/constructors.tsv \
+      --pin <pin> <src>/<pin> --commit <commit> --write-report <scratch>/<pin>.md
+  ```
+
+  `--emit` writes the rows the plan's selection asks for at a pin (with `--absent-from`, only the IDs the table lacks:
+  the rows of IDs an older pin reads and A-HEAD no longer does) and lists on stderr every row it could not reduce
+  (`MANUAL`), which is completed by hand. `--check` verifies every row pinned at that pin (`verified`, `MISMATCH` or
+  `MANUAL`), at A-HEAD that every ID each type's switch reads is a row, and at an older pin that every ID the pinned
+  types' switches read is a row (`in-table` or `missing`); it exits 1 on any `MISMATCH` or `missing`. The four reports,
+  with each `MANUAL` row read by hand, the docs cross-check and one row per `facts.tsv` key, are
+  `schemas/telegram-android/CROSSCHECK.md`. Facts only, GPLv2: no code is copied, and no committed file holds a URL.
