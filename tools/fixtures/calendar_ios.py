@@ -18,7 +18,7 @@ Time encoding of the oracle (the expect.json "time", "time_end" and "times" stri
 instant ends in "Z"; a local-unknown reading (an all-day date at 00:00 "as if UTC", or a floating wall-clock reading)
 has no zone suffix.
 
-Text is read by go_text (imported from calendar_android.py, Task 6 ruling): each byte that starts no valid UTF-8
+Text is read by go_text, ident, free_text and summarize, imported from calendar_android.py (go_text: Task 6 ruling): each byte that starts no valid UTF-8
 sequence becomes its own U+FFFD, exactly as the parser's validText; never Python's errors="replace".
 
 Placement (the Go tests bundle each variant; the oracle holds file "any" rows, so the source path follows the role):
@@ -36,7 +36,8 @@ import os
 
 import ios_common as I
 import telephony_common as C
-from calendar_android import go_text
+import calendar_android as A
+from calendar_android import go_text, summarize
 
 FAMILY = "calendar-ios"
 CLAIMED = ("CalendarItem",)  # Meta.Claims of ios.calendar (spec 10)
@@ -57,7 +58,7 @@ NOT_EVENT = "CalendarItem row is not an event (entity_type 3)"  # spec 8.2, Q11 
 MAX_TITLE = 4 << 10  # title, location text and address (spec 9)
 MAX_BODY = 256 << 10  # the description (spec 4.2)
 MAX_ZONE = 256  # zone names (spec 4.1)
-MAX_ID = 1 << 10  # uid, sync id, url, participant addresses (spec 9)
+MAX_ID = 1 << 10  # uid, sync id and participant addresses (spec 9); url too, from the plan's Task 10 url_state too-long
 MAX_LIST = 1000
 
 # The tables the mapping reads (spec 8.1 and 8.2); every other base table is named in the note unmapped_tables.
@@ -141,51 +142,37 @@ def midnight(v):
     return float(v).is_integer() and int(v) % DAY == 0
 
 
-# ---------------------------------------------------------------- text helpers (restated from calendar_android.py)
+# ---------------------------------------------------------------- text helpers (shared with calendar_android.py)
+
+
+def _retable(src, unknown, table):
+    """The unknown_columns keys the Android helpers write as "Events.<col>", under this table's name."""
+    for k, v in src.items():
+        assert k.startswith("Events."), k
+        unknown[table + k[len("Events"):]] = v
 
 
 def ident(raw, unknown, col, v, limit, table="CalendarItem"):
-    """An identifier as stored, never cut (spec 9): over limit -> absent with <col>_state too-long, _len and _sha256."""
-    if v is None:
-        return None
-    if not is_text(v):
-        unknown[table + "." + col] = "type-mismatch"
-        return None
-    s = go_text(v)
-    if len(s.encode("utf-8")) > limit:
-        raw[col + "_state"] = "too-long"
-        raw[col + "_len"] = len(v)
-        raw[col + "_sha256"] = hashlib.sha256(v).hexdigest()
-        return None
-    return s or None
+    """calendar_android.ident (an identifier as stored, never cut, spec 9) with the iOS table name."""
+    u = {}
+    out = A.ident(raw, u, col, v, limit)
+    _retable(u, unknown, table)
+    return out
 
 
 def free_text(raw, tf, field, v, limit, truncated, unknown, col, table="CalendarItem"):
-    """A cleaned free text (C4): altered or cut -> raw.text_flags; cut -> truncated_fields; invalid UTF-8 or NUL ->
-    raw.<field>_raw_b64 (or _raw_sha256 when large); a cell of another type -> unknown_columns."""
-    if not is_text(v):
-        if v is not None:
-            unknown[table + "." + col] = "type-mismatch"
-        return None
+    """calendar_android.free_text (a cleaned free text, C4) with the iOS table name."""
+    u = {}
+    out = A.free_text(raw, tf, field, v, limit, truncated, u, col)
+    _retable(u, unknown, table)
+    return out
+
+
+def plain_text(v, limit, what):
+    """A text the scenario stores clean (no flag, no cut): its CleanText result; anything else is not restated."""
     c = C.clean(v, limit)
-    if c.flags:
-        tf.add(field)
-    if c.truncated:
-        truncated.append(field)
-    if c.b64:
-        raw[field + "_raw_b64"] = c.b64
-    elif c.sha:
-        raw[field + "_raw_sha256"] = c.sha
-    return c.text or None
-
-
-def summarize(s, limit):
-    """common.Summarize for the plain texts of this scenario: None when the text is outside what is restated."""
-    if s is None:
-        return ""
-    if s != s.strip() or "  " in s or not s.isprintable() or len(s.encode("utf-8")) > limit:
-        return None
-    return s
+    assert not c.flags, what + ": an altered or cut text is not restated"
+    return c.text
 
 
 # ---------------------------------------------------------------- the event oracle
@@ -430,9 +417,11 @@ def expect_item(r, env, file="any"):
         t = free_text(raw, tf, "location", loc.get("title"), MAX_TITLE, truncated, unknown, "title", "Location")
         if t:
             lp["text"] = t
-        a = free_text(raw, tf, "location", loc.get("address"), MAX_TITLE, truncated, unknown, "address", "Location")
-        if a:
-            lp["address"] = a
+        a = loc.get("address")
+        if a is not None:  # its own flags and raw bytes have no key in the plan's vocabulary: only a clean text is restated
+            assert is_text(a), "a wrongly typed address is not restated"
+            if plain_text(a, MAX_TITLE, "Location.address"):
+                lp["address"] = plain_text(a, MAX_TITLE, "Location.address")
         for col, lim in (("latitude", 90), ("longitude", 180)):
             v = loc.get(col)
             if v is None:
@@ -451,11 +440,11 @@ def expect_item(r, env, file="any"):
         cp = {"id": str(r["calendar_id"])}
         t = cal.get("title")
         if is_text(t) and t:
-            cp["title"] = C.clean(t, MAX_TITLE).text
+            cp["title"] = plain_text(t, MAX_TITLE, "Calendar.title")
         st = get_join(raw, unknown, env, "store_state", "Store", "store_id", cal.get("store_id"))
         if st is not None:
             if is_text(st.get("name")) and st.get("name"):
-                cp["account"] = {"name": go_text(st["name"])}
+                cp["account"] = {"name": plain_text(st["name"], MAX_TITLE, "Store.name")}
             if st.get("type") is not None:
                 raw["store_type"] = jv(st["type"])
         p["calendar"] = cp
@@ -468,6 +457,7 @@ def expect_item(r, env, file="any"):
             o["address"] = addr
         if name:
             o["name"] = name
+        assert not (o and state), "an organizer with an address and a dangling identity is not restated"
         if o:
             p["organizer"] = o
         elif state:
@@ -675,7 +665,8 @@ def oracle(files, variant, ddl=DDL, refused=False):
     view = C.engine_view(files, ["CalendarItem", "OccurrenceCache", "sqlite_master"] + list(JOIN_TABLES))
     env = Env(view)
     notes = exp["notes"]
-    has_kind = bool(view["CalendarItem"]) and "entity_type" in view["CalendarItem"][0]
+    sql = [jv(m["sql"]) for m in view["sqlite_master"] if m["type"] == b"table" and jv(m["name"]) == "CalendarItem"]
+    has_kind = any(c == "entity_type" for c, _ in A.declared_columns(sql[0]))  # the declared columns, not a row's keys
     kinds = {}
     for r in view["CalendarItem"]:
         e = expect_item(r, env)
