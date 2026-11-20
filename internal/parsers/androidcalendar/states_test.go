@@ -315,3 +315,88 @@ func check(t *testing.T, id int64, label string, m map[string]any, k string, w a
 		t.Errorf("row %d: %s = %#v, want %#v", id, label, g, w)
 	}
 }
+
+// Task 9 fix round 1b (A1, R1, R2; spec 5.4, 4I2-A6, "unknown is never absent"): a non-finite REAL in a raw-only
+// column (a stored NaN, an infinity) is kept in raw in its display form ("NaN", "+Inf", "-Inf") and listed in
+// unknown_columns as type-mismatch, never dropped; the kinds one column shows across a record's child rows are
+// comma-joined and sorted, never overwritten.
+func TestAndroidCalendarNonFiniteRawValuesAreKept(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 601})
+	cddl := snapshotDDL(t, "Calendars")
+	insertRows(b.CreateTable("Calendars", cddl), columnsOf(cddl), calendarDefaults(), []row{{1, map[string]any{"visible": math.Inf(1)}}})
+	eddl := snapshotDDL(t, "Events")
+	insertRows(b.CreateTable("Events", eddl), columnsOf(eddl), eventDefaults(), []row{{1, map[string]any{
+		"eventColor": math.Inf(1), "hasAlarm": math.NaN(), "mutators": math.Inf(-1), "sync_data1": math.Inf(1),
+	}}})
+	kids := map[string][]row{
+		"Reminders":          {{1, map[string]any{"event_id": int64(1), "minutes": math.Inf(1), "method": int64(1)}}},
+		"CalendarAlerts":     {{1, map[string]any{"event_id": int64(1), "begin": tD, "end": tD, "alarmTime": math.Inf(1), "state": int64(0)}}},
+		"ExtendedProperties": {{1, map[string]any{"event_id": int64(1), "name": "n", "value": math.NaN()}}},
+		"EventsRawTimes":     {{1, map[string]any{"event_id": int64(1), "dtstart2445": math.Inf(1)}}},
+	}
+	for _, name := range childTables {
+		if name == "Attendees" {
+			continue
+		}
+		ddl := snapshotDDL(t, name)
+		insertRows(b.CreateTable(name, ddl), columnsOf(ddl), nil, kids[name])
+	}
+	// Attendees whose last column has a DEFAULT that is no literal value: a short record (the column not stored)
+	// reads as default-undecided, a second kind beside the infinity of the row before
+	addl := strings.Replace(snapshotDDL(t, "Attendees"), "attendeeIdNamespace TEXT", "attendeeIdNamespace TEXT DEFAULT (lower('x'))", 1)
+	at := b.CreateTable("Attendees", addl)
+	// _id, event_id, attendeeName, attendeeEmail, attendeeStatus, attendeeRelationship, attendeeType, attendeeIdentity, attendeeIdNamespace
+	at.Insert(1, nil, int64(1), "A", nil, nil, nil, nil, math.Inf(1), math.Inf(-1))
+	at.Insert(2, nil, int64(1), "B", nil, nil, nil, nil, nil) // short: attendeeIdNamespace not stored
+	r := parseBuilt(t, b.Bytes(), false).rec(t, 1)
+	raw := rawOf(r)
+	want := map[string]any{
+		"eventColor": "+Inf", "hasAlarm": "NaN", "mutators": "-Inf", "sync_data1": "+Inf",
+		"calendar":            map[string]any{"visible": "+Inf"},
+		"reminders":           []any{map[string]any{"minutes": "+Inf", "method": int64(1)}},
+		"alerts":              []any{map[string]any{"alarmTime": "+Inf"}},
+		"extended_properties": []any{map[string]any{"name": "n", "value": "NaN"}},
+		"raw_times":           map[string]any{"dtstart2445": "+Inf"},
+		"attendees":           []any{map[string]any{"attendeeIdentity": "+Inf", "attendeeIdNamespace": "-Inf"}, map[string]any{}},
+	}
+	for k, w := range want {
+		g := raw[k]
+		switch wm := w.(type) {
+		case map[string]any:
+			gm, _ := g.(map[string]any)
+			for kk, wv := range wm {
+				if gm[kk] != wv {
+					t.Errorf("raw.%s.%s = %#v, want %#v", k, kk, gm[kk], wv)
+				}
+			}
+		case []any:
+			gl, _ := g.([]any)
+			if len(gl) != len(wm) {
+				t.Errorf("raw.%s = %#v, want %d entries", k, g, len(wm))
+				continue
+			}
+			for i, we := range wm {
+				ge, _ := gl[i].(map[string]any)
+				for kk, wv := range we.(map[string]any) {
+					if ge[kk] != wv {
+						t.Errorf("raw.%s[%d].%s = %#v, want %#v", k, i, kk, ge[kk], wv)
+					}
+				}
+			}
+		default:
+			if g != w {
+				t.Errorf("raw.%s = %#v, want %#v", k, g, w)
+			}
+		}
+	}
+	wantUnknown := map[string]any{
+		"Events.eventColor": "type-mismatch", "Events.hasAlarm": "type-mismatch", "Events.mutators": "type-mismatch",
+		"Events.sync_data1": "type-mismatch", "Calendars.visible": "type-mismatch", "Reminders.minutes": "type-mismatch",
+		"CalendarAlerts.alarmTime": "type-mismatch", "ExtendedProperties.value": "type-mismatch",
+		"EventsRawTimes.dtstart2445": "type-mismatch", "Attendees.attendeeIdentity": "type-mismatch",
+		"Attendees.attendeeIdNamespace": "default-undecided,type-mismatch", // two rows, two kinds: joined, sorted (R2)
+	}
+	if got, _ := raw["unknown_columns"].(map[string]any); !reflect.DeepEqual(got, wantUnknown) {
+		t.Errorf("unknown_columns %v,\nwant %v", got, wantUnknown)
+	}
+}

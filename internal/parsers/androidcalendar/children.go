@@ -131,7 +131,7 @@ func childCode(c cells, col, enum string, entry map[string]any) string {
 		}
 		return labelUnknown
 	}
-	rowrun.Flag(c.unknown, c.row, c.prefix+col, i, k)
+	flagCell(c.unknown, c.row, c.prefix+col, i, k)
 	if s, ok := storedOther(c.row, i); ok {
 		putEntry(entry, col, s)
 	}
@@ -158,7 +158,7 @@ func readAddress(c cells, a *calendar.Attendee, entry map[string]any) bool {
 			a.Address = validText(b)
 		}
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(c.unknown, c.row, c.prefix+"attendeeEmail", col, k)
+		flagCell(c.unknown, c.row, c.prefix+"attendeeEmail", col, k)
 		storeCell(c, entry, "attendeeEmail")
 		entry["address_state"] = stateUndecided
 		return true
@@ -183,7 +183,7 @@ func readName(c cells, a *calendar.Attendee, entry map[string]any, flags textFla
 			a.Name = cl.Text
 		}
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(c.unknown, c.row, c.prefix+"attendeeName", col, k)
+		flagCell(c.unknown, c.row, c.prefix+"attendeeName", col, k)
 		storeCell(c, entry, "attendeeName")
 		entry["name_state"] = stateUndecided
 		return true
@@ -278,7 +278,7 @@ func remindersOf(m parse.MapContext, id int64, r cells) ([]calendar.Reminder, *i
 		case k == rowrun.CellValue && v != -1:
 			r.raw["reminders_state"] = stateNegativeMins
 		case k == rowrun.CellOther || k == rowrun.CellUnknown:
-			rowrun.Flag(r.unknown, row, c.prefix+"minutes", col, k)
+			flagCell(r.unknown, row, c.prefix+"minutes", col, k)
 		}
 		entry := map[string]any{}
 		storeCell(c, entry, "minutes")

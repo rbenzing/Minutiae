@@ -95,7 +95,7 @@ func readMillis(row parse.Row, c rowrun.Cols, name string, raw, unknown map[stri
 	case rowrun.CellNull:
 		raw[name] = nil
 	default:
-		rowrun.Flag(unknown, row, unknownPrefix+name, col, k)
+		flagCell(unknown, row, unknownPrefix+name, col, k)
 	}
 	return m
 }
@@ -172,7 +172,7 @@ func readTiming(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) strin
 	case k == rowrun.CellNull:
 		raw["allDay"] = nil
 	default:
-		rowrun.Flag(unknown, row, unknownPrefix+"allDay", col, k)
+		flagCell(unknown, row, unknownPrefix+"allDay", col, k)
 		if v, ok := storedOther(row, col); ok {
 			raw["allDay"] = v // C1: a readable value of another class is kept as stored (ruling D6)
 		}
@@ -204,7 +204,7 @@ func endOf(row parse.Row, c rowrun.Cols, startMs int64, dtend millisCell, raw, u
 		}
 		return endMs, basisDuration, true
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(unknown, row, unknownPrefix+"duration", col, k)
+		flagCell(unknown, row, unknownPrefix+"duration", col, k)
 		return 0, "", false
 	}
 	switch {
@@ -231,7 +231,7 @@ func readOriginalStart(row parse.Row, c rowrun.Cols, raw, unknown map[string]any
 	case rowrun.CellNull:
 		raw["originalAllDay"] = nil
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(unknown, row, unknownPrefix+"originalAllDay", col, k)
+		flagCell(unknown, row, unknownPrefix+"originalAllDay", col, k)
 	}
 	if !oit.ok() {
 		return nil // stored but not a time: originalInstanceTime_status says why

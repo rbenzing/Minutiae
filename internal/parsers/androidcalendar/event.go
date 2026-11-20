@@ -172,7 +172,7 @@ func readDuration(r cells, ev *calendar.Event) {
 	switch k {
 	case rowrun.CellOther, rowrun.CellUnknown:
 		// listed and kept as stored whether or not an end depends on it (fix round 1, I1; the key is readTimes' own)
-		rowrun.Flag(r.unknown, r.row, r.prefix+"duration", col, k)
+		flagCell(r.unknown, r.row, r.prefix+"duration", col, k)
 		if v, ok := r.stored("duration"); ok {
 			r.raw["duration"] = v
 		}
@@ -233,7 +233,7 @@ func readCode(r cells, col string, keepRaw bool) string {
 		}
 		return labelUnknown
 	}
-	rowrun.Flag(r.unknown, r.row, r.prefix+col, i, k)
+	flagCell(r.unknown, r.row, r.prefix+col, i, k)
 	if s, ok := storedOther(r.row, i); ok {
 		r.raw[col] = s
 	}
@@ -256,10 +256,10 @@ func readOrganizer(r cells, ev *calendar.Event) {
 			r.raw["organizer"] = v
 			r.raw["organizer_state"] = stateNotText
 		} else {
-			rowrun.Flag(r.unknown, r.row, r.prefix+"organizer", col, k)
+			flagCell(r.unknown, r.row, r.prefix+"organizer", col, k)
 		}
 	case rowrun.CellUnknown:
-		rowrun.Flag(r.unknown, r.row, r.prefix+"organizer", col, k)
+		flagCell(r.unknown, r.row, r.prefix+"organizer", col, k)
 	}
 }
 
@@ -296,7 +296,7 @@ func readException(m parse.MapContext, r cells, e *env, ev *calendar.Event) erro
 			undecidedJoin(r.raw, tableEvents)
 		}
 	case rowrun.CellOther, rowrun.CellUnknown:
-		rowrun.Flag(r.unknown, r.row, r.prefix+"original_id", col, k)
+		flagCell(r.unknown, r.row, r.prefix+"original_id", col, k)
 	}
 	x.SyncID = r.ident("original_sync_id", maxID)
 	if x != (calendar.ExceptionOf{}) {
@@ -357,7 +357,7 @@ func readCalendar(m parse.MapContext, r cells, e *env, ev *calendar.Event, flags
 	col := r.c.At("calendar_id")
 	cid, k := intCellOf(r.row, col)
 	if k != rowrun.CellValue {
-		rowrun.Flag(r.unknown, r.row, r.prefix+"calendar_id", col, k)
+		flagCell(r.unknown, r.row, r.prefix+"calendar_id", col, k)
 		undecidedJoin(r.raw, tableCalendars) // an undecidable key: never "no row"
 		return flag{State: flagUndecided}, nil
 	}
@@ -422,7 +422,7 @@ func readDirty(r cells) {
 		}
 		r.unknown[r.prefix+"dirty"] = "out-of-set"
 	default:
-		rowrun.Flag(r.unknown, r.row, r.prefix+"dirty", col, k)
+		flagCell(r.unknown, r.row, r.prefix+"dirty", col, k)
 	}
 	r.raw["dirty_state"] = flagUndecided
 }

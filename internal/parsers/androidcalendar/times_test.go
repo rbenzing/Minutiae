@@ -407,8 +407,9 @@ func TestCalendarUnreadableCellsAreUndecided(t *testing.T) {
 	if got := fmt.Sprint(r3.Payload["reminders"]); got != "[map[method:alert]]" {
 		t.Errorf("minutes NaN: reminders %s, want the method only (no before_s)", got)
 	}
-	if got := fmt.Sprint(raw3["reminders"]); got != "[map[method:1]]" {
-		t.Errorf("minutes NaN: raw.reminders %s, want the stored method only (an unreadable minutes is never a value)", got)
+	// task 9 fix round 1b (A1): the stored NaN is kept in raw in its display form, listed above; it is never a before_s
+	if got := fmt.Sprint(raw3["reminders"]); got != "[map[method:1 minutes:NaN]]" {
+		t.Errorf("minutes NaN: raw.reminders %s, want the stored method and minutes NaN (its display form, never dropped)", got)
 	}
 }
 

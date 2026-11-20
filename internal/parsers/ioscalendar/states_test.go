@@ -181,7 +181,7 @@ func TestIOSCalendarStateVocabularyIsPinned(t *testing.T) {
 			map[string]any{
 				"orig_date": "+Inf", "orig_date_basis": "unestablished",
 				"recurrence":      []any{map[string]any{"frequency": 1, "end_date": "-Inf"}},
-				"unknown_columns": map[string]any{"CalendarItem.orig_date": "non-finite", "Recurrence.end_date": "non-finite"},
+				"unknown_columns": map[string]any{"CalendarItem.orig_date": "type-mismatch", "Recurrence.end_date": "type-mismatch"},
 			},
 			nil,
 			"non-finite orig_date and Recurrence.end_date",
@@ -191,7 +191,7 @@ func TestIOSCalendarStateVocabularyIsPinned(t *testing.T) {
 			41, nil,
 			map[string]any{
 				"exception_dates": []any{nil, map[string]any{"date_state": "undecided"}, "+Inf"},
-				"unknown_columns": map[string]any{"ExceptionDate.date": "default-undecided,non-finite"}, // the kinds of its rows, joined
+				"unknown_columns": map[string]any{"ExceptionDate.date": "default-undecided,type-mismatch"}, // the kinds of its rows, joined
 			},
 			nil,
 			"exception dates",

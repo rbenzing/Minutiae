@@ -23,10 +23,7 @@ const (
 	maxList   = 1000      // attendees, alarms, recurrence rules, exception dates per event (the telephony list cap)
 )
 
-const (
-	stateTooLong     = "too-long"
-	unknownNonFinite = "non-finite" // unknown_columns: an infinite REAL, kept in raw as "+Inf" or "-Inf"
-)
+const stateTooLong = "too-long"
 
 // ident is an identifier as stored, never cut (spec 9), restated from android.calendar (parsers share no code): within
 // limit it is returned (valid UTF-8, each byte that starts no valid sequence replaced by U+FFFD); over it, nothing is
@@ -107,8 +104,8 @@ func (r cells) key(name string) (v int64, ok, undecided bool) {
 
 // stored is the stored value of a cell of any class as raw keeps it (C1): an INTEGER as itself, a TEXT or a BLOB of at
 // most maxStored bytes as storedOther does, a finite REAL as its number; a non-finite REAL in its display form
-// ("NaN", "+Inf", "-Inf", as cellx.Number.Raw gives it), also listed in unknown (a stored NaN as type-mismatch, the
-// class the reader reads it as; an infinity as non-finite), never dropped (fix round 1, I2); an unreadable cell is
+// ("NaN", "+Inf", "-Inf", as cellx.Number.Raw gives it), also listed in unknown as type-mismatch (the word rowrun
+// gives a NaN; the display form in raw keeps the detail), never dropped (fix round 1, I2; 1b, R1); an unreadable cell is
 // listed in unknown and gives nothing, a NULL or a missing column nothing. A TEXT or BLOB over maxStored is not kept:
 // it is reported through over (its length and SHA-256), never cut.
 func (r cells) stored(name string) (v any, over []byte, ok bool) {
@@ -128,7 +125,7 @@ func (r cells) stored(name string) (v any, over []byte, ok bool) {
 		return nil, nil, false
 	}
 	if f, ok := r.row.Float(col); ok && math.IsInf(f, 0) {
-		listUnknown(r.unknown, r.prefix+name, unknownNonFinite)
+		listUnknown(r.unknown, r.prefix+name, "type-mismatch") // as rowrun states a NaN (fix round 1b, R1)
 		return cellx.Number{F: f}.Raw(), nil, true
 	}
 	if v, ok := r.row.Int(col); ok {

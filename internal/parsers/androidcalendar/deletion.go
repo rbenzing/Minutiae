@@ -110,7 +110,7 @@ func readFlag(row parse.Row, col int, name string, unknown map[string]any, missi
 		}
 	case rowrun.CellNull:
 	default:
-		rowrun.Flag(unknown, row, name, col, k)
+		flagCell(unknown, row, name, col, k)
 	}
 	return flag{Value: v, State: flagUndecided}
 }

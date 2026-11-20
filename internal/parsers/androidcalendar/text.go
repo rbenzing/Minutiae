@@ -3,6 +3,7 @@ package androidcalendar
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -72,7 +73,7 @@ type cells struct {
 func (r cells) text(name string) ([]byte, bool) {
 	col := r.c.At(name)
 	b, k := textCellOf(r.row, col)
-	rowrun.Flag(r.unknown, r.row, r.prefix+name, col, k)
+	flagCell(r.unknown, r.row, r.prefix+name, col, k)
 	return b, k == rowrun.CellValue
 }
 
@@ -86,28 +87,61 @@ func (r cells) ident(name string, limit int) string {
 	return s
 }
 
-// stored is the stored value of a cell of any class as raw keeps it (C1): an INTEGER as itself, else storedOther; an
-// unreadable cell is listed in unknown and gives nothing, a NULL or a missing column nothing.
+// stored is the stored value of a cell of any class as raw keeps it (C1): an INTEGER as itself, else storedOther; a
+// non-finite REAL (a stored NaN, an infinity) in its display form "NaN", "+Inf" or "-Inf", also listed in unknown as
+// type-mismatch, never dropped (task 9 fix round 1b, A1); an unreadable cell is listed in unknown and gives nothing, a
+// NULL or a missing column nothing.
 func (r cells) stored(name string) (any, bool) {
 	col := r.c.At(name)
 	if col < 0 {
 		return nil, false
 	}
-	if !rowrun.StateOf(r.row, col).Known() || nanCell(r.row, col) {
-		k := rowrun.CellUnknown
-		if nanCell(r.row, col) {
-			k = rowrun.CellOther
-		}
-		rowrun.Flag(r.unknown, r.row, r.prefix+name, col, k)
+	if nanCell(r.row, col) {
+		flagCell(r.unknown, r.row, r.prefix+name, col, rowrun.CellOther)
+		return "NaN", true
+	}
+	if !rowrun.StateOf(r.row, col).Known() {
+		flagCell(r.unknown, r.row, r.prefix+name, col, rowrun.CellUnknown)
 		return nil, false
 	}
 	if r.row.IsNull(col) {
 		return nil, false
 	}
+	if f, ok := r.row.Float(col); ok && math.IsInf(f, 0) {
+		listUnknown(r.unknown, r.prefix+name, "type-mismatch")
+		if f > 0 {
+			return "+Inf", true
+		}
+		return "-Inf", true
+	}
 	if v, ok := r.row.Int(col); ok {
 		return v, true
 	}
 	return storedOther(r.row, col)
+}
+
+// flagCell lists in unknown (payload.raw.unknown_columns) a column that exists but holds no usable value, as
+// rowrun.Flag does ("type-mismatch" for a value of another class, the decoder's state name for an unknown cell), but
+// never overwrites: the kinds a column shows across the rows of a record (a child table's rows) are comma-joined and
+// sorted, as the plan's vocabulary states (task 9 fix round 1b, A1).
+func flagCell(unknown map[string]any, row parse.Row, name string, col int, k rowrun.CellKind) {
+	switch k {
+	case rowrun.CellOther:
+		listUnknown(unknown, name, "type-mismatch")
+	case rowrun.CellUnknown:
+		listUnknown(unknown, name, rowrun.StateOf(row, col).String())
+	}
+}
+
+// listUnknown adds kind to the comma-joined, sorted kinds of unknown[name].
+func listUnknown(unknown map[string]any, name, kind string) {
+	cur, _ := unknown[name].(string)
+	kinds := []string{kind}
+	if cur != "" {
+		kinds = append(strings.Split(cur, ","), kind)
+	}
+	slices.Sort(kinds)
+	unknown[name] = strings.Join(slices.Compact(kinds), ",")
 }
 
 // textFlags is the set of free-text fields CleanText altered or cut, written as raw.text_flags (one comma-joined
