@@ -3471,7 +3471,7 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   py -3 -I tools/fixtures/telegram_tl_facts.py --check tools/fixtures/schemas/telegram-android/constructors.tsv \
       --pin <pin> <src>/<pin> --commit <commit> --write-report <scratch>/<pin>.md
   py -3 -I tools/fixtures/telegram_tl_facts.py --assemble tools/fixtures/schemas/telegram-android \
-      <scratch>/A-HEAD.md <scratch>/A-11.4.2.md <scratch>/release-8.1.1_2431.md <scratch>/release-5.14.0_1851.md
+      <scratch>/A-HEAD.md <scratch>/A-11.4.2.md <scratch>/release-8.1.1_2431.md <scratch>/release-5.14.0_1851.md       --ddl <scratch>/master.md <scratch>/release-11.4.2-5469.md <scratch>/release-8.1.1_2431-ddl.md       <scratch>/release-5.14.0_1851-ddl.md
   ```
 
   `--emit` writes the rows the plan's selection asks for at a pin (with `--absent-from`, only the IDs the table lacks:
@@ -3482,5 +3482,30 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   (`in-table` or `missing`); it exits 1 on any `MISMATCH` or `missing`. Each report names the SHA-256 of the
   `constructors.tsv` and `facts.tsv` it checked, which the test recomputes, so any edit of either file needs the four
   runs again. `--assemble` writes `schemas/telegram-android/CROSSCHECK.md` (the fixed text in the script, the four
-  reports, the docs cross-check and one row per `facts.tsv` row); the file is its output byte for byte. Facts only,
-  GPLv2: no code is copied, and no committed file holds a URL.
+  reports, the docs cross-check, one row per `facts.tsv` row and, after `--ddl`, the section "# DDL cross-check
+  (plan 4I4)" of the next bullet); the file is its output byte for byte. Facts only, GPLv2: no code is copied, and no
+  committed file holds a URL.
+- Telegram cache4.db DDL snapshots (plan 4I4 Task 4): `schemas/telegram-android/{v181,v159,v84,v64}.sql` (user versions
+  181, 159, 84 and 64: `verified`, the CREATE TABLE statements of A-HEAD, A-11.4.2, release-8.1.1_2431 and
+  release-5.14.0_1851, each table only where its pin defines it) and `v84-upgraded-v181.sql` (`historical`: the v84
+  statements, then the `ALTER TABLE ... ADD COLUMN` statements of the upgrade code at A-HEAD that reach 181). There is
+  no v85 snapshot: no sampled tag has user_version 85, and `media_v4` is covered by `v159.sql`. The sources are
+  `messenger/MessagesStorage.java` and, from A-11.4.2 on, `messenger/DatabaseMigrationHelper.java` at the same four
+  pins, fetched into scratch (one file at a time, each SHA-256 equal to the one in the per-pin file tables of
+  `CROSSCHECK.md`) and never committed. Four runs, one per pin, plus `--emit` for the snapshot text:
+
+  ```
+  py -3 -I tools/fixtures/ddl_crosscheck.py <src>/<pin> tools/fixtures/schemas/telegram-android --family telegram       --snapshot <file>... --tag <tag> --commit TelegramMessenger/Telegram-Android=<sha> --write-report <scratch>/<tag>.md
+  py -3 -I tools/fixtures/ddl_crosscheck.py <src>/<pin> tools/fixtures/schemas/telegram-android --family telegram       --snapshot none.sql --emit <table>
+  ```
+
+  A-HEAD checks `v181.sql` and `v84-upgraded-v181.sql` (`--tag master`), the others one snapshot each. `--emit` prints
+  the pin's own CREATE TABLE text (a table the pin does not define raises `KeyError`). `TestTelegramDDLSnapshotsCiteTheirSource`
+  and `TestTelegramDDLSnapshotColumns` (`internal/archtest`) pin the headers, the report rows and the columns later tasks
+  rely on. Without `--family` the script's output for the 4D snapshots is unchanged.
+- Telegram TL encoder (plan 4I4 Task 4): `telegram_tl_encode.py` writes the TL blobs of the later Telegram fixtures from
+  `constructors.tsv` (never from `facts.tsv`): `encode(type, value)`, `field_offsets(type, value)` (where each field
+  starts, for the truncation rows) and `trailer(path, params, fwd_msg_id)`. Flags words come from the present fields
+  unless the value gives `flags`/`flags2`; a `_raw` value replaces any field's bytes (hostile blobs); a `secret` field
+  accepts only bytes that start with an obviously synthetic marker. `py -3 -I tools/fixtures/telegram_tl_encode.py
+  --self-test` prints `ok` (the framing, the boxed bool, the empty vector, a Peer, a Message round trip, flag handling).

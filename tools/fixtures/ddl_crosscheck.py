@@ -2,7 +2,7 @@
 
     py -3 -I tools/fixtures/ddl_crosscheck.py <sourcedir> <schemasdir>
         [--tag TAG] [--commit REPO=SHA]... [--write-report FILE] [--emit TABLE]...
-        [--snapshot NAME]... [--family calendar]
+        [--snapshot NAME]... [--family calendar|telegram]
 
 <sourcedir> holds the fetched Java files under their base names. They are untrusted text:
 this script reads them as text and applies regular expressions to them; nothing in them is
@@ -35,6 +35,14 @@ first CREATE TABLE outside a method named after a version (bootstrap_first: the 
 helper keeps createCalendarsTable303 before createCalendarsTable). A comma inside a quoted
 DEFAULT literal no longer splits a column (split_items); no 4D snapshot has one, so their
 parse is unchanged.
+
+Plan 4I4 adds --family telegram and the two Telegram source files (MessagesStorage.java, then
+DatabaseMigrationHelper.java where the tag has it; a file the directory lacks is skipped, as for every family). The
+definition at the tag is the first CREATE TABLE of the table in the files in that order, which is the fresh-create path
+of MessagesStorage.java (the upgrade code, with the older definitions, comes after it). The report of a telegram run
+is one subsection ("## DDL cross-check at <tag>") of the section "# DDL cross-check (plan 4I4)" that
+telegram_tl_facts.py --assemble writes into CROSSCHECK.md; it has no MMS note. A snapshot may hold the ALTER TABLE
+ADD COLUMN statements of an upgrade; each is looked up in the sources and cited by file and line.
 """
 import hashlib
 import os
@@ -46,6 +54,8 @@ SRC_FILES = [
     "ContactsDatabaseHelper.java",
     "CallLogDatabaseHelper.java",
     "CalendarDatabaseHelper.java",  # plan 4I3; CalendarContract.java beside it supplies the column constants
+    "MessagesStorage.java",  # plan 4I4: the Telegram fresh-create path ...
+    "DatabaseMigrationHelper.java",  # ... then the upgrade code (from release 11.4.2 on; earlier tags keep it in MessagesStorage)
 ]
 # The only columns a historical snapshot may use that no source defines: invented on purpose
 # for the unmapped_columns check (named in the header of mmssms-oem-extended.sql).
@@ -362,7 +372,8 @@ def main(argv):
         for line, table, col in scan_statements(world, src, "alter"):
             if table is not None:
                 alters.setdefault(table, []).append((name, line, col))
-    calendar = (opt("--family") or [""])[0] == "calendar"
+    family = (opt("--family") or [""])[0]
+    calendar, telegram = family == "calendar", family == "telegram"
     if calendar:
         bootstrap_first(world, creates)
     for t in opt("--emit"):
@@ -444,7 +455,7 @@ def main(argv):
             f.write("| File | Table | Verdict | Evidence |\n|---|---|---|---|\n")
             for fn, tbl, v, ev in rows:
                 f.write("| %s | %s | %s | %s |\n" % (fn, tbl, v, ev))
-            if not calendar:
+            if not calendar and not telegram:
                 f.write(MMS_NOTE)
     return 1 if bad else 0
 

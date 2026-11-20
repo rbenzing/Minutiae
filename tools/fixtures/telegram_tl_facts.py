@@ -3,7 +3,7 @@
     py -3 -I tools/fixtures/telegram_tl_facts.py --emit <srcdir> [--pin <name>] [--absent-from <constructors.tsv>]
     py -3 -I tools/fixtures/telegram_tl_facts.py --check <constructors.tsv> --pin <name> <srcdir>
         [--commit SHA] [--write-report FILE]
-    py -3 -I tools/fixtures/telegram_tl_facts.py --assemble <schemasdir> <report.md>...
+    py -3 -I tools/fixtures/telegram_tl_facts.py --assemble <schemasdir> <report.md>... [--ddl <ddl-report.md>...]
 
 <srcdir> holds the app source fetched at one pinned commit, under the repository's paths below
 TMessagesProj/src/main/java/org/telegram/ (tgnet/TLRPC.java, tgnet/tl/*.java, tgnet/tl/legacy/*.java and
@@ -35,6 +35,8 @@ ID of the pinned types' switches `in-table` or `missing`. Exit status 1 on any M
 report names the SHA-256 of the constructors.tsv and facts.tsv it checked. A MANUAL row is reported as
 "MANUAL, read by hand at <file>:<line>" with its reason: the builder reads it there. --assemble writes
 <schemasdir>/CROSSCHECK.md from the fixed text below, the reports in the order given, and facts.tsv.
+Plan 4I4 Task 4: the reports after --ddl are the runs of ddl_crosscheck.py --family telegram (one per pin); they
+are appended last, under the heading "# DDL cross-check (plan 4I4)", so --assemble reproduces the whole file.
 """
 import hashlib
 import os
@@ -834,8 +836,25 @@ def check(tsv, pin, srcdir, commit):
     return "\n".join(out) + "\n", bad
 
 
-def assemble(schemas, reports):
-    """CROSSCHECK.md: the fixed text, the reports in the order given, the docs cross-check and the facts.tsv rows."""
+DDL_INTRO = """# DDL cross-check (plan 4I4)
+
+The cache4.db snapshots `v181.sql`, `v159.sql`, `v84.sql`, `v64.sql` and `v84-upgraded-v181.sql` of this directory,
+checked by `tools/fixtures/ddl_crosscheck.py --family telegram` against `MessagesStorage.java` and, where the pin has
+it, `DatabaseMigrationHelper.java` (paths below `TMessagesProj/src/main/java/org/telegram/messenger/`) of the
+repository TelegramMessenger/Telegram-Android at the pins above, one run per pin (A-HEAD checks `v181.sql` and
+`v84-upgraded-v181.sql`). The fetched files are the ones pinned by commit and SHA-256 in the sections above; they were
+held in scratch only. `v181.sql`, `v159.sql`, `v84.sql` and `v64.sql` are `verified` (every CREATE TABLE equal to the
+pin's own, column by column); `v84-upgraded-v181.sql` is `historical`: the CREATE TABLE statements of `v84.sql` then
+the ALTER TABLE ADD COLUMN statements of the upgrade code at A-HEAD (each cited by line) that reach user_version 181.
+It does not hold the tables the upgrade code creates after version 84 (for example `messages_topics`). No sampled tag
+has user_version 85, so there is no snapshot for it (`media_v4` is covered by `v159.sql`).
+
+"""
+
+
+def assemble(schemas, reports, ddl_reports=()):
+    """CROSSCHECK.md: the fixed text, the reports in the order given, the docs cross-check, the facts.tsv rows and,
+    last, the DDL cross-check section (plan 4I4 Task 4) when ddl_reports are given."""
     out = PREAMBLE + "# Constructor rows, per pin (`telegram_tl_facts.py --check`)\n\n"
     for path in reports:
         with open(path, encoding="utf-8") as fh:
@@ -847,6 +866,11 @@ def assemble(schemas, reports):
         for line in fh.read().rstrip("\n").split("\n")[1:]:
             key, value, pin, source, _ = line.split("\t")
             out += "| %s | %s | %s | %s | read by hand |\n" % (key, pin, source, value)
+    if ddl_reports:
+        out = out.rstrip("\n") + "\n\n" + DDL_INTRO
+        for path in ddl_reports:
+            with open(path, encoding="utf-8") as fh:
+                out += fh.read() + "\n"
     with open(os.path.join(schemas, "CROSSCHECK.md"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(out.rstrip("\n") + "\n")
 
@@ -892,7 +916,9 @@ def main(argv):
         sys.stderr.write("%s: %d MISMATCH or missing\n" % (pin, bad))
         return 1 if bad else 0
     if args and args[0] == "--assemble" and len(args) >= 3:
-        assemble(args[1], args[2:])
+        rest = args[2:]
+        ddl = rest[rest.index("--ddl") + 1:] if "--ddl" in rest else []
+        assemble(args[1], rest[:rest.index("--ddl")] if "--ddl" in rest else rest, ddl)
         return 0
     raise SystemExit(__doc__)
 
