@@ -27,7 +27,7 @@ whole set. The rules a change must keep are in [invariants.md](invariants.md).
 | [recovery](limitations/recovery.md) | Deleted-file recovery on every filesystem, carving, slack, the recovery checks of `case verify` |
 | [sqlite](limitations/sqlite.md) | The SQLite file library, the table decoder, typed and `db_row` record recovery |
 | [records](limitations/records.md) | The records database, full-text search, JSON output, scale and performance |
-| [parsers](limitations/parsers.md) | The parse host, parser isolation, the decoders, the Android (telephony and WhatsApp), browser and iOS (telephony and WhatsApp) parsers, real-data runs |
+| [parsers](limitations/parsers.md) | The parse host, parser isolation, the decoders, the Android (telephony, WhatsApp and calendar), browser and iOS (telephony, WhatsApp and calendar) parsers, real-data runs |
 
 ## Formats written from memory
 
