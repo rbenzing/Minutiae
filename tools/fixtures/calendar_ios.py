@@ -855,7 +855,26 @@ def recover_expect(variant, files):
     out = C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: None, expect_fn, nobody=NOT_EVENT)
     for r in out["records"]:
         r["record"] = r["record"].pop("_oracle_form")
+    reader_form(out)
     return out
+
+
+def reader_form(out):
+    """Written states each version as the engine reads it, which the Go recover kit compares by storage class: an
+    integral value of a REAL column is stored on disk as an INTEGER (disk_form keeps that form, because the page walker
+    finds a cell by its stored classes) and read back as a REAL, so it is written here as a REAL (Task 10)."""
+    con = C.sqlite3.connect(":memory:")
+    try:
+        con.executescript(snapshot())
+        real = {r[1] for r in con.execute("pragma table_info(CalendarItem)") if r[2].upper() == "REAL"}
+    finally:
+        con.close()
+    cols = out["columns"]["CalendarItem"]
+    assert real and real <= set(cols), "the snapshot's REAL columns of CalendarItem are not in the oracle's columns"
+    for w in out["written"]:
+        if w["table"] == "CalendarItem":
+            w["values"] = [float(v) if c in real and type(v) is int else v for c, v in zip(cols, w["values"])]
+    out["written"].sort(key=lambda w: (w["table"], w["rowid"], json.dumps(w["values"], sort_keys=True)))
 
 
 VARIANTS = {"calendar-ios": variant_core, "calendar-ios-extract": variant_extract,

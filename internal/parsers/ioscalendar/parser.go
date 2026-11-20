@@ -32,14 +32,31 @@ var (
 // Parser is the ios.calendar parser. It holds no state.
 type Parser struct{}
 
+var _ parse.RowMapper = Parser{}
+
+// ClaimableTables are the tables whose mapping is total: every CalendarItem row gives one record or one counted
+// non-event warning (spec 10, 8.2), so typed recovery (plan 4G) can map the items that were deleted or superseded. A
+// recovered row joins no table (B2). The join tables, the occurrence cache and the change-tracking tables are never
+// claimed.
+func ClaimableTables() []string { return []string{tableItem} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
+}
+
 // Meta describes the parser. The one primary glob is the system calendar path of HomeDomain, which a backup and an
 // extraction share (4I3-P5, B4); it ends in Calendar.sqlitedb, so a -wal, -journal or -shm file is never a primary
-// (4I-R21): it reaches the job only as the companion of its primary.
+// (4I-R21): it reaches the job only as the companion of its primary. The claims are ClaimableTables.
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "iOS calendar (Calendar.sqlitedb)",
 		Platforms: []string{parse.PlatformIOS},
 		Emits:     []parse.Emit{{Type: calendar.Type, PayloadVersion: calendar.PayloadVersion}},
+		Claims:    claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Required: true, Globs: []string{systemPath}},
 			{Role: "wal", Companions: []string{"-wal"}},
