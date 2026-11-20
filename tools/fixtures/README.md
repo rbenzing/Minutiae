@@ -3473,6 +3473,8 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
       --pin <pin> <src>/<pin> --commit <commit> --write-report <scratch>/<pin>.md
   py -3 -I tools/fixtures/telegram_tl_facts.py --assemble tools/fixtures/schemas/telegram-android \
       <scratch>/A-HEAD.md <scratch>/A-11.4.2.md <scratch>/release-8.1.1_2431.md <scratch>/release-5.14.0_1851.md       --ddl <scratch>/master.md <scratch>/release-11.4.2-5469.md <scratch>/release-8.1.1_2431-ddl.md       <scratch>/release-5.14.0_1851-ddl.md
+  py -3 -I tools/fixtures/telegram_tl_facts.py --go internal/parsers/androidtelegram/tables.go \
+      tools/fixtures/schemas/telegram-android/constructors.tsv
   ```
 
   `--emit` writes the rows the plan's selection asks for at a pin (with `--absent-from`, only the IDs the table lacks:
@@ -3486,6 +3488,10 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   reports, the docs cross-check, one row per `facts.tsv` row and, after `--ddl`, the section "# DDL cross-check
   (plan 4I4)" of the next bullet); the file is its output byte for byte. Facts only, GPLv2: no code is copied, and no
   committed file holds a URL.
+  `--go` (plan 4I4 Task 7, F27) needs no sources: it writes the parser's Go constructor table from `constructors.tsv` alone,
+  one `tl.Constructor` per row in ID order (the 4I4-P4 notation reduced to `tl.Field`s; a token outside the grammar stops
+  the run), and `golangci-lint fmt` leaves its output unchanged. Rerun it whenever `constructors.tsv` changes;
+  `TestTelegramConstructorTableMatchesFacts` fails on a stale `tables.go`.
 - Telegram cache4.db DDL snapshots (plan 4I4 Task 4): `schemas/telegram-android/{v181,v159,v84,v64}.sql` (user versions
   181, 159, 84 and 64: `verified`, the CREATE TABLE statements of A-HEAD, A-11.4.2, release-8.1.1_2431 and
   release-5.14.0_1851, each table only where its pin defines it) and `v84-upgraded-v181.sql` (`historical`: the v84
