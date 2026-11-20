@@ -177,6 +177,7 @@ var hostileDirs = map[string]string{
 	"chromium.history": "chromium", "safari.history": "safari",
 	"android.whatsapp.msgstore": "androidwhatsapp", "android.whatsapp.contacts": "androidwacontacts",
 	"ios.whatsapp.chats": "ioswhatsapp", "ios.whatsapp.calls": "ioswacalls", "ios.whatsapp.contacts": "ioswacontacts",
+	"android.calendar": "androidcalendar", "ios.calendar": "ioscalendar",
 }
 
 // hostileBackupFiles are the parsers whose primary glob no generic device path matches (the iOS WhatsApp databases live in an
@@ -185,6 +186,7 @@ var hostileBackupFiles = map[string][2]string{
 	"ios.whatsapp.chats":    {"AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "ChatStorage.sqlite"},
 	"ios.whatsapp.calls":    {"AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "CallHistory.sqlite"},
 	"ios.whatsapp.contacts": {"AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "ContactsV2.sqlite"},
+	"ios.calendar":          {"HomeDomain", "Library/Calendar/Calendar.sqlitedb"},
 }
 
 // hostileLivePaths are device paths for parsers that parse only the app's live database (R7): the generic

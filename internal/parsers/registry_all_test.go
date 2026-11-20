@@ -5,16 +5,19 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwacontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/chromium"
 	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
+	"github.com/rbenzing/minutiae/internal/parsers/ioscalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
 	"github.com/rbenzing/minutiae/internal/parsers/iossms"
 	"github.com/rbenzing/minutiae/internal/parsers/ioswacalls"
 	"github.com/rbenzing/minutiae/internal/parsers/ioswacontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/ioswhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/safari"
+	"github.com/rbenzing/minutiae/internal/recordtypes/calendar"
 	"github.com/rbenzing/minutiae/internal/recordtypes/call"
 	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
@@ -38,6 +41,8 @@ var claimsOf = map[string][]string{
 	"ios.whatsapp.chats":        {"ZWAMESSAGE"},
 	"ios.whatsapp.calls":        {"ZWACDCALLEVENT"},
 	"ios.whatsapp.contacts":     {"ZWAADDRESSBOOKCONTACT"},
+	"android.calendar":          {"Events"},
+	"ios.calendar":              {"CalendarItem"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -91,7 +96,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 	}
 }
 
-// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the ten
+// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the twelve
 // parsers that export ClaimableTables, Meta().Claims equals it in order, on the db role. The three Android
 // parsers are held by claimsOf alone.
 func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
@@ -106,6 +111,8 @@ func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
 		"ios.whatsapp.chats":        ioswhatsapp.ClaimableTables,
 		"ios.whatsapp.calls":        ioswacalls.ClaimableTables,
 		"ios.whatsapp.contacts":     ioswacontacts.ClaimableTables,
+		"android.calendar":          androidcalendar.ClaimableTables,
+		"ios.calendar":              ioscalendar.ClaimableTables,
 	}
 	for name, fn := range claimable {
 		var found parse.Parser
@@ -303,8 +310,12 @@ func TestWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 		{"android.whatsapp.contacts", []string{"contact"}},
 	}
 	all := All()
-	if n := len(all); n < 5 || all[n-5].Meta().Name != want[0].name || all[n-4].Meta().Name != want[1].name {
-		t.Fatalf("the registry must hold %s then %s directly before the iOS WhatsApp parsers", want[0].name, want[1].name)
+	byName := func(name string) int {
+		return slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == name })
+	}
+	first, second, iosFirst := byName(want[0].name), byName(want[1].name), byName("ios.whatsapp.chats")
+	if first < 0 || second != first+1 || iosFirst != second+1 {
+		t.Fatalf("the registry must hold %s then %s directly before the iOS WhatsApp parsers (at %d, %d, %d)", want[0].name, want[1].name, first, second, iosFirst)
 	}
 	for _, w := range want {
 		idx := slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == w.name })
@@ -331,7 +342,7 @@ func TestWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 
 // TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes pins what plan 4I2 promises about the three iOS WhatsApp
 // parsers: the roles they read (the database, its WAL and journal, and the optional container metadata plist), the one
-// type each emits and their place at the end of the registry (chats, calls, contacts: ruling 4I2-R1).
+// type each emits and their place as one consecutive block (chats, calls, contacts: ruling 4I2-R1).
 func TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 	want := []struct{ name, typ string }{
 		{"ios.whatsapp.chats", "message"},
@@ -342,11 +353,15 @@ func TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 	if len(all) < len(want) {
 		t.Fatalf("the registry holds %d parsers", len(all))
 	}
-	tail := all[len(all)-len(want):]
+	start := slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == want[0].name })
+	if start < 0 || start+len(want) > len(all) {
+		t.Fatalf("%s is not in the registry with room for the iOS WhatsApp block (index %d of %d)", want[0].name, start, len(all))
+	}
+	block := all[start : start+len(want)]
 	for i, w := range want {
-		m := tail[i].Meta()
+		m := block[i].Meta()
 		if m.Name != w.name {
-			t.Fatalf("registry position %d from the end is %s, want %s", len(want)-i, m.Name, w.name)
+			t.Fatalf("registry position %d of the iOS WhatsApp block is %s, want %s", i, m.Name, w.name)
 		}
 		var roles, types []string
 		required := map[string]bool{}
@@ -365,6 +380,34 @@ func TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 		}
 		if !slices.Equal(types, []string{w.typ}) {
 			t.Errorf("%s: emits %v, want exactly [%s]", w.name, types, w.typ)
+		}
+	}
+}
+
+// TestCalendarParsersReadCompanionRolesAndEmitTheirType pins what plan 4I3 promises about the two calendar parsers
+// (4I3-P1): each emits calendar_event at payload version 1 only, reads the database with its WAL and journal
+// companions, and they close the registry in the order Android, iOS.
+func TestCalendarParsersReadCompanionRolesAndEmitTheirType(t *testing.T) {
+	want := []string{"android.calendar", "ios.calendar"}
+	all := All()
+	if len(all) < len(want) {
+		t.Fatalf("the registry holds %d parsers", len(all))
+	}
+	tail := all[len(all)-len(want):]
+	for i, name := range want {
+		m := tail[i].Meta()
+		if m.Name != name {
+			t.Fatalf("registry position %d from the end is %s, want %s", len(want)-i, m.Name, name)
+		}
+		var roles []string
+		for _, in := range m.Inputs {
+			roles = append(roles, in.Role)
+		}
+		if !slices.Equal(roles, []string{"db", "wal", "journal"}) {
+			t.Errorf("%s: roles %v, want db/wal/journal", name, roles)
+		}
+		if len(m.Emits) != 1 || m.Emits[0].Type != calendar.Type || m.Emits[0].PayloadVersion != 1 || calendar.PayloadVersion != 1 {
+			t.Errorf("%s emits %+v, want exactly %s at payload version 1", name, m.Emits, calendar.Type)
 		}
 	}
 }

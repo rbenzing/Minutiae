@@ -5,6 +5,7 @@ package parsers
 
 import (
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
@@ -12,6 +13,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/chromium"
 	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
+	"github.com/rbenzing/minutiae/internal/parsers/ioscalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
 	"github.com/rbenzing/minutiae/internal/parsers/iossms"
 	"github.com/rbenzing/minutiae/internal/parsers/ioswacalls"
@@ -41,5 +43,7 @@ func All() []parse.Parser {
 		ioswhatsapp.Parser{},
 		ioswacalls.Parser{},
 		ioswacontacts.Parser{},
+		androidcalendar.Parser{},
+		ioscalendar.Parser{},
 	}
 }

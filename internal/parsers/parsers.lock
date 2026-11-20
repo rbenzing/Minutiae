@@ -1,4 +1,6 @@
 # parsers.lock: the generated source hash of every compiled-in parser.
+android.calendar 1.0.0 src1:sha256:1d184f8a1fa8cc6714dfe3aef38f4dfcb1052549e81c36d68d8b04624d920d04
+android.calendar.recover 1.0.0 src1:sha256:d4d4fc223d94eec051ff3ba15d7befb319eda72fe127bffe81c714b267c97e88
 android.calllog 1.0.0 src1:sha256:fa0961db3e2bb68347601b88cf2260bc156f92302992f7cc6886011b6087c069
 android.calllog 1.0.1 src1:sha256:21504d9141feab48c3926d1bdb46a6059e856bf212e6cda2f2cb8693f089aa77
 android.calllog 1.0.2 src1:sha256:dced6337627725564bf507b9b6e72d2c73978c2299c0bf8eae8339bf8ef4fe74
@@ -40,6 +42,8 @@ chromium.history.recover 1.0.3 src1:sha256:c2c9b26bff3e56a8a3bea8789eea72a044bee
 ios.addressbook 1.0.0 src1:sha256:ae0fba04866f48db397622b043033ef035933e9d475ca1c1df99f050e6e51c92
 ios.addressbook 1.0.1 src1:sha256:9f2ffa8b8ae44f183f9b919c5751479ecd66ad826c36189e96d4c5ae7a93967d
 ios.addressbook.recover 1.0.1 src1:sha256:c86d42ced7790ffe922e6a3dc81bc9a7eab5efe91c3116ba2dc04038a9b08898
+ios.calendar 1.0.0 src1:sha256:b288a1a8ae47c3c37efcb36e4d07c94ecba984e4d8f793af7d8bc5d09c6c0582
+ios.calendar.recover 1.0.0 src1:sha256:0d335e7d4d78ed46d139d3e7de5ba9664992f5cece4c61cf43ea0535d2cdeda9
 ios.calls 1.0.0 src1:sha256:5ba13c420489d41bd8842f9924ebdd2bf99cd8ca63295a84fe2e230c4f3f5db4
 ios.calls 1.0.1 src1:sha256:70ce8372ecbe40e315b84f431ca80fdc3d15764c4ea2252bf62af64739fb35c9
 ios.calls 1.0.2 src1:sha256:2cb865a516984f9cceb1e0dc36db30f2acbea05992b0507013fc3a60d477ed0d
