@@ -1002,8 +1002,10 @@ def map_call(table, r, raw, b, direction, dclass, uid, time, remote, file):
     label = REASONS.get(reason)
     if reason is not None:
         raw["reason"] = hx(reason)
-    if b.val(a + "reason.slug") is not None:
-        raw["slug"] = C.clean(b.val(a + "reason.slug"), MAX_ID).text
+    if b.val(a + "reason.slug") is not None:  # an identifier: never cut (spec 12); over MAX_ID absent with its state
+        slug = ident(raw, "slug", b.val(a + "reason.slug"))
+        if slug:
+            raw["slug"] = slug
     if reason is None:
         outcome = "unknown"
         raw["reason_state"] = "not-recorded"

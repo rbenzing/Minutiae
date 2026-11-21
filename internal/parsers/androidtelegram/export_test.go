@@ -17,10 +17,11 @@ func DecodeBlob(b []byte, typ string, bud tl.Budget) (map[string]any, string) {
 
 // The TL types and the fact-bound constants the external tests name.
 const (
-	TypeMessage   = typeMessage
-	TypeUser      = typeUser
-	UnitEditDate  = unitEditDate
-	UnitBlobTimes = unitBlobTimes
+	TypeMessage      = typeMessage
+	TypeUser         = typeUser
+	UnitEditDate     = unitEditDate
+	UnitBlobTimes    = unitBlobTimes
+	UnitCallDuration = unitCallDuration
 )
 
 // EncChatIDCast is encChatIDSigned as facts.tsv states the cast: "int32" (signed) or "uint32".

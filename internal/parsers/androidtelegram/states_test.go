@@ -280,6 +280,67 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 	}
 	checkStates(t, "messages", v1, parseAt(t, remoteApp, dbOnly(goBuiltMessages(64, cells, nil))).Records)
 	dialogStates(t)
+	callStates(t)
+}
+
+// callStates are Task 11's keys (spec 8.7, Q5; the plan's "Calls" vocabulary): the outcome per reason and direction,
+// the labels, reason_state, address_state, the duration and its end, the video flag and a slug over its limit.
+func callStates(t *testing.T) {
+	const ann, self = 1000002, 1000001
+	n := func(v int32) *int32 { return &v }
+	in := func(id int32, c tlCall) []byte { return tlService(id, ann, peerUser(self), c.bytes()) }
+	long := append(le32(0x9fbbf1f7), tlStr(strings.Repeat("x", 1100))...)
+	rows := []stateRow{
+		{
+			"missed in",
+			msgCells{mid: 1, uid: ann, data: in(1, tlCall{id: 1, reason: le32(idReasonMissed)})},
+			map[string]any{"label_reason": nil, "reason": "0x85e42301", "reason_state": nil, "address_state": nil},
+			map[string]any{"outcome": "missed", "direction": "in", "address": "user:1000002", "kind": "voice"},
+		},
+		{
+			"busy in",
+			msgCells{mid: 2, uid: ann, data: in(2, tlCall{id: 2, reason: le32(idReasonBusy)})},
+			map[string]any{"label_reason": nil},
+			map[string]any{"outcome": "rejected"},
+		},
+		{
+			"busy out",
+			msgCells{mid: 3, uid: ann, out: int64(1), read: int64(0), data: outgoing(tlService(3, 0, peerUser(ann), tlCall{id: 3, reason: le32(idReasonBusy)}.bytes()))},
+			map[string]any{"label_reason": "busy"},
+			map[string]any{"outcome": "unknown", "direction": "out"},
+		},
+		{
+			"no reason",
+			msgCells{mid: 4, uid: ann, data: in(4, tlCall{id: 4, duration: n(9)})},
+			map[string]any{"reason_state": "not-recorded", "reason": nil, "label_reason": nil, "duration": int64(9), "time_end_basis": "start+duration", "video": nil, "flags": int64(2), "call_id": int64(4)},
+			map[string]any{"outcome": "unknown", "duration_s": 9},
+		},
+		{
+			"video",
+			msgCells{mid: 5, uid: ann, data: in(5, tlCall{id: 5, video: true})},
+			map[string]any{"video": true, "duration": nil, "time_end_basis": nil},
+			map[string]any{"kind": "video", "duration_s": nil},
+		},
+		{
+			"negative duration",
+			msgCells{mid: 6, uid: ann, data: in(6, tlCall{id: 6, duration: n(-3)})},
+			map[string]any{"duration": int64(-3), "time_end_basis": nil},
+			map[string]any{"duration_s": nil},
+		},
+		{
+			"chat dialog",
+			msgCells{mid: 7, uid: -2000001, data: tlService(7, ann, peerChat(2000001), tlCall{id: 7, reason: le32(idReasonMissed)}.bytes())},
+			map[string]any{"address_state": "not-user-dialog", "dialog_class": "chat"},
+			map[string]any{"address": nil, "outcome": "missed"},
+		},
+		{
+			"slug over its limit",
+			msgCells{mid: 8, uid: ann, data: in(8, tlCall{id: 8, reason: long})},
+			map[string]any{"slug_state": "too-long", "slug_len": int64(1100), "slug": nil, "label_reason": "migrate_conference_call"},
+			nil,
+		},
+	}
+	checkStates(t, "messages_v2", rows, parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, cellsOf(rows)))).Records)
 }
 
 // dialogStates are Task 10's keys (spec 8.6, 9, 4I4-P6, P11, P12; the plan's "Dialog" and "Joins" vocabularies): the

@@ -7,7 +7,8 @@ import (
 )
 
 // Spec 8.5 (reply copy: never a record, never Body, never target_guid; the 4I quote rule), F6, Q10/T6 (the counted
-// tables are notes only): on telegram-v181 the records whose locator names messages_v2 are as many as its rows, none
+// tables are notes only), F6: on telegram-v181 the message records whose locator names messages_v2 are as many as its
+// rows minus the phone-call rows (R11-R17: calls, Q6; the calls are counted apart), none
 // comes from replydata (R1's text is the Body of R1 alone though R30 holds a copy of R1), messages_topics or media_v4
 // (their row counts are notes); R30's raw.reply_copy is the facts, without target_guid, and its Body is its own text;
 // a replydata holding a non-Message ID is stated by its blob state, length and SHA-256, and gives no copy.
@@ -17,10 +18,13 @@ func TestTelegramReplyCopyIsNeverAMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("note rows.messages_v2 %q", res.Notes["rows.messages_v2"])
 	}
-	inV2, r1 := 0, 0
+	inV2, calls, r1 := 0, 0, 0
 	for _, r := range res.Records {
-		if strings.Contains(r.Locator, "table=messages_v2;") {
+		switch {
+		case strings.Contains(r.Locator, "table=messages_v2;") && r.Type == "message":
 			inV2++
+		case strings.Contains(r.Locator, "table=messages_v2;") && r.Type == "call":
+			calls++
 		}
 		for _, tbl := range []string{"replydata", "messages_topics", "media_v4"} {
 			if strings.Contains(r.Locator, tbl) {
@@ -31,8 +35,9 @@ func TestTelegramReplyCopyIsNeverAMessage(t *testing.T) {
 			r1++
 		}
 	}
-	if inV2 != n {
-		t.Errorf("%d records name messages_v2, the table has %d rows", inV2, n)
+	const callRows = 7 // R11-R17
+	if calls != callRows || inV2 != n-callRows {
+		t.Errorf("%d message and %d call records name messages_v2, the table has %d rows (%d phone-call rows)", inV2, calls, n, callRows)
 	}
 	if r1 != 1 {
 		t.Errorf("%d records carry R1's text, want R1 alone (R30's copy is raw only)", r1)

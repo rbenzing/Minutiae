@@ -14,3 +14,8 @@ const (
 	// (4I4-P12, encChatID).
 	encChatIDSigned = true
 )
+
+// unitCallDuration is facts.tsv unit.call_duration: the pinned source formats a phone-call action's duration as
+// seconds (up to 60, then minutes), so duration_s is the stored value and Record.TimeEnd is start plus it (spec 8.7,
+// 10, T1 c4). Any other value would leave the duration in raw with raw.duration_unit "unestablished".
+const unitCallDuration = "seconds"

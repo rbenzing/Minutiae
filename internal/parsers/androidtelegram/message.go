@@ -12,6 +12,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/decode/ts"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/recordtypes/call"
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
@@ -381,8 +382,8 @@ func mediaOf(v view, c tl.Constructor) string {
 }
 
 // kindOf is the kind of spec 8.5 from the top constructor: TL_messageEmpty* unknown (raw.label_constructor);
-// TL_messageService* system when its action was reached (a phone-call action is Task 11's call; until then a system
-// message); another message text without media or with messageMediaEmpty, media with another media; a blob with no
+// TL_messageService* system when its action was reached (mapMessage turns a phone-call action into a call, spec
+// 8.7; a conference call and every other action stay system messages); another message text without media or with messageMediaEmpty, media with another media; a blob with no
 // known top, or whose media is undecided, unknown. A truncated, malformed, capped or refused blob takes the same rule
 // when its stop lies after media (or the action), and is unknown when the stop is at or before it (spec 8.4: the
 // fields before a stop are as partial; review I1).
@@ -485,7 +486,7 @@ func budgetOf(m parse.MapContext) tl.Budget {
 
 // mapMessage turns one row of a message table into its message record (spec 8.3-8.5): the plain columns as stored,
 // the data blob with its state, direction, kind, status, read, guid, the text as Body and the date as the record
-// time; the dialog (resolveDialog: class, thread and joins), the participants (participantsOf) and the Summary
+// time (a phone-call action is one call and no message, callOf); the dialog (resolveDialog: class, thread and joins), the participants (participantsOf) and the Summary
 // (messageSummary) of spec 8.6 and 9. Every decode, the joined chats blob's included, charges the job budget and is
 // freed before the row's mapping returns (F8).
 func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table string, c rowrun.Cols) ([]records.Record, error) {
@@ -571,13 +572,24 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 			setBodyFields(&msg, cl)
 		}
 	}
+	if len(r.unknown) > 0 {
+		raw["unknown_columns"] = r.unknown
+	}
+	if hasTop && isPhoneCall(v, msg.Kind) {
+		// spec 8.7, Q6: one call and no message for a phone-call action (a guid is a message's)
+		uid, uidOK := r.cell("uid")
+		c, end := callOf(v, dir, d, uid, uidOK, tm, raw)
+		return []records.Record{{
+			Type: call.Type, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator,
+			Range: &place.Range, Time: tm, TimeEnd: end,
+			Summary: call.Summary(c.Direction, c.Outcome, c.Address),
+			Payload: c.Payload(),
+		}}, nil
+	}
 	if mid, ok := r.cell("mid"); ok {
 		msg.GUID = strconv.FormatInt(mid, 10)
 	} else {
 		raw["guid_state"] = stateUndecided
-	}
-	if len(r.unknown) > 0 {
-		raw["unknown_columns"] = r.unknown
 	}
 	msg.Raw = raw
 	rec := records.Record{
