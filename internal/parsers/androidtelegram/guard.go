@@ -173,17 +173,21 @@ func blobColumns() []string { return []string{colData, colReplyData} }
 
 // countingEmitter counts what a mapping cannot warn about (4I4-P9, B9; restated from androidcalendar/guard.go, F29):
 // a mapper cannot warn and still emit its record, so the blob states per <table>.<col>, the top constructors of the
-// message blobs and the records with an undecided join are counted here, and warned about and noted once after
-// rowrun.Run.
+// message blobs, the records with an undecided join and the secret dialogs are counted here, and warned about and
+// noted once after rowrun.Run.
 type countingEmitter struct {
 	parse.Emitter
 	states map[string]map[string]int64 // "<table>.<col>" -> state -> records
 	seen   map[string]int64            // data_constructor of a message record -> records
 	joins  map[string]int64            // table -> records whose raw.join_undecided names it
+	secret map[int64]struct{}          // the distinct dialog ids of the secret-chat message records
 }
 
 func newCountingEmitter(out parse.Emitter) *countingEmitter {
-	return &countingEmitter{Emitter: out, states: map[string]map[string]int64{}, seen: map[string]int64{}, joins: map[string]int64{}}
+	return &countingEmitter{
+		Emitter: out, states: map[string]map[string]int64{}, seen: map[string]int64{}, joins: map[string]int64{},
+		secret: map[int64]struct{}{},
+	}
 }
 
 // tableOfLocator is the table a live locator names ("sqlite:table=<t>;rowid=..."), "" for another form.
@@ -214,6 +218,9 @@ func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
 	if table == tableMessages || table == tableMessagesV2 {
 		if id, ok := raw["data_constructor"].(string); ok {
 			c.seen[id]++
+		}
+		if uid, ok := raw["uid"].(int64); ok && raw["secret_chat"] == true {
+			c.secret[uid] = struct{}{}
 		}
 	}
 	if list, ok := raw["join_undecided"].([]any); ok {

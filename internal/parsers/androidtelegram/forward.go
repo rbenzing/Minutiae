@@ -65,15 +65,15 @@ func addressesAt(v view, path string) (out, unresolved []string) {
 		}
 		switch n.Kind {
 		case tl.KObject:
-			for _, k := range []string{classUser, "chat", "channel"} {
-				if id, ok := v.Int(path + "." + k + "_id"); ok {
-					out = append(out, k+":"+strconv.FormatInt(id, 10))
+			for _, k := range addressClasses() {
+				if id, ok := v.Int(path + "." + string(k) + "_id"); ok {
+					out = append(out, string(k)+":"+strconv.FormatInt(id, 10))
 					break
 				}
 			}
 		case tl.KID32, tl.KID64:
-			switch n.Class {
-			case classUser, "chat", "channel":
+			switch dialogClass(n.Class) {
+			case classUser, classChat, classChannel:
 				out = append(out, n.Class+":"+strconv.FormatInt(n.Int, 10))
 			default:
 				unresolved = append(unresolved, strconv.FormatInt(n.Int, 10))

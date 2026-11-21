@@ -9,4 +9,8 @@ const (
 	// unitBlobTimes is facts.tsv unit.blob_times: the unit of the blob's other times (fwd_from.date, until_date,
 	// expire_date) is not established as a set, so they stay raw only (spec 10).
 	unitBlobTimes = "unestablished"
+	// encChatIDSigned is facts.tsv cast.encrypted_chat_id "int32": the enc_chats key of a secret dialog is the low 32
+	// bits of its id cast to int (DO:117-119), so a chat id above 2^31-1 is negative (R10: -5), never re-signed
+	// (4I4-P12, encChatID).
+	encChatIDSigned = true
 )

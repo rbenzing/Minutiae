@@ -83,24 +83,10 @@ func locatorRow(loc string) string {
 	return table + "/" + id
 }
 
-// The raw keys of later tasks (F4): each later task deletes its entries here, and Task 12 deletes pendingOracle.
-func pendingRawKeys() []string {
-	return []string{
-		// Task 10: peers, participants, thread joins, secret chats
-		"peer_id", "sender_state", "sender_basis", "counterparty_state", "thread_title_state", "thread_user_state",
-		"join_undecided", "secret_chat", "dialog_class_state",
-	}
-}
-
-// pendingRawPrefixes are the raw key prefixes of later tasks: the joined chats blob's (Task 10).
-func pendingRawPrefixes() []string { return []string{"chat_data_"} }
-
-// pendingOracle is the interim filter of TestAndroidTelegramMatchesOracle (F4): a copy of exp without what Tasks 10-12
-// map. (a) The raw keys of pendingRawKeys and pendingRawPrefixes are deleted; raw.enc_chat_id is kept only on a pre-84 high-id secret row (raw.dialog_basis, F10), and a dialog class
-// the chats join or the peer resolves (chat, channel, community) is the interim "negative" (Task 10). (b) The
-// participants are the interim unknown ones and the thread is its id alone (Task 10); Summary is not compared
-// (Task 10 names the counterparty). (c) The call records of the pending call rows are dropped (Task 11), as
-// dropPendingCalls drops them from the run. The users.data warning is Task 12's. No variant is dropped.
+// pendingOracle is the interim filter of TestAndroidTelegramMatchesOracle (F4): a copy of exp without what Tasks 11
+// and 12 map. The call records of the pending call rows are dropped (Task 11), as dropPendingCalls drops them from the
+// run; the users records and the users.data warning are Task 12's (AssertMatchesOracle is given the message tables
+// only). Participants, threads, joins, secret chats and Summary are compared in full (Task 10). No variant is dropped.
 func pendingOracle(exp parsertest.Expect) parsertest.Expect {
 	var out parsertest.Expect
 	bs, err := json.Marshal(exp)
@@ -115,15 +101,9 @@ func pendingOracle(exp parsertest.Expect) parsertest.Expect {
 	calls := pendingCallRows()[exp.Variant]
 	recs := out.Records[:0]
 	for _, r := range out.Records {
-		if r.Table == "users" {
-			recs = append(recs, r) // not compared: AssertMatchesOracle is given the message tables only
+		if r.Table != "users" && slices.Contains(calls, r.Table+"/"+itoa(r.Rowid)) {
 			continue
 		}
-		if slices.Contains(calls, r.Table+"/"+itoa(r.Rowid)) {
-			continue
-		}
-		r.Summary = nil
-		pendingPayload(r.Payload)
 		recs = append(recs, r)
 	}
 	out.Records = recs
@@ -136,33 +116,6 @@ func pendingOracle(exp parsertest.Expect) parsertest.Expect {
 	}
 	out.Warnings = warns
 	return out
-}
-
-// pendingPayload rewrites one message payload to the interim form of Task 9 (Task 10 fills participants and thread).
-func pendingPayload(p map[string]any) {
-	p["participants"] = []any{}
-	p["participants_unknown"] = true
-	if th, ok := p["thread"].(map[string]any); ok {
-		p["thread"] = map[string]any{"id": th["id"]}
-	}
-	raw, _ := p["raw"].(map[string]any)
-	for _, k := range pendingRawKeys() {
-		delete(raw, k)
-	}
-	for k := range raw {
-		for _, pre := range pendingRawPrefixes() {
-			if strings.HasPrefix(k, pre) {
-				delete(raw, k)
-			}
-		}
-	}
-	if _, pre84 := raw["dialog_basis"]; !pre84 {
-		delete(raw, "enc_chat_id")
-	}
-	switch raw["dialog_class"] {
-	case "chat", "channel", "community":
-		raw["dialog_class"] = "negative"
-	}
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }

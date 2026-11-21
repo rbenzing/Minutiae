@@ -1,11 +1,15 @@
 package androidtelegram_test
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
+	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
+	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
 )
 
@@ -275,7 +279,204 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 		cells = append(cells, r.cells)
 	}
 	checkStates(t, "messages", v1, parseAt(t, remoteApp, dbOnly(goBuiltMessages(64, cells, nil))).Records)
+	dialogStates(t)
 }
+
+// dialogStates are Task 10's keys (spec 8.6, 9, 4I4-P6, P11, P12; the plan's "Dialog" and "Joins" vocabularies): the
+// resolved classes and their conflict, the secret flag and key, the sender states, and every join state, live
+// (users, chats and enc_chats present; a guarded chats and an absent enc_chats) and in the typed pass.
+func dialogStates(t *testing.T) {
+	const ann, self = 1000002, 1000001
+	in := func(id int32, peer []byte, from int64) []byte {
+		return tlMessage{id: id, from: from, peerObj: peer, date: baseDate, text: "x"}.bytes()
+	}
+	out := func(id int32, peer []byte) []byte {
+		return tlMessage{flags: bitOut, id: id, peerObj: peer, date: baseDate, text: "x"}.bytes()
+	}
+	o := func(c msgCells) msgCells { c.out, c.read = int64(1), int64(0); return c }
+	cut := tlMessage{id: 13, from: ann, peerObj: peerChat(2000001), date: baseDate, text: "x"}.bytes()
+	post := tlMessage{flags: bitPost, id: 4, peerObj: peerChannel(3000001), date: baseDate, text: "x"}.bytes()
+	rows := []stateRow{
+		{
+			"user with users row",
+			msgCells{mid: 1, uid: ann, data: in(1, peerUser(self), ann)},
+			map[string]any{"dialog_class": "user", "thread_user_state": nil, "peer_id": "user:1000001"},
+			map[string]any{"thread": map[string]any{"id": "1000002", "group": false}},
+		},
+		{
+			"user without users row",
+			msgCells{mid: 2, uid: 1000099, data: in(2, peerUser(self), 1000099)},
+			map[string]any{"thread_user_state": "no-users-row"},
+			nil,
+		},
+		{
+			"chat",
+			msgCells{mid: 3, uid: -2000001, data: in(3, peerChat(2000001), ann)},
+			map[string]any{"dialog_class": "chat", "thread_title_state": nil, "chat_data_state": "decoded-prefix", "peer_id": "chat:2000001"},
+			map[string]any{
+				"thread":       map[string]any{"id": "-2000001", "title": "Family", "group": true},
+				"participants": []any{map[string]any{"role": "from", "address": "user:1000002"}},
+			},
+		},
+		{
+			"channel post",
+			msgCells{mid: 4, uid: -3000001, data: post},
+			map[string]any{"dialog_class": "channel", "sender_basis": "channel-post", "sender_state": nil},
+			map[string]any{"participants": []any{map[string]any{"role": "from", "address": "channel:3000001"}}},
+		},
+		{
+			"class conflict",
+			msgCells{mid: 5, uid: -3000003, data: in(5, peerChat(3000003), ann)},
+			map[string]any{"dialog_class": "negative", "dialog_class_state": "conflict", "thread_title_state": "class-mismatch"},
+			map[string]any{"thread": map[string]any{"id": "-3000003"}},
+		},
+		{
+			"no chats row",
+			msgCells{mid: 6, uid: -2000009, data: in(6, peerChat(2000009), ann)},
+			map[string]any{"dialog_class": "chat", "thread_title_state": "no-chats-row", "chat_data_state": nil},
+			nil,
+		},
+		{
+			"chats blob NULL",
+			msgCells{mid: 7, uid: -2000010, data: in(7, peerChat(2000010), ann)},
+			map[string]any{"dialog_class": "chat", "thread_title_state": "blob-undecided"},
+			nil,
+		},
+		{
+			"sender absent",
+			msgCells{mid: 8, uid: -2000001, data: in(8, peerChat(2000001), 0)},
+			map[string]any{"sender_state": "absent"},
+			map[string]any{"participants_unknown": true},
+		},
+		{
+			"secret without enc_chats row",
+			msgCells{mid: 9, uid: 1<<62 | 9, data: in(9, peerUser(self), ann)},
+			map[string]any{"secret_chat": true, "dialog_class": "secret", "enc_chat_id": 9, "counterparty_state": "no-enc_chats-row"},
+			map[string]any{"thread": map[string]any{"id": "4611686018427387913", "group": false}},
+		},
+		{
+			"secret zero key", o(msgCells{mid: 10, uid: 1 << 62, data: out(10, peerUser(ann))}),
+			map[string]any{"enc_chat_id": 0, "counterparty_state": "zero-key"},
+			map[string]any{"participants_unknown": true},
+		},
+		{
+			"secret counterparty", o(msgCells{mid: 11, uid: 1<<62 | 77, data: out(11, peerUser(ann))}),
+			map[string]any{"enc_chat_id": 77, "counterparty_state": nil},
+			map[string]any{"participants": []any{map[string]any{"role": "to", "address": "user:1000002"}}},
+		},
+		{
+			"secret user NULL", o(msgCells{mid: 12, uid: 1<<62 | 78, data: out(12, peerUser(ann))}),
+			map[string]any{"counterparty_state": nil, "unknown_columns": map[string]any{"enc_chats.user": "null"}},
+			map[string]any{"participants_unknown": true},
+		},
+		{
+			"sender blob-undecided",
+			msgCells{mid: 13, uid: -2000001, data: cut[:20]},
+			map[string]any{"sender_state": "blob-undecided", "data_state": "truncated"},
+			map[string]any{"participants_unknown": true},
+		},
+		{
+			"folder",
+			msgCells{mid: 14, uid: 1<<61 | 1, data: in(14, peerUser(self), ann)},
+			map[string]any{"dialog_class": "folder", "sender_state": nil},
+			map[string]any{"participants_unknown": true, "thread": map[string]any{"id": "2305843009213693953"}},
+		},
+	}
+	db := goBuiltWith(181, cellsOf(rows), usersTable(ann),
+		chatsTable(
+			builtRow{2000001, map[string]any{"data": tlChat(2000001, "Family")}},
+			builtRow{3000001, map[string]any{"data": tlChannel(3000001, "News")}},
+			builtRow{3000003, map[string]any{"data": tlChannel(3000003, "Mismatch")}},
+			builtRow{2000010, map[string]any{"name": "null blob"}},
+		),
+		encChatsTable(builtRow{77, map[string]any{"user": int64(ann)}}, builtRow{78, map[string]any{}}))
+	checkStates(t, "messages_v2", rows, parseAt(t, remoteApp, dbOnly(db)).Records)
+
+	// a chats table whose uid is not the rowid alias is guarded, an enc_chats table the database lacks is absent:
+	// both joins are undecided, never a miss
+	undecided := []stateRow{
+		{
+			"chats guarded",
+			msgCells{mid: 1, uid: -2000001, data: in(1, peerChat(2000001), ann)},
+			map[string]any{"thread_title_state": "undecided", "join_undecided": []any{"chats"}, "dialog_class": "chat"},
+			nil,
+		},
+		{
+			"enc_chats absent", o(msgCells{mid: 2, uid: 1<<62 | 77, data: out(2, peerUser(ann))}),
+			map[string]any{"counterparty_state": "undecided", "join_undecided": []any{"enc_chats"}},
+			map[string]any{"participants_unknown": true},
+		},
+	}
+	guarded := builtTable{
+		"chats", "CREATE TABLE chats (uid INTEGER, name TEXT, data BLOB)",
+		[]string{"uid", "name", "data"},
+		"",
+		[]builtRow{{1, map[string]any{"uid": int64(2000001), "data": tlChat(2000001, "Family")}}},
+	}
+	checkStates(t, "messages_v2", undecided, parseAt(t, remoteApp, dbOnly(goBuiltWith(181, cellsOf(undecided), guarded))).Records)
+
+	// 4I4-P6: the typed pass joins nothing
+	typed := []stateRow{
+		{
+			"typed user",
+			msgCells{mid: 1, uid: ann, data: in(1, peerUser(self), ann)},
+			map[string]any{"thread_user_state": "not-joined-recovered", "account": nil},
+			nil,
+		},
+		{
+			"typed chat",
+			msgCells{mid: 2, uid: -2000001, data: in(2, peerChat(2000001), ann)},
+			map[string]any{"thread_title_state": "not-joined-recovered", "dialog_class": "chat", "chat_data_state": nil},
+			map[string]any{"thread": map[string]any{"id": "-2000001", "group": true}},
+		},
+		{
+			"typed secret", o(msgCells{mid: 3, uid: 1<<62 | 77, data: out(3, peerUser(ann))}),
+			map[string]any{"counterparty_state": "not-joined-recovered", "secret_chat": true, "enc_chat_id": 77},
+			map[string]any{"participants_unknown": true},
+		},
+	}
+	db = goBuiltWith(181, cellsOf(typed), usersTable(ann), chatsTable(builtRow{2000001, map[string]any{"data": tlChat(2000001, "Family")}}),
+		encChatsTable(builtRow{77, map[string]any{"user": int64(ann)}}))
+	checkStates(t, "messages_v2", typed, typedPass(t, db))
+}
+
+// cellsOf are the cells of the state rows, in order.
+func cellsOf(rows []stateRow) []msgCells {
+	var out []msgCells
+	for _, r := range rows {
+		out = append(out, r.cells)
+	}
+	return out
+}
+
+// typedPass maps every row of the message tables of db through the typed pass's mappings (Parser.Mappings, a nil
+// env, 4I4-P6) with rowrun.Run, as the recovery host does for a recovered row: no join runs.
+func typedPass(t *testing.T, db []byte) []records.Record {
+	t.Helper()
+	h := parsertest.NewHarness(t)
+	p := androidtelegram.Parser{}
+	in := inputAt(t, h, p, remoteApp, dbOnly(db), false)
+	var steps []rowrun.Step
+	for _, m := range p.Mappings() {
+		steps = append(steps, rowrun.Step{Mapping: m, Optional: true})
+	}
+	e := &recordSink{}
+	if _, err := rowrun.Run(t.Context(), in, e, steps); err != nil {
+		t.Fatal(err)
+	}
+	return e.recs
+}
+
+// recordSink is an emitter that keeps the records.
+type recordSink struct{ recs []records.Record }
+
+func (e *recordSink) Emit(_ context.Context, r records.Record) error {
+	e.recs = append(e.recs, r)
+	return nil
+}
+func (*recordSink) Warn(context.Context, string, string) error { return nil }
+func (*recordSink) Note(string, string)                        {}
+func (*recordSink) Progress(int64, int64)                      {}
 
 // cutBeforeMedia is a TL_message with the media flag set whose blob ends right before the media constructor ID.
 func cutBeforeMedia(id int32) []byte {

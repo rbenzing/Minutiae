@@ -151,7 +151,8 @@ func noteListSep(names []string, limit int, sep string) string {
 // writeCountNotes writes the notes of what the run counted (spec 8.4, 8.10, the plan's notes table): blob_states
 // ("<table>.<col>=<state>:<n>,…" per TL column in table order, the states in vocabulary order, the columns joined by
 // ";", cut at 512 bytes) and constructors_seen (the message blobs' top IDs "0x<id>:<n>" by count descending then ID,
-// at most 64, then "other:<n>", cut at 1,000 bytes, F11). They follow rowrun.Run: what they count exists only then.
+// at most 64, then "other:<n>", cut at 1,000 bytes, F11) and secret_chats (the distinct secret dialog ids among the
+// message records). They follow rowrun.Run: what they count exists only then.
 func writeCountNotes(out parse.Emitter, c *countingEmitter) {
 	var states []string
 	for _, table := range countedTables() {
@@ -171,6 +172,7 @@ func writeCountNotes(out parse.Emitter, c *countingEmitter) {
 	if len(states) > 0 {
 		out.Note("blob_states", noteListSep(states, maxNote, ";"))
 	}
+	out.Note("secret_chats", strconv.Itoa(len(c.secret))) // the distinct secret dialog ids among the message rows
 	if len(c.seen) == 0 {
 		return
 	}

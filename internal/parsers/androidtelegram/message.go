@@ -37,15 +37,6 @@ const (
 	idMediaEmpty        = 0x3ded6320 // TL_messageMediaEmpty: a message without media (spec 8.5)
 )
 
-// The dialog classes the uid alone decides (4I4-P11; Task 10 resolves "negative" to chat, channel or community).
-const (
-	classUser     = "user"
-	classSecret   = "secret"
-	classFolder   = "folder"
-	classNegative = "negative"
-	classUnknown  = "unknown"
-)
-
 // plainColumn is one integer column kept in raw as stored (spec 8.5 raw list), under its raw key.
 type plainColumn struct{ col, key string }
 
@@ -238,31 +229,8 @@ func (r *msgRow) readPre84() (int64, bool) {
 	return id, midOK
 }
 
-// dialogOfUID is the interim dialog class of a row (F10; Task 10 resolves a negative dialog and joins it): a
-// messages row matching facts.tsv predicate.pre84_secret_uid (the low 32 bits are 0; no guard on the high part, T1
-// c6) is secret with the chat id uid >> 32 as a signed int; else the uid alone decides (predicate.secret_dialog,
-// predicate.folder_dialog): bit 62 set (and 63 clear) secret, bit 61 folder, another positive id a user, a negative
-// one (not MinInt64) a basic group, channel or community, and 0 or MinInt64 unknown.
-func dialogOfUID(table string, uid int64) (class string, encID int64, pre84 bool) {
-	switch {
-	case table == tableMessages && uint32(uid) == 0: // the low 32 bits, as the pinned cast reads them
-		return classSecret, int64(int32(uid >> 32)), true // the high 32 bits as a signed int (the pin)
-	case uid > 0 && uid>>62&1 == 1:
-		return classSecret, 0, false
-	case uid > 0 && uid>>61&1 == 1:
-		return classFolder, 0, false
-	case uid > 0:
-		return classUser, 0, false
-	case uid < 0 && uid != minInt64:
-		return classNegative, 0, false
-	}
-	return classUnknown, 0, false
-}
-
-const minInt64 = -1 << 63
-
 // readBlobRaw states the decoded blob fields of spec 8.5's raw list (the media, forward header and trailer are
-// mediaSummary's, fwdRaw's and readTrailer's, the reply copy replyCopy's; the peers are Task 10's): the flags words,
+// mediaSummary's, fwdRaw's and readTrailer's, the reply copy replyCopy's, the peer peerRaw's): the flags words,
 // the set booleans, the id (and id_conflict against the message id), via_bot_id, grouped_id, ttl_period, views,
 // reply_to.reply_to_msg_id, edit_date with its unit, the blob date (and date_conflict against the date column) and the
 // messageEmpty label.
@@ -517,8 +485,9 @@ func budgetOf(m parse.MapContext) tl.Budget {
 
 // mapMessage turns one row of a message table into its message record (spec 8.3-8.5): the plain columns as stored,
 // the data blob with its state, direction, kind, status, read, guid, the text as Body and the date as the record
-// time. Participants and the thread's title and group are Task 10's: until then participants are unknown and the
-// thread is its id. Every decode charges the job budget and is freed when the row's mapping returns (F8).
+// time; the dialog (resolveDialog: class, thread and joins), the participants (participantsOf) and the Summary
+// (messageSummary) of spec 8.6 and 9. Every decode, the joined chats blob's included, charges the job budget and is
+// freed before the row's mapping returns (F8).
 func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table string, c rowrun.Cols) ([]records.Record, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
@@ -559,6 +528,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	var atts []message.Attachment
 	if hasTop {
 		readBlobRaw(raw, v, top, msgID, msgIDOK, date, dateOK)
+		peerRaw(v, raw)
 		fwdRaw(v, raw)
 		atts = mediaSummary(v, tab, top, raw)
 		readTrailer(b, v, top, raw)
@@ -571,24 +541,21 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	msg := message.Message{
 		Channel: channelTelegram, Direction: dir, Kind: kindOf(v, top, hasTop, state),
 		Status: statusOf(raw, dir, send, sendOK), Read: readOf(raw, dir, rs, rsOK),
-		ParticipantsUnknown: true, // Task 10 decides the participants from the dialog
-		Attachments:         atts,
+		Attachments: atts,
 	}
 
-	uid, uidOK := r.cell("uid")
-	class := classUnknown
-	if uidOK {
-		var encID int64
-		var pre84 bool
-		class, encID, pre84 = dialogOfUID(table, uid)
-		if pre84 {
-			raw["dialog_basis"], raw["enc_chat_id"] = dialogBasisPre84, encID
+	d := dialog{class: classUnknown}
+	if uid, ok := r.cell("uid"); ok {
+		var th *message.Thread
+		if d, th, err = resolveDialog(m, e, r, v, hasTop, tab, bud, uid); err != nil {
+			return nil, err
 		}
-		msg.Thread = &message.Thread{ID: strconv.FormatInt(uid, 10)}
+		msg.Thread = th
 	} else {
 		raw["thread_state"] = stateUndecided
 	}
-	raw["dialog_class"] = class
+	raw["dialog_class"] = string(d.class)
+	msg.Participants, msg.ParticipantsUnknown = participantsOf(v, hasTop, state, dir, d, raw)
 
 	r.readSideBlobs(row, c)
 	r.readReplyData(row, c, tab, bud)
@@ -616,7 +583,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	rec := records.Record{
 		Type: message.Type, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator,
 		Range: &place.Range, Time: tm, Body: body,
-		Summary: message.Summary(channelTelegram, dir, "", body),
+		Summary: messageSummary(d, dir, msg.Participants, body),
 		Payload: msg.Payload(),
 	}
 	return []records.Record{rec}, nil

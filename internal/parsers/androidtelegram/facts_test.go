@@ -35,6 +35,8 @@ func TestTelegramFactsMatchTheCode(t *testing.T) {
 	for key, got := range map[string]string{
 		"unit.edit_date":  androidtelegram.UnitEditDate,
 		"unit.blob_times": androidtelegram.UnitBlobTimes,
+		// 4I4-P12, spec 8.6: the enc_chats key of a secret dialog is the low 32 bits cast as pinned (Task 10)
+		"cast.encrypted_chat_id": androidtelegram.EncChatIDCast(),
 	} {
 		vals := factValues(t, key)
 		if len(vals) == 0 {

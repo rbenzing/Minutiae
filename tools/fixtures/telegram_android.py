@@ -630,7 +630,9 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                 if chat_row_cls:
                     sources.append(chat_row_cls)
         if sources:
-            if all(s == sources[0] for s in sources):
+            # every source must name the same group class: a user peer in a negative dialog names none (spec 8.6: a
+            # negative dialog is a basic group, channel or community; plan 4I4 Task 10)
+            if all(s == sources[0] for s in sources) and sources[0] in ("chat", "channel", "community"):
                 dclass = sources[0]
             else:
                 raw["dialog_class_state"] = "conflict"
@@ -662,6 +664,8 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                 raw["counterparty_state"] = "no-enc_chats-row"
             elif is_int(erow.get("user")):
                 counterparty_user = erow["user"]
+            else:  # a user cell that holds no id is undecided, never "no counterparty" (spec 12; plan 4I4 Task 10)
+                unknown["enc_chats.user"] = "null" if erow.get("user") is None else "type-mismatch"
     if is_int(uid) and uid < 0 and uid != I64_MIN:
         if env is None:
             raw["thread_title_state"] = "not-joined-recovered"
@@ -701,14 +705,22 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
             parts = [{"role": "from", "address": own}]
         elif dclass in ("secret", "chat", "channel", "community"):
             fa = address(b, "from_id") if b is not None and cls else None
+            fe = b.f.get("from_id") if b is not None and cls else None
+            stop = b.res["stop"] if b is not None else None
             if fa:
                 parts = [{"role": "from", "address": fa}]
+            elif fe is not None and fe["kind"] in ("id32", "id64"):
+                # an inline id of a class the table leaves unresolved: no address, never a guess (T5, 4I4-P11)
+                unknown_parts = True
+                raw["from_id_id"], raw["from_id_class_state"] = str(fe["value"]), "contradictory"
             elif dclass == "channel" and b is not None and b.flag("post") and b.has("flags"):
                 parts = [{"role": "from", "address": own}]
                 raw["sender_basis"] = "channel-post"
             else:
                 unknown_parts = True
-                from_read = b is not None and cls is not None and b.has("flags") and (
+                # a stop inside from_id leaves it unread, never absent (plan 4I4 Task 10)
+                inside = stop is not None and re.split(r"[.\[]", stop["path"])[0] == "from_id"
+                from_read = b is not None and cls is not None and b.has("flags") and not inside and (
                     b.state == "decoded" or "from_id" not in b.undecided(MESSAGE_MAPPED))
                 raw["sender_state"] = "absent" if from_read else "blob-undecided"
         else:

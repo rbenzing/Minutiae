@@ -24,6 +24,7 @@ const (
 	bitFwdFrom       = 1 << 2
 	bitFromID        = 1 << 8
 	bitMedia         = 1 << 9
+	bitPost          = 1 << 14
 	bitEditDate      = 1 << 15
 	bitFromScheduled = 1 << 18
 )
@@ -50,20 +51,22 @@ func peerUser(id int64) []byte { return append(le32(idPeerUser), le64(id)...) }
 
 // tlMessage is one TL_message: flags (out, from_scheduled and the gates of from_id, fwd_from, media and edit_date are
 // set from the fields), flags2 0, id, [from_id], peer_id, [fwd_from], date, message, [media], [edit_date], then tail
-// (an app-local trailer, spec 6.5) as given. fwd and media are the encoded objects, ID first.
+// (an app-local trailer, spec 6.5) as given. fwd and media are the encoded objects, ID first; fromPeer and peerObj,
+// when set, are the encoded from_id and peer_id objects in place of a TL_peerUser of from and peer.
 type tlMessage struct {
-	flags          uint32
-	id             int32
-	from, peer     int64
-	date, editDate int32
-	text           string
-	fwd, media     []byte
-	tail           []byte
+	flags             uint32
+	id                int32
+	from, peer        int64
+	date, editDate    int32
+	text              string
+	fwd, media        []byte
+	fromPeer, peerObj []byte
+	tail              []byte
 }
 
 func (m tlMessage) bytes() []byte {
 	flags := m.flags
-	if m.from != 0 {
+	if m.from != 0 || m.fromPeer != nil {
 		flags |= bitFromID
 	}
 	if m.editDate != 0 {
@@ -78,10 +81,17 @@ func (m tlMessage) bytes() []byte {
 	b := append(le32(idTLMessage), le32(flags)...)
 	b = append(b, le32(0)...)
 	b = append(b, le32(uint32(m.id))...)
-	if m.from != 0 {
+	switch {
+	case m.fromPeer != nil:
+		b = append(b, m.fromPeer...)
+	case m.from != 0:
 		b = append(b, peerUser(m.from)...)
 	}
-	b = append(b, peerUser(m.peer)...)
+	if m.peerObj != nil {
+		b = append(b, m.peerObj...)
+	} else {
+		b = append(b, peerUser(m.peer)...)
+	}
 	b = append(b, m.fwd...)
 	b = append(b, le32(uint32(m.date))...)
 	b = append(b, tlStr(m.text)...)

@@ -23,6 +23,14 @@ const (
 	UnitBlobTimes = unitBlobTimes
 )
 
+// EncChatIDCast is encChatIDSigned as facts.tsv states the cast: "int32" (signed) or "uint32".
+func EncChatIDCast() string {
+	if encChatIDSigned {
+		return "int32"
+	}
+	return "uint32"
+}
+
 // MappedFields is mappedFields.
 func MappedFields() []string { return mappedFields() }
 
@@ -42,3 +50,9 @@ func MediaClassCount() int {
 	}
 	return n
 }
+
+// TableEncChats and EncChatsColumns are the enc_chats allowlist of secret.go (spec 9, F9).
+const TableEncChats = tableEncChats
+
+// EncChatsColumns is encChatsColumns.
+func EncChatsColumns() []string { return encChatsColumns() }

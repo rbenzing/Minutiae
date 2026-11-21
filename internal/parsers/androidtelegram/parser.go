@@ -42,7 +42,7 @@ const (
 	firstV2Version                 = 84
 )
 
-// The tables of spec 6.3 the parser reads.
+// The tables of spec 6.3 the parser reads (enc_chats is secret.go's tableEncChats, F9).
 const (
 	tableMessagesV2 = "messages_v2"
 	tableMessages   = "messages"
@@ -50,14 +50,7 @@ const (
 	tableChats      = "chats"
 	tableContacts   = "contacts"
 	tableUsersData  = "users_data"
-	// tableEncChats is the only "enc_chats" literal of the package (F9; it moves to secret.go in Task 10).
-	tableEncChats = "enc_chats"
 )
-
-// encChatsColumns are the only enc_chats columns the parser ever names (spec 9, call 6, F9). A function, not the
-// plan's package-level var: a package slice handed to a Req would escape, and a parser holds no mutable state (P5,
-// TestParserPackagesHaveNoMutableState).
-func encChatsColumns() []string { return []string{"uid", "user"} }
 
 // Parser is the android.telegram parser. It holds no state.
 type Parser struct{}
