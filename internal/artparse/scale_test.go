@@ -15,7 +15,10 @@ package artparse_test
 // 500,000 events, 900,000 attendees and 500,000 reminders written by the engine, then parsed with MemBudget 1 GiB; the
 // same 2 GiB bound; both skip under -short), and for plan 4I4 telegram-gen and telegram-decode (a cache4.db of 1,000,000
 // messages_v2 rows over 1,000 dialogs, 10,000 users and 1,000 chats written by the engine, then parsed with MemBudget
-// 1 GiB; no undecided join and no budget state; the same 2 GiB bound; both skip under -short). Environment:
+// 1 GiB; no undecided join and no budget state; the same 2 GiB bound; both skip under -short), and for plan 4I5 gmessages-gen
+// and gmessages-decode (a bugle_db of 1,000,000 messages and as many parts rows, 1,000 conversations of 3 members and 3,001
+// participants, written by the engine, then parsed with MemBudget 1 GiB; no undecided join, no row warning, parts.joined
+// 1,000,000; the same 2 GiB bound; both skip under -short). Environment:
 // MINUTIAE_SCALE_DIR (the work directory; about 4 GiB), MINUTIAE_SCALE_LABEL, MINUTIAE_SCALE_MACHINE,
 // MINUTIAE_SCALE_PHASE, and for gen only MINUTIAE_SCALE_GEN (a comma list of 200m, 1g; both by default).
 //
@@ -38,6 +41,7 @@ import (
 	"runtime/debug"
 	"runtime/metrics"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +54,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
+	"github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
@@ -79,7 +84,7 @@ func scaleEnvOf(t *testing.T) scaleEnv {
 	t.Helper()
 	e := scaleEnv{phase: os.Getenv("MINUTIAE_SCALE_PHASE")}
 	if e.phase == "" {
-		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode, telegram-gen, telegram-decode) to run the parse scale test; it is manual (see docs/testing.md)")
+		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode, telegram-gen, telegram-decode, gmessages-gen, gmessages-decode) to run the parse scale test; it is manual (see docs/testing.md)")
 	}
 	if e.label = os.Getenv("MINUTIAE_SCALE_LABEL"); e.label == "" {
 		t.Fatal("set MINUTIAE_SCALE_LABEL (a name for this run, such as 4h)")
@@ -677,8 +682,12 @@ func TestScaleParse(t *testing.T) {
 		runGenTelegram(t, e)
 	case "telegram-decode":
 		telegramDecode(t, e)
+	case "gmessages-gen":
+		runGenGMessages(t, e)
+	case "gmessages-decode":
+		gmessagesDecode(t, e)
 	default:
-		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode, telegram-gen, telegram-decode)", e.phase)
+		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode, telegram-gen, telegram-decode, gmessages-gen, gmessages-decode)", e.phase)
 	}
 }
 
@@ -1324,6 +1333,16 @@ func TestScaleParseSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	telegramDecodeRun(t, e)
+	// the google messages phases on a small store, the same way
+	gm, err := genGMessages(genPath(e, "gmessages-1m.db"), 2000, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gb, _ := json.Marshal(gm)
+	if err := os.WriteFile(genPath(e, "gmessages-gen.json"), gb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gmessagesDecodeRun(t, e)
 }
 
 // ---- Android Telegram (plan 4I4 task 13, 4I4-P14) ----
@@ -1637,4 +1656,186 @@ func sampleHeap() (stop func() (live, total int64)) {
 		p := <-out
 		return p[0], p[1]
 	}
+}
+
+// ---- Android Google Messages (plan 4I5 task 7) ----
+
+const (
+	gmRemotePath   = "/data/data/com.google.android.apps.messaging/databases/bugle_db"
+	gmDDL          = "../../tools/fixtures/schemas/google-messages/aosp-v2.sql"
+	gmMessages     = 1_000_000 // each with one text part: exactly the index cap defaultIndexLimit of parts rows
+	gmConversation = 1000      // of 3 members each
+	gmBudget       = 1024 * scaleMiB
+	gmSizeCap      = 2048 * scaleMiB // the database file plus the peak resident set must stay within 2 GiB
+)
+
+// genGMessages writes a bugle_db (user version 2) through the engine from the committed aosp-v2 snapshot: participant 1 is
+// the device's SIM (sub_id 1), participants 2.. are three per conversation (sub_id -2), conversations of three members each,
+// n messages over the conversations in turn (every 4th outgoing, status 1, from the SIM; the rest incoming, status 100, from
+// the conversation's first member) and one text part for each. It returns the rows of each table.
+func genGMessages(path string, n, convs int64) (calGen, error) {
+	db, err := openGen(path)
+	if err != nil {
+		return calGen{}, err
+	}
+	fail := func(err error) (calGen, error) { _ = db.Close(); return calGen{}, err }
+	if err := execScript(db, gmDDL); err != nil {
+		return fail(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
+		return fail(err)
+	}
+	people := 3 * convs
+	if _, err := db.Exec("INSERT INTO participants (_id, sub_id, sim_slot_id) VALUES (1, 1, 0)"); err != nil {
+		return fail(err)
+	}
+	if err := genRows(db, people, "INSERT INTO participants (_id, sub_id, normalized_destination, send_destination, display_destination) VALUES (?,-2,?,?,?)", func(id int64) []any {
+		d := fmt.Sprintf("+1555%07d", id)
+		return []any{id + 1, d, d, d}
+	}); err != nil {
+		return fail(err)
+	}
+	if err := genRows(db, convs, "INSERT INTO conversations (_id, name, sms_thread_id, participant_count) VALUES (?,?,?,3)", func(id int64) []any {
+		return []any{id, fmt.Sprintf("conversation %d", id), id}
+	}); err != nil {
+		return fail(err)
+	}
+	if err := genRows(db, people, "INSERT INTO conversation_participants (_id, conversation_id, participant_id) VALUES (?,?,?)", func(id int64) []any {
+		return []any{id, (id-1)/3 + 1, id + 1}
+	}); err != nil {
+		return fail(err)
+	}
+	r, pool := rand.New(rand.NewPCG(15, 4)), bodyPool() //nolint:gosec // a fixed seed: the generated input is repeatable
+	err = genRows(db, n, "INSERT INTO messages (_id, conversation_id, sender_id, sent_timestamp, received_timestamp, message_protocol, message_status, seen, read, self_id) VALUES (?,?,?,?,?,0,?,1,1,1)", func(id int64) []any {
+		conv := (id-1)%convs + 1
+		sender, status := (conv-1)*3+2, int64(100)
+		if id%4 == 0 {
+			sender, status = 1, 1
+		}
+		ts := 1_600_000_000_000 + id*30_000
+		return []any{id, conv, sender, ts - 500, ts, status}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	err = genRows(db, n, "INSERT INTO parts (_id, message_id, text, content_type, timestamp, conversation_id) VALUES (?,?,?,'text/plain',?,?)", func(id int64) []any {
+		off := r.IntN(len(pool) - 100)
+		return []any{id, id, string(pool[off : off+20+r.IntN(60)]), 1_600_000_000_000 + id*30_000, (id-1)%convs + 1}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if err := db.Close(); err != nil {
+		return calGen{}, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return calGen{}, err
+	}
+	return calGen{Bytes: st.Size(), Rows: map[string]int64{"messages": n, "parts": n, "conversations": convs, "participants": people + 1, "conversation_participants": people}}, nil
+}
+
+// runGenGMessages is the gmessages-gen phase: the 1,000,000-message bugle_db under MINUTIAE_SCALE_DIR/input. Under -short it
+// skips.
+func runGenGMessages(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("gmessages-gen writes a database of several hundred MiB: skipped under -short")
+	}
+	if err := os.MkdirAll(filepath.Join(e.dir, "input"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	g, err := genGMessages(genPath(e, "gmessages-1m.db"), gmMessages, gmConversation)
+	if err != nil {
+		t.Fatalf("gen gmessages-1m.db: %v", err)
+	}
+	t.Logf("gen gmessages-1m.db: %d bytes, rows %v in %s", g.Bytes, g.Rows, time.Since(start).Round(time.Second))
+	b, _ := json.MarshalIndent(g, "", "  ")
+	if err := os.WriteFile(genPath(e, "gmessages-gen.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeResult(t, e, phaseResult{Phase: "gmessages-gen", Outcome: "generated", InputBytes: g.Bytes, Rows: g.Rows["messages"], TableRows: g.Rows})
+}
+
+// gmessagesDecode is the gmessages-decode phase: the 1,000,000-message store parsed with MemBudget 1 GiB. Every message is a
+// record, every part is joined (note parts.joined), no record names an undecided join, no row warning is raised and no record
+// has a budget state; the phase fails when the database file plus the peak resident set exceed 2 GiB. Under -short it skips.
+func gmessagesDecode(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("gmessages-decode parses a database of several hundred MiB with a 1 GiB budget: skipped under -short")
+	}
+	gmessagesDecodeRun(t, e)
+}
+
+// gmessagesDecodeRun is the body of gmessages-decode on whatever store gmessages-gen.json describes (TestScaleParseSmoke runs
+// it on a small one, under -short too).
+func gmessagesDecodeRun(t *testing.T, e scaleEnv) {
+	t.Helper()
+	b, err := os.ReadFile(genPath(e, "gmessages-gen.json")) //nolint:gosec // the operator's work directory
+	if err != nil {
+		t.Fatalf("run the gmessages-gen phase first: %v", err)
+	}
+	var g calGen
+	if err := json.Unmarshal(b, &g); err != nil {
+		t.Fatal(err)
+	}
+	c := newScaleCase(t, filepath.Join(e.dir, "cases"), "GMESSAGESDECODE")
+	captureFile(t, c, gmRemotePath, genPath(e, "gmessages-1m.db"))
+	reg, err := artparse.Register(androidgooglemessages.Parser{}, parsertest.FakeHash(androidgooglemessages.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := parse.DefaultLimits()
+	lim.MemBudget = gmBudget
+	opt := artparse.Options{Limits: lim}
+	w := &stateCheckWriter{}
+	artparse.WithNewWriter(&opt, func(*evidence.Case, records.Parser, records.WriterOptions) (artparse.IngestWriter, error) {
+		return w, nil
+	})
+	h, err := artparse.New(c, []artparse.Registered{reg}, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug.FreeOSMemory() // hand back the garbage of the setup (generation, capture) before the measured run
+	prev := debug.SetMemoryLimit(min(debug.SetMemoryLimit(-1), 2*lim.MemBudget))
+	defer debug.SetMemoryLimit(prev)
+	stop := sampleHeap()
+	start := time.Now()
+	sum, err := h.Run(context.Background(), artparse.RunOptions{})
+	wall := time.Since(start)
+	live, total := stop()
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	rss, ok := peakRSS()
+	t.Logf("gmessages-decode: peak live heap objects %d MiB, peak Go-mapped memory %d MiB (runtime/metrics, sampled every 50 ms)", live/scaleMiB, total/scaleMiB)
+	res := phaseResult{Phase: "gmessages-decode", MemBudget: gmBudget, InputBytes: g.Bytes, Rows: g.Rows["messages"], PeakRSSLimit: gmSizeCap - g.Bytes, TableRows: g.Rows}
+	fillResult(&res, sum, wall, rss, ok)
+	res.Streamed = streamedOf(t, c)
+	writeResult(t, e, res)
+	t.Logf("gmessages-decode: records by type %v, undecided joins %d, budget states %d", w.types, w.undecided, w.budget)
+	if len(sum.Jobs) != 1 {
+		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
+	}
+	if res.Outcome != artparse.OutcomeComplete {
+		t.Errorf("outcome %s (%s), want complete", res.Outcome, res.Reason)
+	}
+	if w.types["message"] != g.Rows["messages"] || res.Records != g.Rows["messages"] {
+		t.Errorf("records %v (%d in all), want one message per messages row (%d) and no other", w.types, res.Records, g.Rows["messages"])
+	}
+	if want := strconv.FormatInt(g.Rows["parts"], 10); sum.Jobs[0].Notes["parts.joined"] != want || sum.Jobs[0].Notes["orphan_parts"] != "0" {
+		t.Errorf("notes parts.joined %q orphan_parts %q, want %s and 0", sum.Jobs[0].Notes["parts.joined"], sum.Jobs[0].Notes["orphan_parts"], want)
+	}
+	if res.Warnings != 0 {
+		t.Errorf("%d warnings, want none (no row warning, no undecided join)", res.Warnings)
+	}
+	if w.undecided != 0 {
+		t.Errorf("%d records name an undecided join", w.undecided)
+	}
+	if w.budget != 0 {
+		t.Errorf("%d records state budget", w.budget)
+	}
+	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
 }
