@@ -19,7 +19,7 @@ type memberSet struct {
 	Parties        []party // the kept members that have an address
 	Total          int     // the non-self members (before the cut)
 	Cut            bool    // Total > maxList
-	Dangling       int     // member rows naming no participants row (or an unreadable participant_id)
+	Dangling       int     // member rows whose participant_id is NULL or names no participants row (an unreadable id is undecided, not dangling)
 	Without        int     // kept members with no usable address
 	Blocked        []int64 // ids of the kept members whose blocked is 1
 	SelfUndecided  bool    // a member whose self-ness cannot be decided stays a member (B2)

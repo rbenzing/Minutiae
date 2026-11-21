@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
@@ -109,16 +110,20 @@ func setBody(msg *message.Message, c common.Cleaned) {
 	}
 }
 
-// trimPartialRune drops the end of b that may be a cut character: its continuation bytes and one lead byte. It is only
-// applied to a buffer that was cut anyway.
+// trimPartialRune drops the end of b when it is an incomplete character (the cut fell inside it); a cut that already falls
+// on a character boundary drops nothing. It is only applied to a buffer that was cut anyway.
 func trimPartialRune(b []byte) []byte {
-	for len(b) > 0 && b[len(b)-1]&0xC0 == 0x80 {
-		b = b[:len(b)-1]
+	start := len(b)
+	for back := 0; back < utf8.UTFMax && start > 0; back++ {
+		start--
+		if b[start]&0xC0 != 0x80 { // a lead or ASCII byte: the last character starts here
+			if !utf8.FullRune(b[start:]) {
+				return b[:start]
+			}
+			return b
+		}
 	}
-	if len(b) > 0 && b[len(b)-1] >= 0xC0 {
-		b = b[:len(b)-1]
-	}
-	return b
+	return b // no lead byte within a character's length: not a cut character, left to CleanText
 }
 
 // joinText joins text parts with "\n", keeping at most 2*maxBody bytes, and reports the full length (restated from
