@@ -1,0 +1,1 @@
+{"ddl":"none","extra_files":[],"family":"google-messages","generator":{"files":{"db":"965c1130b56ab133d9ccb7e5c30535a99f887ed3c2898a61b6b3470941c1911d"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"gm-not-sqlite","warnings":[]}

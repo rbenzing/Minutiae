@@ -109,6 +109,9 @@ var allowed = map[string][]string{
 	"tools/fuzzcampaign":                   {},
 	"tools/recoveryaccept":                 {},
 	"tools/parserhash":                     {"internal/parse", "internal/parsers"},
+
+	// plan 4I5: the Google Messages parser (its imports are added as its code lands)
+	"internal/parsers/androidgooglemessages": {},
 }
 
 // "internal/cli" may import anything.

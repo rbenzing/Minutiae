@@ -1301,6 +1301,7 @@ var purityRequired = []string{
 	"internal/parsers/androidcalendar",
 	"internal/parsers/ioscalendar",
 	"internal/parsers/androidtelegram",
+	"internal/parsers/androidgooglemessages",
 	"internal/carve",
 }
 
@@ -1984,6 +1985,8 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/parsers/ioswacontacts":     pcParser,
 		"internal/parsers/ios/sms":           pcParser,
 		"internal/carve":                     pcCarve,
+
+		"internal/parsers/androidgooglemessages": pcParser, // plan 4I5
 	} {
 		if got, ok := classOf(rel); !ok || got != want {
 			t.Errorf("classOf(%s) = %v, %v; want %v", rel, got, ok, want)

@@ -2,7 +2,7 @@
 
     py -3 -I tools/fixtures/ddl_crosscheck.py <sourcedir> <schemasdir>
         [--tag TAG] [--commit REPO=SHA]... [--write-report FILE] [--emit TABLE]...
-        [--snapshot NAME]... [--family calendar|telegram|google-messages]
+        [--snapshot NAME]... [--family calendar|telegram|google-messages] [--manual TABLE=REASON]...
 
 <sourcedir> holds the fetched Java files under their base names. They are untrusted text:
 this script reads them as text and applies regular expressions to them; nothing in them is
@@ -50,6 +50,12 @@ is "# DDL cross-check (plan 4I5)" and it has no MMS note. The constants the stat
 fetched files of the directory; a statement that needs an SDK constant (BaseColumns._ID) is reported as unevaluated, to be
 read by hand, except that --family google-messages evaluates BaseColumns._ID (an SDK constant, "_id") for a class that
 implements BaseColumns. Without --family google-messages the output is byte-identical to before.
+
+--manual TABLE=REASON (repeatable; plan 4I5) states that the statement of TABLE cannot be evaluated here and was read by a
+person: REASON must cite the file and lines it was read at (File.java:N or File.java:N-M, the first one is used) and say what
+was read, for example a constant that no fetched source defines. The report row of TABLE is then the verdict "MANUAL, read by
+hand at <file:lines>" with REASON as its evidence, and that row does not make the run fail; a table without --manual whose
+statement cannot be evaluated is still a MANUAL that fails the run. Without --manual the output is byte-identical to before.
 """
 import hashlib
 import os
@@ -399,6 +405,14 @@ def main(argv):
         name, line, cols = creates[t][0]
         print("CREATE TABLE %s (%s);" % (t, ", ".join(d for _, d in cols)))
     rows, bad = [], False
+    manual = {}
+    for m in opt("--manual"):
+        table, _, reason = m.partition("=")
+        cite = re.search(r"[\w]+\.(?:java|xml):\d+(?:-\d+)?", reason)
+        if not table or not cite:
+            print("--manual %r: expected TABLE=REASON, the reason citing File.java:LINES" % m)
+            return 2
+        manual[table] = (cite.group(0), reason)
     only = opt("--snapshot")
     for fn in sorted(f for f in os.listdir(schemas) if f.endswith(".sql") and (not only or f in only)):
         verdict, tabs, adds = snapshot(os.path.join(schemas, fn))
@@ -412,7 +426,9 @@ def main(argv):
         for tbl, cols in sorted(tabs.items()):
             defs = creates.get(tbl)
             if not defs:
-                if unresolved:
+                if tbl in manual:
+                    rows.append((fn, tbl, "MANUAL, read by hand at " + manual[tbl][0], manual[tbl][1]))
+                elif unresolved:
                     rows.append((fn, tbl, "MANUAL", "no evaluated CREATE TABLE of this name, and %d statements could not be evaluated: %s" % (
                         len(unresolved), "; ".join("%s:%d %s" % u for u in unresolved[:3]))))
                     bad = True

@@ -1,0 +1,1 @@
+{"ddl":"inline: CREATE TABLE messages (_id INTEGER PRIMARY KEY, body TEXT)","extra_files":[],"family":"google-messages","generator":{"files":{"db":"5b130ae6363c5f0480aa8d45957c28f612d998891cfdbc51e922654d07a8e82e"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"gm-other-kind","warnings":[]}

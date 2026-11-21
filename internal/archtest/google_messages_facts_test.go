@@ -45,7 +45,8 @@ const gmCommit = "de315b762312dd1a5d2bbd16e62ef2bd123f61e5"
 
 // gmColumns returns the columns of a table of a snapshot in order (table constraints left out), and whether the
 // table is there. A constraint item starts with a keyword; a run of FOREIGN KEY clauses is one item.
-func gmColumns(src, table string) ([]string, bool) {
+func gmColumns(t *testing.T, src, table string) ([]string, bool) {
+	t.Helper()
 	m := regexp.MustCompile(`(?m)^CREATE TABLE ` + table + ` \((.*)\);$`).FindStringSubmatch(src)
 	if m == nil {
 		return nil, false
@@ -69,7 +70,12 @@ func gmColumns(src, table string) ([]string, bool) {
 	items = append(items, strings.TrimSpace(cur))
 	var cols []string
 	for _, it := range items {
-		w := strings.Fields(it)[0]
+		f := strings.Fields(it)
+		if len(f) == 0 { // an empty item (a doubled or trailing comma) is a finding, never a panic
+			t.Errorf("%s: an empty column or constraint item in %q", table, m[1])
+			continue
+		}
+		w := f[0]
 		if slices.Contains([]string{"PRIMARY", "UNIQUE", "FOREIGN", "CHECK", "CONSTRAINT"}, strings.ToUpper(w)) {
 			continue
 		}
@@ -229,7 +235,7 @@ func TestGoogleMessagesDDLSnapshotsCiteTheirSource(t *testing.T) {
 	}
 
 	v2, v1 := snaps["aosp-v2.sql"], snaps["aosp-v1.sql"]
-	msg, _ := gmColumns(v2, "messages")
+	msg, _ := gmColumns(t, v2, "messages")
 	wantMsg := strings.Fields("_id conversation_id sender_id sent_timestamp received_timestamp message_protocol message_status seen read " +
 		"sms_message_uri sms_priority sms_message_size mms_subject mms_transaction_id mms_content_location mms_expiry raw_status self_id retry_start_timestamp")
 	if !slices.Equal(msg, wantMsg) || len(msg) != 19 {
@@ -238,13 +244,13 @@ func TestGoogleMessagesDDLSnapshotsCiteTheirSource(t *testing.T) {
 	if !strings.Contains(v2, "CREATE TABLE messages (_id INTEGER PRIMARY KEY AUTOINCREMENT, ") {
 		t.Error("messages does not declare _id INTEGER PRIMARY KEY AUTOINCREMENT")
 	}
-	parts, _ := gmColumns(v2, "parts")
+	parts, _ := gmColumns(t, v2, "parts")
 	wantParts := strings.Fields("_id message_id text uri content_type width height timestamp conversation_id")
 	if !slices.Equal(parts, wantParts) {
 		t.Errorf("parts columns %v, want the 9 of recon §2.1 %v", parts, wantParts)
 	}
-	c2, _ := gmColumns(v2, "conversations")
-	c1, _ := gmColumns(v1, "conversations")
+	c2, _ := gmColumns(t, v2, "conversations")
+	c1, _ := gmColumns(t, v1, "conversations")
 	if i := slices.Index(c2, "IS_ENTERPRISE"); i < 0 || !slices.Equal(slices.Delete(slices.Clone(c2), i, i+1), c1) {
 		t.Errorf("v1 conversations %v is not v2 %v minus IS_ENTERPRISE", c1, c2)
 	}
@@ -286,8 +292,8 @@ func TestGoogleMessagesProprietaryShapeIsMarkedFromMemory(t *testing.T) {
 		t.Errorf("tables %v, want those of aosp-v2.sql %v", tables, calendarCreateTables(v2))
 	}
 	for _, tb := range tables {
-		got, _ := gmColumns(src, tb)
-		base, _ := gmColumns(v2, tb)
+		got, _ := gmColumns(t, src, tb)
+		base, _ := gmColumns(t, v2, tb)
 		if want := append(slices.Clone(base), extra[tb]...); !slices.Equal(got, want) {
 			t.Errorf("%s columns %v, want the v2 columns plus the extras: %v", tb, got, want)
 		}

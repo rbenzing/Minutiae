@@ -3574,13 +3574,43 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   committed. The cross-check and the snapshot text:
 
   ```
-  py -3 -I tools/fixtures/ddl_crosscheck.py <src>/M tools/fixtures/schemas/google-messages --family google-messages --snapshot aosp-v2.sql --snapshot aosp-v1.sql --tag main --commit platform/packages/apps/Messaging=de315b762312dd1a5d2bbd16e62ef2bd123f61e5 --write-report <scratch>/ddl.md
+  py -3 -I tools/fixtures/ddl_crosscheck.py <src>/M tools/fixtures/schemas/google-messages --family google-messages --snapshot aosp-v2.sql --snapshot aosp-v1.sql --tag main --commit platform/packages/apps/Messaging=de315b762312dd1a5d2bbd16e62ef2bd123f61e5 --manual "participants=<reason citing File.java:LINES>" --write-report <scratch>/ddl.md
   py -3 -I tools/fixtures/ddl_crosscheck.py <src>/M tools/fixtures/schemas/google-messages --family google-messages --emit <table>
   ```
 
   `--family google-messages` evaluates the SDK constant `BaseColumns._ID` as `_id` and writes the heading
-  "# DDL cross-check (plan 4I5)"; the `participants` statement uses a constant the evaluator cannot compute, so its rows
-  are read by hand. Facts only, Apache-2.0: no code is copied, and the files hold no URL. Without `--family` the script's
+  "# DDL cross-check (plan 4I5)"; the `participants` statement uses a constant of a library that no fetched source defines
+  (`MmsManager.DEFAULT_SUB_ID`), so its two rows are stated by the explicit `--manual TABLE=REASON` input (the reason
+  cites `File.java:LINES`; the row is `MANUAL, read by hand at <file:lines>` and does not fail the run), and the report in
+  `CROSSCHECK.md` is the unedited output of the one command stated there (exit status 0). Facts only, Apache-2.0: no code is copied, and the files hold no URL. Without `--family` the script's
   output for the other families is unchanged. `TestGoogleMessagesFactsCiteTheirSource`,
   `TestGoogleMessagesDDLSnapshotsCiteTheirSource` and `TestGoogleMessagesProprietaryShapeIsMarkedFromMemory`
   (`internal/archtest`) pin the files.
+- Google Messages fixtures (plan 4I5 Task 2): `google_messages.py` (family `google-messages`) writes ten variants into
+  `internal/parsers/androidgooglemessages/testdata` from the DDL snapshots and `facts.tsv` of `schemas/google-messages`
+  (Python 3 and its bundled `sqlite3` only; no Docker; not part of `gen.sh all`):
+
+  ```
+  py -3 -I tools/fixtures/telephony_gen.py --family google-messages --out internal/parsers/androidgooglemessages/testdata \
+      --pins-go internal/parsers/androidgooglemessages/pins_test.go --pins-package androidgooglemessages_test
+  py -3 -I tools/fixtures/telephony_gen.py --family google-messages --recover-oracle --out internal/parsers/androidgooglemessages/testdata --variant gm-deleted gm-rebuilt
+  py -3 -I tools/fixtures/telephony_gen.py --family google-messages --check      # one "wrote" line per variant, nothing kept
+  ```
+
+  Variants (all bundled at `/data/data/com.google.android.apps.messaging/databases/bugle_db`; foreign keys stay off as on a
+  device): `gm-aosp-v2` (the CORE scenario: participants P1-P7, conversations C1-C5, messages M1-M36 and the orphan parts
+  900 and 901, rollback mode), `gm-aosp-v1` (`aosp-v1.sql`, P1-P3, C1, C2, M1, M2, M4; `IS_ENTERPRISE` missing),
+  `gm-aosp-v2-wal` (M40 in a committed WAL frame, M41 in an uncommitted one), `gm-journal` (M42 in a hot journal),
+  `gm-proprietary-shaped` (`proprietary-shaped.sql`, user version 9000, every `fixture_extra_*` cell filled),
+  `gm-other-kind` and `gm-not-sqlite` (no signature, no record), `gm-deleted` (deleted messages and parts and a rewritten
+  part text in the page images a killed writer leaves under and in its WAL), `gm-rebuilt` (every table dropped and
+  recreated: old parts in freed pages whose `message_id` names a different live message) and `gm-hostile` (H1-H15: codes as
+  TEXT, REAL, NaN and BLOB, 1,001 parts, a 4 MiB text part, NUL, invalid UTF-8 and a bidi override, 10 KiB `uri` and
+  `content_type`, a conversation of 1,001 members, a 2 KiB destination, a self row with a destination). The oracle
+  (`oracle`, `message_record`, `part_record`, `recovered_record`) restates spec 6 to 8 and the plan's state vocabularies over
+  the values read back from the engine on a copy of the finished files (`engine_view`), every code, label, contract value,
+  the self rule, the sentinel and the URI authorities read from `facts.tsv`; it shares no code with Go. Independence (spec
+  10): the oracle, the generator and the Go table derive from the same facts; their independent check is `facts.tsv` against
+  the pinned AOSP source (`CROSSCHECK.md`). `TestAndroidGoogleMessagesOracleStatesTheSpecRules` pins literal facts written
+  from the spec, `TestFixturesArePinnedByHash` the bytes. `--recover-oracle` is computed from the committed files by the
+  page walker of `sqlite_oracle.py`, and fails when a row the scenario says should be history is in no page image.

@@ -28,7 +28,7 @@ self.destinations_null	destinations NULL			M	DatabaseHelper.java:468-474,811	the
 members.exclude_self	conversation_participants excludes the self participant			M	DatabaseHelper.java:476-477	recipients are the conversation's current members, not stored per message
 contact_id.unresolved	-1			M	ParticipantData.java:60	PARTICIPANT_CONTACT_ID_NOT_RESOLVED
 time.unit	ms			M	DatabaseMessages.java:161-163,371-372,381	SMS date copied as is; MMS date, date_sent and expiry multiplied by 1000 (telephony MMS times are seconds)
-time.sentinel	0			M	DatabaseHelper.java:278-293	every timestamp column defaults to 0: 0 is absent, never 1970
+time.sentinel	0			M	DatabaseHelper.java:278-293	source fact: every timestamp column is declared DEFAULT(0); reading 0 as absent (never 1970) is the spec interpretation (spec 6.6, B5), not a source fact
 trigger.parts_timestamp_insert	parts.timestamp := messages.received_timestamp on INSERT			M	DatabaseHelper.java:364-372	AFTER INSERT ON parts
 trigger.parts_timestamp_update	parts.timestamp := NEW.received_timestamp on UPDATE OF received_timestamp			M	DatabaseHelper.java:374-380	AFTER UPDATE OF received_timestamp ON messages
 messages.id_autoincrement	yes			M	DatabaseHelper.java:275	messages._id INTEGER PRIMARY KEY AUTOINCREMENT: no id reuse
