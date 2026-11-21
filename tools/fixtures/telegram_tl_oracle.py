@@ -220,14 +220,16 @@ class Reader:
         v, _ = self.u32(path)
         if v != VECTOR:
             raise Stopped("malformed", path, at)
+        # a bad count stops where the vector starts, as every failed read (plan 4I4 Task 8: the stop offset is where
+        # the item that stopped the decode starts; decode/tl's Error.Offset is where the failed read began)
         count_at = self.pos
-        self.need(4, path, count_at)
+        self.need(4, path, at)
         count = struct.unpack_from("<i", self.b, count_at)[0]
         self.pos += 4
         if count < 0 or count > MAX_VECTOR:
-            raise Stopped("cap", path, count_at)
+            raise Stopped("cap", path, at)
         if count * min_elem > len(self.b) - self.pos:
-            raise Stopped("truncated", path, count_at)
+            raise Stopped("truncated", path, at)
         self.emit(path, "vector", at, len=count)
         return count
 
@@ -348,8 +350,11 @@ def self_test():
     check("string past end (T7)", decode(msg[:-8] + b"\xfe\xff\xff\xff", "Message")["stop"]["kind"] == "truncated")
     ent = le(0x7600B9D3) + le(1 << 7) + le(0) + le(7) + peer_user + le(1) + b"\x00\x00\x00\x00"
     check("bad vector", decode(ent + le(0x1CB5C416) + le(0), "Message")["stop"]["kind"] == "malformed")
-    check("vector cap", decode(ent + le(VECTOR) + le(0x7FFFFFFF), "Message")["stop"]["kind"] == "cap")
-    check("vector past end", decode(ent + le(VECTOR) + le(3), "Message")["stop"]["kind"] == "truncated")
+    # a bad count stops where the vector starts (plan 4I4 Task 8), as decode/tl's Error.Offset
+    s = decode(ent + le(VECTOR) + le(0x7FFFFFFF), "Message")["stop"]
+    check("vector cap", s["kind"] == "cap" and s["offset"] == len(ent))
+    s = decode(ent + le(VECTOR) + le(3), "Message")["stop"]
+    check("vector past end", s["kind"] == "truncated" and s["offset"] == len(ent))
     old = le(0x22EB6ABA) + le(1) + le(2) + le(0x9DB1BC6D) + le(3) + le(0x12345678)
     check("bad bool", decode(old, "Message")["stop"]["kind"] == "malformed")
     # TL_messageMediaDice is opaque in the table: the decode stops at it with its id

@@ -3490,7 +3490,7 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   committed file holds a URL.
   `--go` (plan 4I4 Task 7, F27) needs no sources: it writes the parser's Go constructor table from `constructors.tsv` alone,
   one `tl.Constructor` per row in ID order (the 4I4-P4 notation reduced to `tl.Field`s; a token outside the grammar stops
-  the run), and `golangci-lint fmt` leaves its output unchanged. Rerun it whenever `constructors.tsv` changes;
+  the run), aligned as gofmt aligns it, so `golangci-lint fmt` leaves its output unchanged (`TestTelegramTablesGoIsGofmtClean`). Rerun it whenever `constructors.tsv` changes;
   `TestTelegramConstructorTableMatchesFacts` fails on a stale `tables.go`.
 - Telegram cache4.db DDL snapshots (plan 4I4 Task 4): `schemas/telegram-android/{v181,v159,v84,v64}.sql` (user versions
   181, 159, 84 and 64: `verified`, the CREATE TABLE statements of A-HEAD, A-11.4.2, release-8.1.1_2431 and
@@ -3547,5 +3547,8 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   `telegram_tl_oracle.py` reads `constructors.tsv` with `csv` and imports only standard modules
   (`TestTLOracleIsIndependent`); the generator decodes every blob with it and restates the mapping rules of the spec
   in Python, over the values read back from the engine on a copy of the finished files. The oracle, the encoder and the
-  Go table derive from the same facts; their independent check is the cross-check against the app source. Not part of
-  `gen.sh all`; no Docker.
+  Go table derive from the same facts; their independent check is the cross-check against the app source. Plan 4I4
+  Task 8 amended two of the oracle's open choices to the spec (only `telegram-hostile.expect.json` changed; the WAL
+  variants were not regenerated, so their random WAL salts and pins stand): a NULL `mid`, `uid`, `date` or `out` is
+  `unknown_columns` `null`, never a stored NULL (spec 12), and a vector's bad count stops at the offset where the
+  vector starts, as every failed read of `decode/tl`. Not part of `gen.sh all`; no Docker.

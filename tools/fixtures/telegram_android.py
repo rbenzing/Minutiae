@@ -15,7 +15,10 @@ oracle, the encoder and the Go table derive from the same facts: their independe
 the app source, not each other.
 
 Choices this oracle states where the spec leaves the detail to the plan (the Go parser follows them):
-  - a blob's stop: raw.<col>_stop_kind, _stop_offset (where the item that stopped the decode starts), _stop_path (when
+  - a NULL mid, uid, date or out is undecided (unknown_columns "<table>.<col>" = "null"), never a stored NULL in raw
+    (spec 12; plan 4I4 Task 8 amended the oracle); a NULL in another plain column is kept as stored.
+  - a blob's stop: raw.<col>_stop_kind, _stop_offset (where the item that stopped the decode starts: a vector's bad
+    count included, Task 8), _stop_path (when
     not the top), _stop_id (hex, when the stop names an id); none for a `prefix` stop (decoded-prefix).
   - raw.<col>_undecided lists the record fields (MESSAGE_MAPPED, USER_MAPPED) of the top row that start after the
     top-level field holding the stop and are present by their flags (or whose flags word was not read, or ungated).
@@ -367,14 +370,20 @@ PLAIN = (("mid", "mid"), ("uid", "uid"), ("out", "out"), ("read_state", "read_st
          ("group_id", "group_id"), ("reply_to_story_id", "reply_to_story_id"))
 
 
+KEY_COLUMNS = ("mid", "uid", "date", "out")  # a NULL there is undecided, never a stored NULL (spec 12; plan 4I4 Task 8)
+
+
 def int_cell(r, table, col, unknown, nan):
     """(value, readable): an INTEGER cell, None for NULL or absent; a cell of another class (REAL, NaN, TEXT, BLOB)
-    is listed in unknown_columns and unreadable."""
+    is listed in unknown_columns and unreadable, and so is a NULL key column (as "null")."""
     if col not in r:
         return None, True
     v = r[col]
     if (r.get("rowid"), col) in nan:
         unknown[table + "." + col] = "type-mismatch"
+        return None, False
+    if v is None and col in KEY_COLUMNS:
+        unknown[table + "." + col] = "null"
         return None, False
     if v is None or is_int(v):
         return v, True
@@ -420,7 +429,9 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
     date = r.get("date")
     if (r.get("rowid"), "date") in nan or not (date is None or is_int(date)):
         unknown[table + ".date"] = "type-mismatch"
-    elif date is not None:
+    elif date is None:
+        unknown[table + ".date"] = "null"
+    else:
         st = C.classify(date, "s")
         if st == "valid":
             time = C.iso(date, "s")

@@ -3,6 +3,8 @@ package androidtelegram
 import (
 	"bytes"
 	"encoding/binary"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/tl"
@@ -17,17 +19,25 @@ func (b *countBudget) Free(n int64)        { b.held -= n }
 
 var fuzzTypes = []string{typeMessage, typeUser, typeChat}
 
+// seedsPerType caps the seeds of one fuzzed type per fixture file, so every type gets its own (Task 7 review M2).
+const seedsPerType = 10
+
 // FuzzTLDecode (plan 4I4-P13, T3): the walker over the Telegram table and arbitrary bytes never panics, ends
 // inside the input and never lets a KSecret field hold bytes. Seeds are the TL objects found in the images of
-// telegram-v181 and telegram-hostile (each constructor ID of the three types found there, with the bytes after it).
+// telegram-v181 and telegram-hostile (each constructor ID of the three types found there, with the bytes after it),
+// taken in ascending ID order with at most seedsPerType per type and file: the same seeds on every run (Task 7
+// review M2, carried into Task 8 as C6).
 func FuzzTLDecode(f *testing.F) {
+	ids := slices.Sorted(maps.Keys(table))
+	perType := make([]int, len(fuzzTypes))
 	for _, name := range []string{"telegram-v181", "telegram-hostile"} {
 		fx := parsertest.LoadFixture(f, "testdata", name)
-		for _, raw := range fx.Files {
-			seeds := 0
-			for id, c := range table {
-				for i, typ := range fuzzTypes {
-					if c.Type != typ || seeds >= 30 {
+		for _, role := range slices.Sorted(maps.Keys(fx.Files)) {
+			raw := fx.Files[role]
+			for i, typ := range fuzzTypes {
+				seeds := 0
+				for _, id := range ids {
+					if table[id].Type != typ || seeds >= seedsPerType {
 						continue
 					}
 					var pat [4]byte
@@ -37,7 +47,13 @@ func FuzzTLDecode(f *testing.F) {
 						seeds++
 					}
 				}
+				perType[i] += seeds
 			}
+		}
+	}
+	for i, n := range perType {
+		if n == 0 {
+			f.Fatalf("no seed of type %s", fuzzTypes[i])
 		}
 	}
 	f.Add([]byte{}, uint8(0))

@@ -41,7 +41,8 @@ are appended last, under the heading "# DDL cross-check (plan 4I4)", so --assemb
 Plan 4I4 Task 7: --go writes the parser's Go constructor table (internal/parsers/androidtelegram/tables.go) from the
 committed constructors.tsv alone (no sources): one tl.Constructor per row, in ID order, the fields reduced to tl.Field by
 the 4I4-P4 grammar (a flags word is KFlags, `name=F.n` a KTrue gated by that flags word, a secret KSecret). A token
-outside the grammar stops the run; the output is gofumpt-clean, so formatting leaves it unchanged.
+outside the grammar stops the run; the output is aligned as gofmt aligns it (TestTelegramTablesGoIsGofmtClean checks
+it), so formatting leaves it unchanged.
 """
 import hashlib
 import os
@@ -967,8 +968,9 @@ def go_table(rows):
            "package androidtelegram", "",
            'import "github.com/rbenzing/minutiae/internal/decode/tl"', "",
            "// The TL types the parser names (plan 4I4-P5).", "const ("]
+    width = max(len(c) for c in GO_TYPE_CONST.values())  # gofmt aligns the "=" of a const block
     for typ, const in GO_TYPE_CONST.items():
-        out.append('\t%s = "%s"' % (const, typ))
+        out.append('\t%s = "%s"' % (const.ljust(width), typ))
     out += [")", "",
             "// newTable returns the Telegram Android constructor table: one entry per row of constructors.tsv, each",
             "// citing its source line at the pin that reads it (plan 4I4 spec 8.2). It is a function, not a package",
@@ -979,14 +981,17 @@ def go_table(rows):
         if cid in seen or body not in GO_BODY:
             raise SystemExit("%s: duplicate id or unknown body %r" % (cid, body))
         seen.add(cid)
-        ent = ["%s: {" % cid, "\tID: %s," % cid, '\tName: "%s",' % name, "\tType: %s," % go_type(typ),
-               "\tBody: %s," % GO_BODY[body]]
         fl = go_fields(cid, fields)
+        # gofmt aligns the values of a run of one-line keys: ID, Name, Type and Body, joined by Source when no Fields
+        # block ends the run
+        w = 4 if fl else 6
+        ent = ["%s: {" % cid] + ["\t%s %s," % ((k + ":").ljust(w + 1), v) for k, v in (
+            ("ID", cid), ("Name", '"%s"' % name), ("Type", go_type(typ)), ("Body", GO_BODY[body]))]
         if fl:
             ent.append("\tFields: []tl.Field{")
             ent += ["\t\t" + f for f in fl]
             ent.append("\t},")
-        ent += ['\tSource: "%s@%s",' % (source, pin), "},"]
+        ent += ['\tSource: "%s@%s",' % (source, pin), "},"]  # "Source:" is the longest key: never padded
         out += ["\t\t" + e for e in ent]
     out += ["\t}", "}", ""]
     return "\n".join(out)

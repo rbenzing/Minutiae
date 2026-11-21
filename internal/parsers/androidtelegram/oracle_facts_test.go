@@ -270,7 +270,8 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	// spec ruling T7 (Task 5 review M1): the oracle's stop rules on telegram-hostile. A string whose 0xFE prefix
 	// declares 0xFFFFFF bytes past the end of the blob is truncated, never a cap (the framing cannot declare one above
 	// MaxString), stopped at the length prefix of message (offset 44); a vector count of 0x7FFFFFFF is above MaxVector
-	// and is a cap, stopped at entities.
+	// and is a cap, stopped at entities where the vector starts (offset 60: plan 4I4 Task 8 amended the oracle, which
+	// stopped at the count, to decode/tl's rule that a stop is where the failed read began).
 	hostile := oracleRecords(t, "telegram-hostile")["messages_v2"]
 	hostileMsg := func(rowid int64) rec {
 		t.Helper()
@@ -282,7 +283,7 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	}
 	h13, h14 := hostileMsg(2013), hostileMsg(2014)
 	want("H2013", num(h13.raw["mid"]) == "2013" && h13.raw["data_state"] == "cap" && h13.raw["data_stop_kind"] == "cap" &&
-		h13.raw["data_stop_path"] == "entities" && num(h13.raw["data_stop_offset"]) == "64")
+		h13.raw["data_stop_path"] == "entities" && num(h13.raw["data_stop_offset"]) == "60")
 	want("H2014", num(h14.raw["mid"]) == "2014" && h14.raw["data_state"] == "truncated" && h14.raw["data_stop_kind"] == "truncated" &&
 		h14.raw["data_stop_path"] == "message" && num(h14.raw["data_stop_offset"]) == "44")
 }

@@ -85,8 +85,10 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings is the typed pass's mapping: none until the message mapping exists (plan 4I4 Task 8).
-func (Parser) Mappings() []parse.TableMapping { return nil }
+// Mappings are the typed pass's mappings (a nil env, 4I4-P6): the message tables, the old generation first.
+func (Parser) Mappings() []parse.TableMapping {
+	return []parse.TableMapping{messageMappingWith(nil, tableMessages), messageMappingWith(nil, tableMessagesV2)}
+}
 
 // The reasons of Probe (byte-exact, the plan's "Probe reasons").
 const (
@@ -373,9 +375,11 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 }
 
 // Parse checks the live view (the signature, then its user version, B4, 4I4-P8; the layout table; the mapped tables'
-// required columns and rowid aliases; the join tables) and states the store (writeNotes) before any mapping runs. Away
-// from the app path a database without the signature is of another kind: Parse maps nothing and states it in rowrun's
-// not-applicable form (F3). The mapping steps come with plan 4I4 Task 8.
+// required columns and rowid aliases; the join tables) and states the store (writeNotes) before any mapping runs, so
+// the host's note cap keeps those notes. Away from the app path a database without the signature is of another kind:
+// Parse maps nothing and states it in rowrun's not-applicable form (F3). Then it maps both message tables (spec 8.3),
+// messages before messages_v2, each optional, through one constructor table (built once per Parse, C2) and the
+// counting emitter (4I4-P9), and after the run raises the counted warnings and writes the count notes.
 func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	if in == nil || out == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
@@ -396,10 +400,42 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	if err := writeNotes(ctx, files, in.Budget, out, *lv, account, databaseUser(in.Primary.Logical)); err != nil {
 		return fmt.Errorf("android.telegram: %w", err)
 	}
-	if _, err := rowrun.Run(ctx, in, out, nil); err != nil {
+	tab := newTable()
+	e := &env{Account: account}
+	if lv.Guard != nil {
+		e.Guard = *lv.Guard
+	}
+	ce := newCountingEmitter(out)
+	steps := []rowrun.Step{
+		{Mapping: messageMapping(e, tab, tableMessages), Optional: true},
+		{Mapping: messageMapping(e, tab, tableMessagesV2), Optional: true},
+	}
+	rep, err := rowrun.Run(ctx, in, ce, steps)
+	if err != nil {
 		return fmt.Errorf("android.telegram: %w", err)
 	}
+	if err := warnBothGenerations(ctx, out, rep); err != nil {
+		return err
+	}
+	if err := ce.warn(ctx); err != nil {
+		return err
+	}
+	writeCountNotes(out, ce)
 	return nil
+}
+
+// warnBothGenerations raises the one counted warning of spec 8.3 when both message tables held rows: both were read
+// in full and each record is labelled by raw.source_table; nothing is merged and the outcome stays complete (4I R1).
+func warnBothGenerations(ctx context.Context, out parse.Emitter, rep rowrun.Report) error {
+	rows := map[string]int64{}
+	for _, t := range rep.Tables {
+		rows[t.Table] = t.Rows
+	}
+	if rows[tableMessages] == 0 || rows[tableMessagesV2] == 0 {
+		return nil
+	}
+	return out.Warn(ctx, "sqlite:schema", reasonBothGenerations+": messages="+strconv.FormatInt(rows[tableMessages], 10)+
+		" messages_v2="+strconv.FormatInt(rows[tableMessagesV2], 10))
 }
 
 // liveView is what checkLiveView found: the join guard, the live user version (the note database_version) and which

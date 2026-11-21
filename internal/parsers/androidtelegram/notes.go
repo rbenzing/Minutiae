@@ -2,6 +2,7 @@ package androidtelegram
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,7 +15,9 @@ import (
 // The notes of the store (spec 8.10, the plan's "Notes and warnings"): a list is cut at an entry boundary within its
 // bound with a trailing ",…".
 const (
-	maxNote         = 512 // the bound of every list note but constructors_seen (F11)
+	maxNote         = 512  // the bound of every list note but constructors_seen (F11)
+	maxSeenNote     = 1000 // the bound of constructors_seen: 64 entries and "other" fit under the host's 1 KiB (F11)
+	maxSeenEntries  = 64   // the top constructors named one by one in constructors_seen
 	noteUnreadable  = "unreadable"
 	noteListCutMark = ",…"
 )
@@ -123,21 +126,75 @@ func generation(v1, v2 string) string {
 
 // noteList is the comma list of names cut at an entry boundary within limit bytes, with a trailing ",…" (restated from
 // androidcalendar/notes.go with the cut as a parameter, F11, F29).
-func noteList(names []string, limit int) string {
+func noteList(names []string, limit int) string { return noteListSep(names, limit, ",") }
+
+// noteListSep is noteList with the entries joined by sep (blob_states joins its tables with ";").
+func noteListSep(names []string, limit int, sep string) string {
 	var sb strings.Builder
 	for _, n := range names {
 		add := len(n)
 		if sb.Len() > 0 {
-			add++
+			add += len(sep)
 		}
 		if sb.Len()+add > limit-len(noteListCutMark) {
 			sb.WriteString(noteListCutMark)
 			break
 		}
 		if sb.Len() > 0 {
-			sb.WriteByte(',')
+			sb.WriteString(sep)
 		}
 		sb.WriteString(n)
 	}
 	return sb.String()
+}
+
+// writeCountNotes writes the notes of what the run counted (spec 8.4, 8.10, the plan's notes table): blob_states
+// ("<table>.<col>=<state>:<n>,…" per TL column in table order, the states in vocabulary order, the columns joined by
+// ";", cut at 512 bytes) and constructors_seen (the message blobs' top IDs "0x<id>:<n>" by count descending then ID,
+// at most 64, then "other:<n>", cut at 1,000 bytes, F11). They follow rowrun.Run: what they count exists only then.
+func writeCountNotes(out parse.Emitter, c *countingEmitter) {
+	var states []string
+	for _, table := range countedTables() {
+		for _, col := range blobColumns() {
+			counts := c.states[table+"."+col]
+			var parts []string
+			for _, st := range blobStates() {
+				if counts[st] > 0 {
+					parts = append(parts, st+":"+strconv.FormatInt(counts[st], 10))
+				}
+			}
+			if len(parts) > 0 {
+				states = append(states, table+"."+col+"="+strings.Join(parts, ","))
+			}
+		}
+	}
+	if len(states) > 0 {
+		out.Note("blob_states", noteListSep(states, maxNote, ";"))
+	}
+	if len(c.seen) == 0 {
+		return
+	}
+	ids := slices.Collect(maps.Keys(c.seen))
+	slices.SortFunc(ids, func(a, b string) int {
+		switch {
+		case c.seen[a] > c.seen[b]:
+			return -1
+		case c.seen[a] < c.seen[b]:
+			return 1
+		}
+		return strings.Compare(a, b) // 0x and 8 lower-case hex digits: byte order is ID order
+	})
+	var entries []string
+	var other int64
+	for i, id := range ids {
+		if i < maxSeenEntries {
+			entries = append(entries, id+":"+strconv.FormatInt(c.seen[id], 10))
+			continue
+		}
+		other += c.seen[id]
+	}
+	if other > 0 {
+		entries = append(entries, "other:"+strconv.FormatInt(other, 10))
+	}
+	out.Note("constructors_seen", noteList(entries, maxSeenNote))
 }

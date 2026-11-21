@@ -1,8 +1,10 @@
 package androidtelegram
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"go/format"
 	"maps"
 	"os"
 	"reflect"
@@ -223,5 +225,21 @@ func TestTelegramTableHasNoSecretBytesField(t *testing.T) {
 	}
 	if secrets == 0 {
 		t.Error("the table holds no secret field")
+	}
+}
+
+// Task 7 review M1 (carried into Task 8, C5): the generated tables.go is gofmt-clean as written, so the formatter
+// never rewrites a generated file and the generator's output is the committed text byte for byte.
+func TestTelegramTablesGoIsGofmtClean(t *testing.T) {
+	src, err := os.ReadFile("tables.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := format.Source(src)
+	if err != nil {
+		t.Fatalf("tables.go does not parse: %v", err)
+	}
+	if !bytes.Equal(got, src) {
+		t.Error("tables.go is not gofmt-clean: regenerate it with tools/fixtures/telegram_tl_facts.py --go")
 	}
 }

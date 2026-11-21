@@ -3,11 +3,14 @@ package androidtelegram
 import (
 	"context"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
 )
 
 // The reasons of the warnings and notes about joins (the plan's "Notes and warnings", 4I2 PF13).
@@ -154,4 +157,107 @@ func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, pa
 		}
 	}
 	return g, nil
+}
+
+// The reasons of the counted warnings (the plan's "Notes and warnings").
+const (
+	reasonBothGenerations = "telegram-both-generations"
+	reasonBlobUndecoded   = "telegram-blob-undecoded"
+)
+
+// countedTables and blobColumns are the tables and TL columns the blob counts name, in the order the note
+// blob_states and the warnings list them.
+func countedTables() []string { return []string{tableMessages, tableMessagesV2, tableUsers} }
+
+func blobColumns() []string { return []string{"data", "replydata"} }
+
+// countingEmitter counts what a mapping cannot warn about (4I4-P9, B9; restated from androidcalendar/guard.go, F29):
+// a mapper cannot warn and still emit its record, so the blob states per <table>.<col>, the top constructors of the
+// message blobs and the records with an undecided join are counted here, and warned about and noted once after
+// rowrun.Run.
+type countingEmitter struct {
+	parse.Emitter
+	states map[string]map[string]int64 // "<table>.<col>" -> state -> records
+	seen   map[string]int64            // data_constructor of a message record -> records
+	joins  map[string]int64            // table -> records whose raw.join_undecided names it
+}
+
+func newCountingEmitter(out parse.Emitter) *countingEmitter {
+	return &countingEmitter{Emitter: out, states: map[string]map[string]int64{}, seen: map[string]int64{}, joins: map[string]int64{}}
+}
+
+// tableOfLocator is the table a live locator names ("sqlite:table=<t>;rowid=..."), "" for another form.
+func tableOfLocator(loc string) string {
+	rest, ok := strings.CutPrefix(loc, "sqlite:table=")
+	if !ok {
+		return ""
+	}
+	t, _, _ := strings.Cut(rest, ";")
+	return t
+}
+
+// Emit counts the record and passes it on.
+func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
+	raw, _ := r.Payload["raw"].(map[string]any)
+	table := tableOfLocator(r.Locator)
+	for _, col := range blobColumns() {
+		st, ok := raw[col+"_state"].(string)
+		if !ok || table == "" {
+			continue
+		}
+		key := table + "." + col
+		if c.states[key] == nil {
+			c.states[key] = map[string]int64{}
+		}
+		c.states[key][st]++
+	}
+	if table == tableMessages || table == tableMessagesV2 {
+		if id, ok := raw["data_constructor"].(string); ok {
+			c.seen[id]++
+		}
+	}
+	if list, ok := raw["join_undecided"].([]any); ok {
+		for _, t := range list {
+			if name, ok := t.(string); ok {
+				c.joins[name]++
+			}
+		}
+	}
+	return c.Emitter.Emit(ctx, r)
+}
+
+// warn raises one counted warning per TL column with undecoded records (locator sqlite:table=<table>, the states in
+// vocabulary order), then one per table with an undecided join, in table order.
+func (c *countingEmitter) warn(ctx context.Context) error {
+	for _, table := range countedTables() {
+		for _, col := range blobColumns() {
+			counts := c.states[table+"."+col]
+			var parts []string
+			var n int64
+			for _, st := range blobStates() {
+				if undecodedState(st) && counts[st] > 0 {
+					parts = append(parts, st+":"+strconv.FormatInt(counts[st], 10))
+					n += counts[st]
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			reason := reasonBlobUndecoded + ": " + table + "." + col + ": " + strconv.FormatInt(n, 10) + " records (" + strings.Join(parts, ",") + ")"
+			if err := c.Warn(ctx, "sqlite:table="+table, reason); err != nil {
+				return err
+			}
+		}
+	}
+	tables := make([]string, 0, len(c.joins))
+	for t := range c.joins {
+		tables = append(tables, t)
+	}
+	slices.Sort(tables)
+	for _, t := range tables {
+		if err := c.Warn(ctx, "sqlite:table="+t, reasonJoinUndecided+": "+t+": "+strconv.FormatInt(c.joins[t], 10)+" records"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
