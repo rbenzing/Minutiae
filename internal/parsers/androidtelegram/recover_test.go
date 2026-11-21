@@ -371,11 +371,14 @@ func TestTelegramRecoveredRowsJoinNothing(t *testing.T) {
 
 // Ruling T2 (F30, facts.tsv write_verb.*): putReinserts follows the facts (true when any pinned put of a message table
 // is REPLACE INTO). When true, the typed pass states each recovered message's relation to the live table by its own
-// (mid, uid): R2's older images (REPLACE INTO gave R2 a new rowid) are "present", never Deleted, and come only through
-// the recovery emitter with the host's relation, never as live records; rows 201-205 are "absent"; a row whose mid cell
-// cannot be read is "undecided". R1's edit image follows the pinned write_verb.messages_v2.edit as the put does: an
-// UPDATE keeps the rowid, so the older image carries the host's superseded-version relation; a re-inserting verb gives
-// a new rowid, so the older image is absent-from-live with live_key_state "present". When false no recovered record has
+// (mid, uid): R2's older images (REPLACE INTO gave R2 a new rowid) are "present" (the message's key is still live),
+// and come only through the recovery emitter with the host's relation, never as live records; the mapping states no
+// deletion of its own (ruling T8: the host's Deleted stamp on every typed record marks recovered provenance, 4G-R7);
+// rows 201-207 are "absent"; a row whose mid cell cannot be read is "undecided". R1's edit image follows the pinned
+// write_verb.messages_v2.edit as the put does: an UPDATE keeps the rowid, so the older image carries the host's
+// superseded-version relation; a re-inserting verb gives a new rowid, so the older image is absent-from-live with
+// live_key_state "present". telegram-v181's R52, written in a WAL frame that was never committed, is a typed record of
+// the host's uncommitted facts with live_key_state "absent" (review M4). When false no recovered record has
 // live_key_state. No live record of any variant ever has it.
 func TestTelegramRecoveredLiveKeyStateFollowsTheWriteVerb(t *testing.T) {
 	// putReinserts equals the facts: TestTelegramFactsMatchTheCode
@@ -402,9 +405,11 @@ func TestTelegramRecoveredLiveKeyStateFollowsTheWriteVerb(t *testing.T) {
 			continue
 		}
 		byState[state.(string)]++
-		if r.Deleted || r.Recovery != "" || f.Relation == "" {
-			t.Errorf("%s: Deleted %v, Recovery %q, relation %q: a recovered record is never Deleted by the mapping and always carries the host's relation",
-				f.Locator, r.Deleted, r.Recovery, f.Relation)
+		// the mapping states no deletion of its own (T8: Deleted is the host's provenance stamp, made after the mapping)
+		_, delField := r.Payload["deleted"]
+		if r.Deleted || delField || r.Recovery != "" || f.Relation == "" {
+			t.Errorf("%s: Deleted %v, payload.deleted present %v, Recovery %q, relation %q: the mapping states no deletion and the host gives the relation",
+				f.Locator, r.Deleted, delField, r.Recovery, f.Relation)
 		}
 		// a recovered locator names the cell, not the rowid: the rows are told apart by their own mid
 		switch mid := raw["mid"]; {
@@ -452,6 +457,25 @@ func TestTelegramRecoveredLiveKeyStateFollowsTheWriteVerb(t *testing.T) {
 					return rawOf(got.Records[0])["live_key_state"]
 				}())
 		}
+	}
+
+	// review M4: R52 lies only in an uncommitted WAL frame of telegram-v181
+	r52 := 0
+	v181 := typedRun(t, fixtureFiles(t, "telegram-v181"))
+	for i, r := range v181.recs {
+		if rawOf(r)["mid"] != int64(148) {
+			continue
+		}
+		r52++
+		f := v181.facts[i]
+		if f.Relation != "uncommitted" || f.Origin != "wal-uncommitted" || f.Method != "sqlite-wal-uncommitted" || f.Confidence != 45 ||
+			f.WAL == nil || f.WAL.Committed || rawOf(r)["live_key_state"] != "absent" || r.Body != "in the WAL, uncommitted R52" {
+			t.Errorf("R52 %s: relation %q, origin %q, method %q, confidence %d, wal %+v, live_key_state %v, Body %q", f.Locator,
+				f.Relation, f.Origin, f.Method, f.Confidence, f.WAL, rawOf(r)["live_key_state"], r.Body)
+		}
+	}
+	if r52 != 1 {
+		t.Errorf("telegram-v181: %d typed records of R52, want 1", r52)
 	}
 
 	for _, v := range variants {

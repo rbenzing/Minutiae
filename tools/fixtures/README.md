@@ -3541,8 +3541,9 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   `telegram-deleted` (rows deleted in the WAL, an edit and a rewrite by `REPLACE INTO`, with its typed recovery
   oracle; plan 4I4 Task 14 added the live `users`, `chats`, `enc_chats` (key rows), `contacts` and `users_data` rows a
   recovered row must not join, and to the deleted rows a secret message with a secret document, a group message and a
-  `users` row; it was regenerated alone with `--variant telegram-deleted`, its two pins patched by hand, so the other
-  variants' WAL salts and pins stand). Only `telegram-v181` and `telegram-deleted` keep a `-wal`; every database is written with
+  `users` row; it was regenerated alone with `--variant telegram-deleted --pins-go ...`, which rewrites only its own
+  pins, so the other variants' WAL salts and pins stand). `--pins-go` with `--variant` keeps the pins of the variants
+  it does not regenerate and fails when the pins file lacks one of them. Only `telegram-v181` and `telegram-deleted` keep a `-wal`; every database is written with
   `secure_delete = ON` and WAL as the app writes. A NaN cell is written as a REAL marker whose bytes are then replaced
   (SQLite never stores a NaN); a TEXT `uid` is written while the column has no declared type and the declaration is
   restored. Secret fields hold the synthetic marker plus a SHA-256 chain of the scenario seed; the `enc_chats` key

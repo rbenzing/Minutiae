@@ -1875,9 +1875,11 @@ def variant_deleted(work):
 
 def recover_expect(variant, files):
     """The <variant>.recover.expect.json: every recovered row of a claimed table mapped with env None (4I4-P6: it joins
-    nothing) and its raw.live_key_state from its own (mid, uid) against the live rows of its table (T2)."""
+    nothing) and its raw.live_key_state from its own key against the live rows of its table (T2): (mid, uid) in
+    messages_v2, mid alone in messages (T9: the pre-84 put replaces the row of its mid)."""
     view = C.engine_view(files, ["messages", "messages_v2"])
-    keys = {(t, r.get("mid"), r.get("uid")) for t in ("messages", "messages_v2") for r in view.get(t, [])}
+    keys = {("messages_v2", r.get("mid"), r.get("uid")) for r in view.get("messages_v2", [])}
+    keys |= {("messages", r.get("mid"), None) for r in view.get("messages", [])}
 
     def expect_fn(table, d, env, file):
         if table == "users":
@@ -1886,8 +1888,10 @@ def recover_expect(variant, files):
             return rec
         rec = map_message(table, d, None, "", file)
         mid, uid = d.get("mid"), d.get("uid")
+        if table == "messages":
+            uid = None  # the key is mid alone (T9)
         raw = rec["payload"]["raw"]
-        if is_int(mid) and is_int(uid):
+        if is_int(mid) and (uid is None and table == "messages" or is_int(uid)):
             raw["live_key_state"] = "present" if (table, mid, uid) in keys else "absent"
         else:
             raw["live_key_state"] = "undecided"

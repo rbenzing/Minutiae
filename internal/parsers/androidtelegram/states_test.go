@@ -523,13 +523,22 @@ func dialogStates(t *testing.T) {
 		encChatsTable(builtRow{77, map[string]any{"user": int64(ann)}}))
 	checkStates(t, "messages_v2", typed, typedPass(t, db))
 
-	// ruling T2 in the old generation: messages is keyed by its mid, the rowid alias, which the lookup matches as stored
-	typedV1 := []stateRow{{
-		"typed v1",
-		msgCells{mid: 7, uid: ann, data: in(7, peerUser(self), ann)},
-		map[string]any{"live_key_state": "present", "thread_user_state": "not-joined-recovered"},
-		map[string]any{"guid": "7"},
-	}}
+	// rulings T2, T9 in the old generation: messages is keyed by its mid alone, the rowid alias, which the lookup
+	// matches as stored; a row whose uid cannot be read is still present by its mid
+	typedV1 := []stateRow{
+		{
+			"typed v1",
+			msgCells{mid: 7, uid: ann, data: in(7, peerUser(self), ann)},
+			map[string]any{"live_key_state": "present", "thread_user_state": "not-joined-recovered"},
+			map[string]any{"guid": "7"},
+		},
+		{
+			"typed v1 null uid",
+			msgCells{mid: 8, nullUID: true, data: in(8, peerUser(self), ann)},
+			map[string]any{"live_key_state": "present", "thread_state": "undecided"},
+			map[string]any{"guid": "8"},
+		},
+	}
 	checkStates(t, "messages", typedV1, typedPass(t, goBuiltMessages(64, cellsOf(typedV1), nil)))
 }
 

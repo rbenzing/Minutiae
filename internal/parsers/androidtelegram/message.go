@@ -564,7 +564,8 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 		// the typed pass (ruling T2): the recovered row's own key against the live rows of its own table, never a join
 		mid, midOK := r.cell("mid")
 		uid, uidOK := r.cell("uid")
-		raw["live_key_state"] = liveKeyState(m, table, mid, uid, midOK && uidOK)
+		// messages is keyed by mid alone (T9): its uid need not be read
+		raw["live_key_state"] = liveKeyState(m, table, mid, uid, midOK && (uidOK || table == tableMessages))
 	}
 
 	body := ""

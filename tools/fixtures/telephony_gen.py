@@ -22,6 +22,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -57,8 +58,8 @@ def main(argv):
     ap.add_argument("--pins-go", help="write the complete fixturePins Go file (all variants)")
     ap.add_argument("--pins-package", default="")
     a = ap.parse_args(argv)
-    if a.pins_go and (a.variant or not a.pins_package):
-        ap.error("--pins-go needs every variant and --pins-package")
+    if a.pins_go and not a.pins_package:
+        ap.error("--pins-go needs --pins-package")
     if a.check and a.out:
         # --check generates into a temp directory of its own and removes it; it never removes a directory it was given
         ap.error("--check takes no --out: it generates into a temp directory of its own and discards it")
@@ -82,6 +83,8 @@ def main(argv):
             pins["%s.%s" % (name, role)] = hashes[role]
         print("wrote", name, sorted(files), len(exp["records"]), "records")
     if a.pins_go:
+        if a.variant:  # a partial run: the other variants keep the pins the file states for them
+            pins = dict(read_pins(a.pins_go, set(fam.VARIANTS) - set(names)), **pins)
         write_pins(a.pins_go, a.pins_package, pins)
         print("wrote", a.pins_go)
     if a.check:
@@ -121,6 +124,20 @@ def recover_oracles(fam, out, names, check=False):
             print("recover oracle", name, n, "records (not written)")
         else:
             print("wrote", C.write_recover_expect(out, name, obj), n, "records,", len(obj["written"]), "written versions")
+
+
+def read_pins(path, keep):
+    """The pins of the variants in keep from an existing pins file (as write_pins writes it); every one must be there."""
+    pins = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            m = re.match(r'\s*"([^"]+)\.(\w+)":\s*"([0-9a-f]{64})",\s*$', line)
+            if m and m.group(1) in keep:
+                pins["%s.%s" % (m.group(1), m.group(2))] = m.group(3)
+    missing = sorted(keep - {k.rsplit(".", 1)[0] for k in pins})
+    if missing:
+        raise SystemExit("%s holds no pins for %s: regenerate every variant" % (path, ", ".join(missing)))
+    return pins
 
 
 def write_pins(path, package, pins):

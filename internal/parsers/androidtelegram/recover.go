@@ -1,7 +1,6 @@
 package androidtelegram
 
 import (
-	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 )
@@ -13,9 +12,10 @@ import (
 // superseded-version) and, because the app re-inserts a message on every put (putReinserts), the row's own key (mid,
 // uid) read against the live rows of its own table: raw.live_key_state.
 
-// The states of raw.live_key_state (ruling T2, 4I4-P6): present (a live row of the same table has the recovered row's
-// mid and uid: the recovered row is an older image of a message still live, never a deletion), absent (no live row
-// has that key) and undecided (the row's own key, or the live table, could not be read).
+// The states of raw.live_key_state (rulings T2, T9, 4I4-P6): present (a live row of the same table has the recovered
+// row's key: the message's key is still live and the row is an older image of it; the host's Deleted stamp on a typed
+// record marks recovered provenance, T8), absent (a complete answer holds no live row with that key) and undecided
+// (the row's own key, the live rows or the lookup could not be read or decided).
 const (
 	liveKeyPresent   = "present"
 	liveKeyAbsent    = "absent"
@@ -32,22 +32,30 @@ func claimsOf(tables []string) []parse.TableClaim {
 }
 
 // liveKeyState is the relation of a recovered message row to the live rows of its own table by its own primary key
-// (mid, uid) (ruling T2, 4I4-P6): ok says both cells were read as integers. The live rows with that mid are matched
-// under the engine's equality and each one's uid is compared: one equal uid is present; none, with every uid read, is
-// absent. A key that was not read, a live uid that cannot be read, or a lookup that fails (the table absent or
-// damaged, an undecidable index, the budget) is undecided, never absent: the same mid in another dialog never makes a
-// recovered row present (TestTelegramSameMidInTwoDialogsIsNotMerged). This is identity from the row's own key in the
-// same table, not a join.
+// (ruling T2, 4I4-P6): (mid, uid) in messages_v2; mid alone in messages, whose mid is the rowid that the pre-84 put
+// (REPLACE INTO on mid) replaces (ruling T9). ok says the key cells were read as integers. The live rows with that mid
+// are matched under the engine's equality (rowrun.Match) and, in messages_v2, each one's uid is compared: an equal key
+// is present, even on a short answer (the row that was found is live); no equal key on a complete answer, with every
+// live uid read, is absent. A key that was not read, a live uid that cannot be read, a short answer (an index that
+// lost rows, an undecidable key) without the key, or a lookup that fails is undecided, never absent: the same mid in
+// another dialog never makes a recovered row present (TestTelegramSameMidInTwoDialogsIsNotMerged). A failed lookup
+// (the mid index could not be built: its cap, the budget, damage) is stated once per run in the note
+// live_key_undecided.<table>.mid with its cause (the host keeps the first note of a key), so a run of undecided
+// states has a stated reason. This is identity from the row's own key in the same table, not a join.
 func liveKeyState(m parse.MapContext, table string, mid, uid int64, ok bool) string {
 	if !ok {
 		return liveKeyUndecided
 	}
-	rows, err := m.Match(table, "mid", sqlitedb.LiteralIntKey(mid))
+	rows, short, err := rowrun.Match(m, table, "mid", mid)
 	if err != nil {
+		m.Note("live_key_undecided."+table+".mid", "the live "+table+".mid lookup failed: "+err.Error())
 		return liveKeyUndecided
 	}
+	if table == tableMessages && len(rows) > 0 {
+		return liveKeyPresent // the key is mid alone (T9)
+	}
 	col := m.Column(table, "uid")
-	undecided := false
+	undecided := short
 	for _, r := range rows {
 		v, k := intCellOf(r, col)
 		switch {
