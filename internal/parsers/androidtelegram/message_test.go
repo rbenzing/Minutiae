@@ -329,7 +329,7 @@ func TestTelegramTwoAccountsAreKeptApart(t *testing.T) {
 
 // B9, 4I4-P9: the undecoded blobs of a column are one counted warning after the run, with the per-state counts,
 // never one per row; the notes blob_states and constructors_seen state the same counts (telegram-hostile as its
-// oracle; telegram-v181 as its oracle without the reply copies of Task 9 and users.data of Task 12).
+// oracle; telegram-v181 as its oracle without users.data of Task 12).
 func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	res := parseFixture(t, "telegram-hostile")
 	var got []string
@@ -356,7 +356,7 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	if v181.Notes["constructors_seen"] != exp.Notes["constructors_seen"] {
 		t.Errorf("telegram-v181: constructors_seen %q, the oracle %q", v181.Notes["constructors_seen"], exp.Notes["constructors_seen"])
 	}
-	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:49,partial:7,unknown-constructor:1,null:1" {
-		t.Errorf("telegram-v181: blob_states %q (the oracle, with replydata and users.data: %q)", got, exp.Notes["blob_states"])
+	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:49,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1" {
+		t.Errorf("telegram-v181: blob_states %q (the oracle, with users.data: %q)", got, exp.Notes["blob_states"])
 	}
 }

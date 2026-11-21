@@ -86,22 +86,17 @@ func locatorRow(loc string) string {
 // The raw keys of later tasks (F4): each later task deletes its entries here, and Task 12 deletes pendingOracle.
 func pendingRawKeys() []string {
 	return []string{
-		// Task 9: media summary, forward header, trailer, reply copy
-		"media", "fwd", "fwd_msg_id", "trailer_state", "trailer_len", "trailer_sha256", "attach_path", "attach_path_state",
-		"attach_path_flags", "attach_params", "attach_params_total", "attach_params_truncated", "reply_copy",
 		// Task 10: peers, participants, thread joins, secret chats
 		"peer_id", "sender_state", "sender_basis", "counterparty_state", "thread_title_state", "thread_user_state",
 		"join_undecided", "secret_chat", "dialog_class_state",
 	}
 }
 
-// pendingRawPrefixes are the raw key prefixes of later tasks: the reply copy's blob keys (Task 9) and the joined
-// chats blob's (Task 10).
-func pendingRawPrefixes() []string { return []string{"replydata_", "chat_data_"} }
+// pendingRawPrefixes are the raw key prefixes of later tasks: the joined chats blob's (Task 10).
+func pendingRawPrefixes() []string { return []string{"chat_data_"} }
 
-// pendingOracle is the interim filter of TestAndroidTelegramMatchesOracle (F4): a copy of exp without what Tasks 9-12
-// map. (a) The raw keys of pendingRawKeys and pendingRawPrefixes are deleted, and so is the payload's attachments
-// (Task 9); raw.enc_chat_id is kept only on a pre-84 high-id secret row (raw.dialog_basis, F10), and a dialog class
+// pendingOracle is the interim filter of TestAndroidTelegramMatchesOracle (F4): a copy of exp without what Tasks 10-12
+// map. (a) The raw keys of pendingRawKeys and pendingRawPrefixes are deleted; raw.enc_chat_id is kept only on a pre-84 high-id secret row (raw.dialog_basis, F10), and a dialog class
 // the chats join or the peer resolves (chat, channel, community) is the interim "negative" (Task 10). (b) The
 // participants are the interim unknown ones and the thread is its id alone (Task 10); Summary is not compared
 // (Task 10 names the counterparty). (c) The call records of the pending call rows are dropped (Task 11), as
@@ -143,9 +138,8 @@ func pendingOracle(exp parsertest.Expect) parsertest.Expect {
 	return out
 }
 
-// pendingPayload rewrites one message payload to the interim form of Task 8.
+// pendingPayload rewrites one message payload to the interim form of Task 9 (Task 10 fills participants and thread).
 func pendingPayload(p map[string]any) {
-	delete(p, "attachments")
 	p["participants"] = []any{}
 	p["participants_unknown"] = true
 	if th, ok := p["thread"].(map[string]any); ok {

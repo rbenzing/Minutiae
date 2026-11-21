@@ -71,14 +71,22 @@ func stateOf(s *tl.Stop) string {
 	return s.Kind // truncated, malformed, cap, budget: the stop kinds are the state words
 }
 
+// The TL columns a mapping decodes: the row's own blob, whose undecided fields are listed (spec 8.4), and the reply
+// copy (spec 8.5).
+const (
+	colData      = "data"
+	colReplyData = "replydata"
+)
+
 // hexID is a constructor ID as raw states it: 0x and 8 lower-case hex digits.
 func hexID(id uint32) string { return fmt.Sprintf("0x%08x", id) }
 
 // decodeBlob decodes the non-NULL blob b of column col as the TL type typ through the table tab, charging bud
 // (4I4-P13), and states it in raw (spec 8.4, the plan's state vocabulary): <col>_state, _len, _sha256, _constructor
 // (when at least 4 bytes), _flags (the encoding facts, comma-joined), and after a stop other than a prefix
-// _stop_kind, _stop_offset, _stop_path (below the top), _stop_id (when the stop names an ID) and _undecided. The
-// caller frees the returned result's Charged() when the row's mapping returns (F8), whatever the state.
+// _stop_kind, _stop_offset, _stop_path (below the top), _stop_id (when the stop names an ID) and, for the row's own
+// blob (col "data"), _undecided. The caller frees the returned result's Charged() when the row's mapping returns
+// (F8), whatever the state.
 func decodeBlob(raw map[string]any, col string, b []byte, typ string, tab tl.Table, bud tl.Budget) (view, string) {
 	r := tl.Decode(b, typ, tab, bud)
 	v := newView(r)
@@ -101,8 +109,10 @@ func decodeBlob(raw map[string]any, col string, b []byte, typ string, tab tl.Tab
 		if s.Kind == tl.StopUnknownConstructor || s.Kind == tl.StopOpaque {
 			raw[col+"_stop_id"] = hexID(s.ID)
 		}
-		if und := undecided(v, tab, typ, state); len(und) > 0 {
-			raw[col+"_undecided"] = strings.Join(und, ",")
+		if col == colData { // a side blob (replydata, a joined chats.data) lists nothing: its fields are not the record's
+			if und := undecided(v, tab, typ, state); len(und) > 0 {
+				raw[col+"_undecided"] = strings.Join(und, ",")
+			}
 		}
 	}
 	return v, state

@@ -28,3 +28,17 @@ func MappedFields() []string { return mappedFields() }
 
 // BlobStates is the blob state vocabulary in order.
 func BlobStates() []string { return blobStates() }
+
+// MediaLabel is mediaLabel.
+func MediaLabel(class string) string { return mediaLabel(class) }
+
+// MediaClassCount is the number of MessageMedia constructors of the table.
+func MediaClassCount() int {
+	n := 0
+	for _, c := range newTable() {
+		if c.Type == typeMedia {
+			n++
+		}
+	}
+	return n
+}

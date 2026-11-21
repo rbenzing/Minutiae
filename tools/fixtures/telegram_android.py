@@ -26,8 +26,11 @@ Choices this oracle states where the spec leaves the detail to the plan (the Go 
     review M2, M3).
   - kind: a partial message blob takes the media rule, and so does a truncated, malformed or capped one whose stop
     lies after media (or the action); one stopped at or before it is `unknown` (spec 8.4; Task 8 review I1).
-  - replydata gets the blob keys (replydata_state, _len, _sha256, _constructor, ...) and, when its top is a Message
-    row, raw.reply_copy {copy, constructor, id, date, text}.
+  - replydata gets the blob keys (replydata_state, _len, _sha256, _constructor, ...; no _undecided) and, when its top
+    is a Message row, raw.reply_copy {copy, constructor, id, date, text}, else raw.reply_copy_state (plan 4I4 Task 9).
+  - raw.text_flags is one comma-joined sorted string (the plan's vocabulary, B8); a contact's phone_number is an
+    identifier, never cut; a coordinate out of range states <k>_state and its IEEE-754 bits <k>_bits; a forward header
+    with two from_id fields states both (from_ids, from_state "conflict") and no from (plan 4I4 Task 9).
   - the dialog address of an outgoing message is the dialog's own (4I4-P11); a negative dialog left unresolved, a
     folder and an unknown dialog have no participant and no thread group.
   - a CORE message row has no trailer unless the row states one (R3, R41, R42).
@@ -204,11 +207,18 @@ def note_list(names, limit=MAX_NOTE, sep=","):
     return out
 
 
+def mark(raw, key):
+    """Names key in raw.text_flags: one comma-joined, sorted string of the texts cleaning altered or cut (the plan's
+    shared vocabulary, B8; plan 4I4 Task 9 amended the list form)."""
+    names = set(raw["text_flags"].split(",")) if raw.get("text_flags") else set()
+    raw["text_flags"] = ",".join(sorted(names | {key}))
+
+
 def cleaned(raw, key, value, limit):
     """A cleaned text (C4) or None when empty; an altered text is listed in raw.text_flags."""
     c = C.clean(bytes(value), limit)
     if c.flags:
-        C.mark(raw, key)
+        mark(raw, key)
     return c.text or None
 
 
@@ -343,6 +353,11 @@ def address(b, path):
     e = b.f.get(path)
     if e is None:
         return None
+    return address_of(b, e, path)
+
+
+def address_of(b, e, path):
+    """The participant address of the decoded entry e at path, or None."""
     if e["kind"] == "object":
         for prefix, kind, field in PEER_KIND:
             if e["cls"].startswith(prefix):
@@ -520,9 +535,18 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
             raw["peer_id"] = pa
         if b.has("fwd_from") or b.has("fwd_from.from_id") or b.has("fwd_from.date"):
             fwd = {}
-            fa = address(b, "fwd_from.from_id")
-            if fa:
-                fwd["from"] = fa
+            # every from_id read (an old header names the user at bit 0 and the channel at bit 1 from_id): two are a
+            # conflict, none chosen; an inline id of an unresolved class is contradictory (T5; plan 4I4 Task 9)
+            origins = [e for e in b.res["fields"] if e["path"] == "fwd_from.from_id"]
+            addrs = [address_of(b, e, "fwd_from.from_id") for e in origins]
+            known = [a for a in addrs if a]
+            unresolved = [str(e["value"]) for e, a in zip(origins, addrs) if not a and e["kind"] in ("id32", "id64")]
+            if len(known) + len(unresolved) > 1:
+                fwd["from_ids"], fwd["from_state"] = ",".join(known + unresolved), "conflict"
+            elif known:
+                fwd["from"] = known[0]
+            elif unresolved:
+                fwd["from_id"], fwd["from_class_state"] = unresolved[0], "contradictory"
             if b.val("fwd_from.from_name") is not None:
                 t = cleaned(raw, "fwd.from_name", b.val("fwd_from.from_name"), MAX_NAME)
                 if t:
@@ -721,6 +745,8 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                     if t:
                         copy["text"] = t
                 raw["reply_copy"] = copy
+            else:
+                raw["reply_copy_state"] = rb.state  # spec 8.5: not a Message (a StoryItem, an unknown ID)
         else:
             unknown[table + ".replydata"] = "type-mismatch"
 
@@ -844,8 +870,9 @@ def map_media(b, media, attachments, raw):
                 continue
             if v == v and abs(v) <= lim and abs(v) != float("inf"):
                 media[k] = gofloat(v)
-            else:
+            else:  # the stored value as its IEEE-754 bits: never shown as a coordinate (plan 4I4 Task 9)
                 media[k + "_state"] = "out-of-range"
+                media[k + "_bits"] = "0x%016x" % struct.unpack("<Q", struct.pack("<d", v))[0]
         if cls.startswith("TL_messageMediaVenue"):
             for k in ("title", "address"):
                 if b.val("media." + k) is not None:
@@ -853,7 +880,16 @@ def map_media(b, media, attachments, raw):
                     if t:
                         media[k] = t
     elif cls.startswith("TL_messageMediaContact"):
-        for k, lim in (("phone_number", MAX_ID), ("first_name", MAX_NAME), ("last_name", MAX_NAME), ("vcard", MAX_VCARD)):
+        if b.val("media.phone_number") is not None:  # an identifier: never cut (spec 12; plan 4I4 Task 9)
+            v = b.val("media.phone_number")
+            c = C.clean(bytes(v), 1 << 30)
+            if len(c.text.encode("utf-8")) > MAX_ID:
+                media["phone_number_state"], media["phone_number_len"], media["phone_number_sha256"] = "too-long", len(v), sha(v)
+            elif c.text:
+                media["phone_number"] = c.text
+                if c.flags:
+                    mark(raw, "media.phone_number")
+        for k, lim in (("first_name", MAX_NAME), ("last_name", MAX_NAME), ("vcard", MAX_VCARD)):
             if b.val("media." + k) is not None:
                 t = cleaned(raw, "media." + k, b.val("media." + k), lim)
                 if t:
@@ -1064,7 +1100,7 @@ def ident(raw, key, v):
         raw[key + "_state"], raw[key + "_len"], raw[key + "_sha256"] = "too-long", len(v), sha(v)
         return None
     if c.flags:
-        C.mark(raw, key)
+        mark(raw, key)
     return c.text or None
 
 

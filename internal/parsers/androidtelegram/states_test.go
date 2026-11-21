@@ -2,6 +2,8 @@ package androidtelegram_test
 
 import (
 	"math"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/records"
@@ -162,6 +164,62 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 			map[string]any{"id": int64(999), "id_conflict": true, "date": int64(baseDate + 1), "date_conflict": true},
 			nil,
 		},
+		// Task 9: the trailer (spec 8.8), the media coordinates (spec 8.5, 12) and the reply copy (spec 8.5)
+		{"trailer none", msgCells{mid: 36, uid: ann, data: in(36)}, map[string]any{"trailer_state": "none"}, nil},
+		{
+			"trailer empty marker",
+			msgCells{mid: 37, uid: ann, data: tlMessage{id: 37, from: ann, peer: self, date: baseDate, text: "x", tail: tlStr(" ")}.bytes()},
+			map[string]any{"trailer_state": "read", "attach_path_state": "empty-marker", "attach_path": nil},
+			nil,
+		},
+		{
+			"trailer params cut",
+			msgCells{mid: 38, uid: ann, data: tlMessage{id: 38, from: ann, peer: self, date: baseDate, text: "x", tail: tlStr(params(65) + "p")}.bytes()},
+			map[string]any{"trailer_state": "read", "attach_params_total": 65, "attach_params_truncated": true, "attach_path": "p"},
+			nil,
+		},
+		{
+			"trailer path flags",
+			msgCells{mid: 39, uid: ann, data: tlMessage{id: 39, from: ann, peer: self, date: baseDate, text: "x", tail: tlStr("a\x00b")}.bytes()},
+			map[string]any{"trailer_state": "read", "attach_path": "a�b", "attach_path_flags": "nul", "attach_params_total": nil},
+			nil,
+		},
+		{
+			"trailer unparsed",
+			msgCells{mid: 40, uid: ann, data: tlMessage{id: 40, from: ann, peer: self, date: baseDate, text: "x", tail: []byte{0xfe}}.bytes()},
+			map[string]any{"trailer_state": "unparsed", "trailer_len": 1, "trailer_sha256": sha256Of([]byte{0xfe})},
+			nil,
+		},
+		{
+			"trailer unreachable",
+			msgCells{mid: 41, uid: ann, data: in(41)[:30]},
+			map[string]any{"data_state": "truncated", "trailer_state": "unreachable"},
+			nil,
+		},
+		{
+			"coordinates out of range",
+			msgCells{mid: 42, uid: ann, data: tlMessage{id: 42, from: ann, peer: self, date: baseDate, media: geoMedia(math.Inf(1), math.NaN())}.bytes()},
+			map[string]any{"media": map[string]any{
+				"type": "geo", "constructor": "0x56e0d474", "lat_state": "out-of-range", "lat_bits": "0x7ff8000000000001",
+				"long_state": "out-of-range", "long_bits": "0x7ff0000000000000",
+			}},
+			map[string]any{"kind": "media"},
+		},
+		{
+			"reply copy",
+			msgCells{mid: 43, uid: ann, data: in(43), replydata: tlMessage{id: 9, from: ann, peer: self, date: baseDate - 1, text: "q\x00"}.bytes()},
+			map[string]any{
+				"replydata_state": "decoded", "reply_copy_state": nil, "text_flags": "reply_copy.text",
+				"reply_copy": map[string]any{"copy": true, "constructor": "0x7600b9d3", "id": 9, "date": baseDate - 1, "text": "q�"},
+			},
+			nil,
+		},
+		{
+			"reply copy undecided",
+			msgCells{mid: 44, uid: ann, data: in(44), replydata: append(le32(0x0badf00d), 0, 0, 0, 0)},
+			map[string]any{"replydata_state": "unknown-constructor", "reply_copy_state": "unknown-constructor", "reply_copy": nil},
+			nil,
+		},
 	}
 	var cells []msgCells
 	for _, r := range v2 {
@@ -203,6 +261,16 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 		cells = append(cells, r.cells)
 	}
 	checkStates(t, "messages", v1, parseAt(t, remoteApp, dbOnly(goBuiltMessages(64, cells, nil))).Records)
+}
+
+// params is the params prefix of a trailer string with n pairs k<i>|=|v (spec 6.5).
+func params(n int) string {
+	var sb strings.Builder
+	sb.WriteString("||")
+	for i := range n {
+		sb.WriteString("k" + strconv.Itoa(i) + "|=|v||")
+	}
+	return sb.String()
 }
 
 // checkStates matches the records of one Go-built table to its rows (messages_v2 by position, messages by mid).

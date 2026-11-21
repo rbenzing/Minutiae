@@ -261,10 +261,11 @@ func dialogOfUID(table string, uid int64) (class string, encID int64, pre84 bool
 
 const minInt64 = -1 << 63
 
-// readBlobRaw states the decoded blob fields of spec 8.5's raw list (not the media, forward header, trailer or reply
-// copy of Task 9, nor the peers of Task 10): the flags words, the set booleans, the id (and id_conflict against the
-// message id), via_bot_id, grouped_id, ttl_period, views, reply_to.reply_to_msg_id, edit_date with its unit, the
-// blob date (and date_conflict against the date column) and the messageEmpty label.
+// readBlobRaw states the decoded blob fields of spec 8.5's raw list (the media, forward header and trailer are
+// mediaSummary's, fwdRaw's and readTrailer's, the reply copy replyCopy's; the peers are Task 10's): the flags words,
+// the set booleans, the id (and id_conflict against the message id), via_bot_id, grouped_id, ttl_period, views,
+// reply_to.reply_to_msg_id, edit_date with its unit, the blob date (and date_conflict against the date column) and the
+// messageEmpty label.
 func readBlobRaw(raw map[string]any, v view, c tl.Constructor, msgID int64, msgIDOK bool, date int64, dateOK bool) {
 	if f, ok := v.Int("flags"); ok {
 		raw["blob_flags"] = f
@@ -472,6 +473,21 @@ func (r *msgRow) readSideBlobs(row parse.Row, c rowrun.Cols) {
 	}
 }
 
+// readReplyData states the replydata cell (spec 8.5): a blob is the reply copy (replyCopy); a cell of another class
+// or an unreadable one is listed in unknown_columns; a NULL states nothing.
+func (r *msgRow) readReplyData(row parse.Row, c rowrun.Cols, tab tl.Table, bud tl.Budget) {
+	col := c.At(colReplyData)
+	b, k := blobCell(row, col)
+	switch k {
+	case rowrun.CellValue:
+		replyCopy(b, r.raw, tab, bud)
+	case rowrun.CellOther:
+		r.unknown[r.unknownName(colReplyData)] = unknownTypeMismatch
+	case rowrun.CellUnknown:
+		r.unknown[r.unknownName(colReplyData)] = rowrun.StateOf(row, col).String()
+	}
+}
+
 // blobCell reads a BLOB cell: CellValue with the bytes, CellNull for NULL, CellOther for a value of another class
 // (a stored NaN included), CellUnknown for an unreadable cell.
 func blobCell(row parse.Row, col int) ([]byte, rowrun.CellKind) {
@@ -523,10 +539,10 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	var v view
 	state := ""
 	bud := budgetOf(m)
-	b, k := blobCell(row, c.At("data"))
+	b, k := blobCell(row, c.At(colData))
 	switch k {
 	case rowrun.CellValue:
-		v, state = decodeBlob(raw, "data", b, typeMessage, tab, bud)
+		v, state = decodeBlob(raw, colData, b, typeMessage, tab, bud)
 		defer func() {
 			if bud != nil {
 				bud.Free(v.r.Charged())
@@ -535,13 +551,17 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	case rowrun.CellNull:
 		raw["data_state"], state = stateNull, stateNull
 	case rowrun.CellOther:
-		r.unknown[r.unknownName("data")] = unknownTypeMismatch
+		r.unknown[r.unknownName(colData)] = unknownTypeMismatch
 	case rowrun.CellUnknown:
-		r.unknown[r.unknownName("data")] = rowrun.StateOf(row, c.At("data")).String()
+		r.unknown[r.unknownName(colData)] = rowrun.StateOf(row, c.At(colData)).String()
 	}
 	top, hasTop := topOf(v, tab, typeMessage, state)
+	var atts []message.Attachment
 	if hasTop {
 		readBlobRaw(raw, v, top, msgID, msgIDOK, date, dateOK)
+		fwdRaw(v, raw)
+		atts = mediaSummary(v, tab, top, raw)
+		readTrailer(b, v, top, raw)
 	}
 
 	out, outOK := r.cell("out")
@@ -552,6 +572,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 		Channel: channelTelegram, Direction: dir, Kind: kindOf(v, top, hasTop, state),
 		Status: statusOf(raw, dir, send, sendOK), Read: readOf(raw, dir, rs, rsOK),
 		ParticipantsUnknown: true, // Task 10 decides the participants from the dialog
+		Attachments:         atts,
 	}
 
 	uid, uidOK := r.cell("uid")
@@ -570,6 +591,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	raw["dialog_class"] = class
 
 	r.readSideBlobs(row, c)
+	r.readReplyData(row, c, tab, bud)
 
 	body := ""
 	if hasTop {

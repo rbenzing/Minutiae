@@ -21,7 +21,9 @@ const (
 	idPeerUser  = 0x59511722
 	// TL_message flag bits (constructors.tsv)
 	bitOut           = 1 << 1
+	bitFwdFrom       = 1 << 2
 	bitFromID        = 1 << 8
+	bitMedia         = 1 << 9
 	bitEditDate      = 1 << 15
 	bitFromScheduled = 1 << 18
 )
@@ -30,9 +32,14 @@ func le32(v uint32) []byte { return binary.LittleEndian.AppendUint32(nil, v) }
 
 func le64(v int64) []byte { return binary.LittleEndian.AppendUint64(nil, uint64(v)) }
 
-// tlStr is a TL string of fewer than 254 bytes: its length byte, the bytes and zero padding to a multiple of 4.
+// tlStr is a TL string: its length byte (or 0xFE and 3 length bytes from 254 bytes on), the bytes and zero padding
+// to a multiple of 4.
 func tlStr(s string) []byte {
-	b := append([]byte{byte(len(s))}, s...)
+	b := []byte{byte(len(s))}
+	if len(s) > 253 {
+		b = []byte{0xfe, byte(len(s)), byte(len(s) >> 8), byte(len(s) >> 16)}
+	}
+	b = append(b, s...)
 	for len(b)%4 != 0 {
 		b = append(b, 0)
 	}
@@ -41,14 +48,17 @@ func tlStr(s string) []byte {
 
 func peerUser(id int64) []byte { return append(le32(idPeerUser), le64(id)...) }
 
-// tlMessage is one TL_message: flags (out, from_scheduled and the gates of from_id and edit_date are set from the
-// fields), flags2 0, id, [from_id], peer_id, date, message, [edit_date].
+// tlMessage is one TL_message: flags (out, from_scheduled and the gates of from_id, fwd_from, media and edit_date are
+// set from the fields), flags2 0, id, [from_id], peer_id, [fwd_from], date, message, [media], [edit_date], then tail
+// (an app-local trailer, spec 6.5) as given. fwd and media are the encoded objects, ID first.
 type tlMessage struct {
 	flags          uint32
 	id             int32
 	from, peer     int64
 	date, editDate int32
 	text           string
+	fwd, media     []byte
+	tail           []byte
 }
 
 func (m tlMessage) bytes() []byte {
@@ -59,6 +69,12 @@ func (m tlMessage) bytes() []byte {
 	if m.editDate != 0 {
 		flags |= bitEditDate
 	}
+	if m.fwd != nil {
+		flags |= bitFwdFrom
+	}
+	if m.media != nil {
+		flags |= bitMedia
+	}
 	b := append(le32(idTLMessage), le32(flags)...)
 	b = append(b, le32(0)...)
 	b = append(b, le32(uint32(m.id))...)
@@ -66,12 +82,14 @@ func (m tlMessage) bytes() []byte {
 		b = append(b, peerUser(m.from)...)
 	}
 	b = append(b, peerUser(m.peer)...)
+	b = append(b, m.fwd...)
 	b = append(b, le32(uint32(m.date))...)
 	b = append(b, tlStr(m.text)...)
+	b = append(b, m.media...)
 	if m.editDate != 0 {
 		b = append(b, le32(uint32(m.editDate))...)
 	}
-	return b
+	return append(b, m.tail...)
 }
 
 // The DDL of the Go-built message tables: the A-HEAD messages_v2 columns (spec 6.3) and the v64 messages columns
@@ -92,7 +110,7 @@ type msgCells struct {
 	nullMid, nullUID           bool // store NULL in mid or uid
 	midCell, uidCell           any  // when set, the stored mid or uid cell (a REAL, a NaN, a TEXT)
 	read, send, date, out, ttl any
-	data                       any
+	data, replydata            any
 }
 
 // key is the stored mid and uid (NULL when asked).
@@ -118,8 +136,8 @@ func (c msgCells) v2Values() []any {
 	mid, uid := c.key()
 	return []any{
 		mid, uid, orDefault(c.read, int64(3)), orDefault(c.send, int64(0)), orDefault(c.date, int64(baseDate)),
-		c.data, orDefault(c.out, int64(0)), orDefault(c.ttl, int64(0)), int64(-1), nil, int64(0), int64(0), int64(0), nil,
-		int64(0), int64(0), int64(0), nil, nil, int64(0),
+		c.data, orDefault(c.out, int64(0)), orDefault(c.ttl, int64(0)), int64(-1), c.replydata, int64(0), int64(0), int64(0),
+		nil, int64(0), int64(0), int64(0), nil, nil, int64(0),
 	}
 }
 
@@ -128,7 +146,7 @@ func (c msgCells) v1Values() []any {
 	_, uid := c.key()
 	return []any{
 		nil, uid, orDefault(c.read, int64(3)), orDefault(c.send, int64(0)), orDefault(c.date, int64(baseDate)),
-		c.data, orDefault(c.out, int64(0)), orDefault(c.ttl, int64(0)), int64(-1), nil, int64(0), int64(0),
+		c.data, orDefault(c.out, int64(0)), orDefault(c.ttl, int64(0)), int64(-1), c.replydata, int64(0), int64(0),
 	}
 }
 
