@@ -43,10 +43,6 @@ MESSAGES_MAPPED = [("conversation_id", True), ("sender_id", True), ("received_ti
 PARTS_MAPPED = [("message_id", True), ("text", True), ("content_type", True), ("uri", True), ("width", False), ("height", False),
                 ("timestamp", False), ("conversation_id", False)]
 CONVERSATION_COLS = ("name", "sms_thread_id", "archive_status", "participant_count", "sort_timestamp", "last_read_timestamp", "IS_ENTERPRISE")
-PARTY_RAW = ("sender_state", "sender_is_self", "from_address_basis", "from_name_basis", "from_destinations", "from_full_name",
-             "from_contact_id", "from_address_state", "from_address_len", "from_address_sha256", "from_address_text", "members_basis",
-             "members_total", "members_cut", "members_state", "members_dangling", "members_without_address", "blocked_member_ids",
-             "self_state", "group_state", "direction_conflict")
 
 
 # ---------------------------------------------------------------- the facts (never a Python literal)
@@ -1123,11 +1119,8 @@ def recovered_record(table, d, env, basis, file):
         p["channel"], p["direction"], p["participants"] = lp["channel"], lp["direction"], lp["participants"]
         if lp.get("participants_unknown"):
             p["participants_unknown"] = True
-        for k in PARTY_RAW:
-            if k in lp["raw"]:
-                raw[k] = lp["raw"][k]
-        if "thread" in lp:
-            p["thread"] = lp["thread"]
+        if cst == "int":  # B1, spec 8.2: the part's own conversation only; nothing else of the live record is copied
+            p["thread"] = {"id": str(cid)}
         if p["participants"]:
             counterparty = p["participants"][0]["address"]
     if unknown:

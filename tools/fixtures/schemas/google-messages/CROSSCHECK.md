@@ -100,7 +100,7 @@ Each row of facts.tsv: `verified at` means a script confirmed the cited lines ho
 
 ## DDL cross-check
 
-The section below this paragraph is the unedited output of one command (exit status 0), run from the repository root with the
+The four sources are first fetched at the pinned commit of pin M into scratch (`<src>`, never committed), one file at a time, and each file's SHA-256 is verified against the hash listed below before the command runs. The section below this paragraph is the unedited output of one command (exit status 0), run from the repository root with the
 four fetched files DatabaseHelper.java, DatabaseUpgradeHelper.java, MessagingContentProvider.java and ParticipantData.java of
 pin M in `<src>` (the hashes below are theirs). The statement of `participants` uses a constant of a library that no fetched
 source defines, so its two rows are stated by the explicit `--manual` input, not by the evaluator:
