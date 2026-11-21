@@ -19,6 +19,9 @@ import (
 type store struct {
 	participants, conversations, members, messages, parts []mrow
 	plainIDs                                              bool
+	// ddlOf, when set, rewrites the CREATE TABLE statement of each table before it is created (Task 8: a messages _id
+	// without AUTOINCREMENT).
+	ddlOf func(table, ddl string) string
 }
 
 func participantDefaults() map[string]any {
@@ -49,6 +52,9 @@ func (s store) builder(t testing.TB) *sqlitetest.Builder {
 		ddl := v2DDL(t, name)
 		if plain {
 			ddl = strings.Replace(ddl, "_id INTEGER PRIMARY KEY AUTOINCREMENT", "_id INT", 1)
+		}
+		if s.ddlOf != nil {
+			ddl = s.ddlOf(name, ddl)
 		}
 		tb := b.CreateTable(name, ddl)
 		cols := columnsOf(ddl)

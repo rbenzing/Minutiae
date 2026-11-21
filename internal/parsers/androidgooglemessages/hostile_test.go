@@ -1,9 +1,13 @@
 package androidgooglemessages_test
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
@@ -136,14 +140,22 @@ func TestGoogleMessagesTruncatedDatabaseIsStated(t *testing.T) {
 		res := parseAt(t, remoteApp, dbOnly(db[:cut]))
 		switch {
 		case res.Err != nil:
-			if !parsertest.HostileOK(res.Err) && !strings.Contains(res.Err.Error(), "android.googlemessages") {
-				t.Errorf("cut at %d: untyped error %v", cut, res.Err)
+			// the cut itself is the error: the schema could not be read whole, or the file is corrupt (carry C2)
+			if !errors.Is(res.Err, androidgooglemessages.ErrSchemaIncomplete) && !errors.Is(res.Err, sqlitedb.ErrCorrupt) {
+				t.Errorf("cut at %d: error %v is neither ErrSchemaIncomplete nor ErrCorrupt", cut, res.Err)
 			}
 			stated++
 		case len(res.Warnings) > 0:
 			stated++
 			if len(res.Records) == len(full.Records) {
 				continue
+			}
+			// fewer records: a warning must state the cut (a page, a truncation, an incomplete read), not any warning
+			if !slices.ContainsFunc(res.Warnings, func(w parsertest.Warning) bool {
+				r := strings.ToLower(w.Reason)
+				return strings.Contains(r, "page") || strings.Contains(r, "truncat") || strings.Contains(r, "incomplete")
+			}) {
+				t.Errorf("cut at %d: %d records (of %d) and no warning states the cut: %v", cut, len(res.Records), len(full.Records), res.Warnings)
 			}
 		default:
 			if len(res.Records) != len(full.Records) {

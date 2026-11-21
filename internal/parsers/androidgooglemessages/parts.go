@@ -28,14 +28,20 @@ func partsSpecs() []parse.ColumnSpec {
 
 // partsMapping accounts for every parts row of the live pass (spec 6.4, 7 R11 and R12, B6): a part whose message is in the
 // decided id set is joined into that message's record (counted), a part of no decided message is a record of its own (an
-// orphan) while the set is complete, and a row warning while it is not. A nil e is the typed pass: Task 8 maps the recovered
-// parts, until then a recovered part is a counted row warning.
+// orphan) while the set is complete, and a row warning while it is not. A nil e is the typed pass (spec 8.2, 8.3): every
+// recovered part is a record of its own (mapRecoveredPart), joined to a live message only by structure; the join basis
+// (spec 8.3 condition 1) is decided once per run, by the first recovered part, and held in this closure (4I5-P7).
 func partsMapping(e *env) parse.TableMapping {
+	var basis *joinBasis
 	return parse.TableMapping{
 		Table: tableParts, Columns: partsSpecs(),
 		Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			if e == nil {
-				return nil, rowrun.Unmappable("a recovered part is not mapped by this version")
+				if basis == nil {
+					b := joinBasisOf(m)
+					basis = &b
+				}
+				return mapRecoveredPart(m, row, basis)
 			}
 			return mapPart(m, row, e)
 		},
@@ -184,9 +190,29 @@ func bodyOf(m parse.MapContext, msgID int64, raw, unknown map[string]any, msg *m
 // orphanPart is the record of a part whose message is not among the decided ones while the set is complete (R11, spec 8.2
 // shape): its own columns only, channel and direction unknown, no participants, the thread by the part's conversation_id.
 func orphanPart(m parse.MapContext, row parse.Row, c rowrun.Cols, mid int64, mk rowrun.CellKind) (records.Record, error) {
-	place, err := rowrun.Where(m, row)
+	p, err := ownPart(m, row, c, mid, mk)
 	if err != nil {
 		return records.Record{}, err
+	}
+	p.raw["part_state"] = "orphan"
+	return p.finish(row, ""), nil
+}
+
+// partRecord is a part that is a record of its own while it is being built: the record, its message and their raw and
+// unknown_columns maps.
+type partRecord struct {
+	rec          records.Record
+	msg          message.Message
+	raw, unknown map[string]any
+}
+
+// ownPart reads a part that is a record of its own (an orphan, a recovered part; spec 8.2): its place, the app, part_rowid,
+// part_message_id, timestamp, conversation_id and the thread by it, and its Body or attachment. The channel and the direction
+// are unknown and the participants unknown until the caller states otherwise.
+func ownPart(m parse.MapContext, row parse.Row, c rowrun.Cols, mid int64, mk rowrun.CellKind) (partRecord, error) {
+	place, err := rowrun.Where(m, row)
+	if err != nil {
+		return partRecord{}, err
 	}
 	raw := map[string]any{}
 	unknown := map[string]any{}
@@ -195,7 +221,6 @@ func orphanPart(m parse.MapContext, row parse.Row, c rowrun.Cols, mid int64, mk 
 	if id, ok := row.Rowid(); ok {
 		raw["part_rowid"] = id
 	}
-	raw["part_state"] = "orphan"
 	switch mk {
 	case rowrun.CellValue:
 		raw["part_message_id"] = mid
@@ -239,13 +264,18 @@ func orphanPart(m parse.MapContext, row parse.Row, c rowrun.Cols, mid int64, mk 
 	case !p.HasText && !p.HasURI:
 		raw["parts_empty"] = int64(1)
 	}
-	if len(unknown) > 0 {
-		raw["unknown_columns"] = unknown
+	return partRecord{rec: rec, msg: msg, raw: raw, unknown: unknown}, nil
+}
+
+// finish states the unread cells and the decoder's flags of the row and makes the summary and the payload.
+func (p *partRecord) finish(row parse.Row, counterparty string) records.Record {
+	if len(p.unknown) > 0 {
+		p.raw["unknown_columns"] = p.unknown
 	}
 	if f := rowrun.DamageFlags(row); f != nil {
-		raw["row_flags"] = f
+		p.raw["row_flags"] = f
 	}
-	rec.Summary = message.Summary(channelUnknown, message.DirUnknown, "", rec.Body)
-	rec.Payload = msg.Payload()
-	return rec, nil
+	p.rec.Summary = message.Summary(p.msg.Channel, p.msg.Direction, counterparty, p.rec.Body)
+	p.rec.Payload = p.msg.Payload()
+	return p.rec
 }

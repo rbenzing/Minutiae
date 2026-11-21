@@ -47,3 +47,6 @@ func (c countingCtx) Get(table string, rowid int64) (parse.Row, bool, error) {
 	c.on(c.step, "get", table)
 	return c.MapContext.Get(table, rowid)
 }
+
+// AutoincrementID is autoincrementID (spec 8.3 condition 1).
+func AutoincrementID(createSQL string) bool { return autoincrementID(createSQL) }

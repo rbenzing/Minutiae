@@ -10,7 +10,8 @@ import (
 )
 
 // env is the per-job state of the mappings (4I5-P6): the join guard, the decided message ids, the member cache and the
-// counts. A nil *env is the typed pass (Mappings), which joins nothing.
+// counts. A nil *env is the typed pass (Mappings): a recovered message joins nothing, a recovered part only by structure
+// (spec 8).
 type env struct {
 	Guard   *joinGuard
 	IDs     *idSet
@@ -71,8 +72,9 @@ var storedInts = []string{"seen", "sms_priority", "sms_message_size", "raw_statu
 // mapMessage is the mapping of one messages row (spec 6.1, 6.2, 6.6 to 6.8): the channel, the direction and status of the
 // cited codes, the read state, the times, the stored scalars and the telephony link, and (a live pass, e != nil) the
 // sender, the self row, the direction cross-check, the conversation, its members, and the body and attachments of its parts
-// (the subject is stated in both passes). The typed pass (e == nil) joins nothing: participants_unknown and the thread by
-// its id alone.
+// (the subject is stated in both passes). The typed pass (e == nil, spec 8.2) joins nothing: its sender_id, self_id and
+// conversation_id as stored, body_state, sender_state, self_row_state, conversation_state and members_state
+// not-joined-recovered, participants_unknown and the thread by its id alone.
 func mapMessage(e *env, m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
@@ -87,9 +89,19 @@ func mapMessage(e *env, m parse.MapContext, row parse.Row) ([]records.Record, er
 	msg.Channel = channelOf(row, c.At("message_protocol"), raw, unknown)
 	msg.Direction, msg.Status = statusOf(row, c.At("message_status"), raw, unknown)
 	counterparty := ""
-	if e == nil { // the typed pass joins nothing (4I5-P6; Task 8 states it)
+	if e == nil { // a recovered row joins nothing (spec 8.2, 4I3 B2): its own ids as stored, every join not-joined-recovered
+		for _, col := range []string{"sender_id", "self_id", "conversation_id"} {
+			v, k := intCellOf(row, c.At(col))
+			rowrun.Flag(unknown, row, col, c.At(col), k)
+			if k == rowrun.CellValue {
+				raw[col] = v
+			}
+		}
 		if cid, k := intCellOf(row, c.At("conversation_id")); k == rowrun.CellValue {
 			msg.Thread = &message.Thread{ID: strconv.FormatInt(cid, 10)}
+		}
+		for _, key := range []string{"body_state", "sender_state", "self_row_state", "conversation_state", "members_state"} {
+			raw[key] = stateNotJoinedRecovered
 		}
 	} else {
 		pr, err := partiesOf(m, e, row, c, raw, unknown, msg.Direction)
@@ -145,7 +157,7 @@ func mapMessage(e *env, m parse.MapContext, row parse.Row) ([]records.Record, er
 	} else {
 		rowrun.Flag(unknown, row, "mms_subject", c.At("mms_subject"), sk)
 	}
-	if e != nil { // the typed pass joins nothing, so no body either (Task 8 states it)
+	if e != nil { // a recovered row joins no part: its body_state is not-joined-recovered
 		id, ok := row.Rowid()
 		if !ok {
 			raw["body_state"] = stateUndecided

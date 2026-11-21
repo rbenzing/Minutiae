@@ -121,8 +121,8 @@ func TestAndroidGoogleMessagesMetaIsValid(t *testing.T) {
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformAndroid {
 		t.Errorf("platforms %v", m.Platforms)
 	}
-	if len(m.Claims) != 0 {
-		t.Errorf("claims %v before Task 8", m.Claims)
+	if len(m.Claims) != 2 || m.Claims[0].Table != "messages" || m.Claims[1].Table != "parts" {
+		t.Errorf("claims %v, want messages and parts (spec 8.1)", m.Claims)
 	}
 	if len(m.Inputs) != 3 || m.Inputs[0].Role != "db" || !m.Inputs[0].Required || m.Inputs[1].Role != "wal" || m.Inputs[2].Role != "journal" {
 		t.Errorf("inputs %+v", m.Inputs)

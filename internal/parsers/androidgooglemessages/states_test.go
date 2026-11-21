@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages"
+	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
@@ -353,6 +355,54 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 			t.Errorf("%s: app %v basis %v, want %v", remote, raw["app"], raw["app_basis"], w)
 		}
 	}
+	// the typed pass (Task 8; spec 8.2, 8.3, B1, C5, C5a): the five join states of a recovered message, and the join and its
+	// reasons of a recovered part, each pinned literally
+	p := androidgooglemessages.Parser{}
+	m50 := mapOn(t, p, fixtureFiles(t, "gm-deleted"), recoveredRow(t, "gm-deleted", "messages", 50))
+	type typedCase struct {
+		name string
+		r    records.Record
+		raw  map[string]any
+	}
+	typed := []typedCase{
+		{"recovered M50", m50, map[string]any{
+			"body_state": "not-joined-recovered", "sender_state": "not-joined-recovered", "self_row_state": "not-joined-recovered",
+			"conversation_state": "not-joined-recovered", "members_state": "not-joined-recovered", "part_join": nil, "join_undecided": nil,
+		}},
+	}
+	partOf := func(name string, res *typedEmitter, id int64) records.Record {
+		idx := recoveredParts(res)[id]
+		if len(idx) == 0 {
+			t.Fatalf("%s: no typed record of recovered part %d", name, id)
+		}
+		return res.recs[idx[0]]
+	}
+	deleted := typedRun(t, p, fixtureFiles(t, "gm-deleted"))
+	p52 := recoveredRow(t, "gm-deleted", "parts", 52)
+	notJoined := func(reason string) map[string]any {
+		return map[string]any{"part_join": "not-joined", "part_join_reason": reason, "joined_message_rowid": nil, "part_state": nil}
+	}
+	typed = append(typed,
+		typedCase{"part 52", partOf("gm-deleted", deleted, 52), map[string]any{"part_join": "joined", "joined_message_rowid": int64(2), "part_join_reason": nil, "part_rowid": int64(52), "part_message_id": int64(2), "part_state": nil}},
+		typedCase{"part 50", partOf("gm-deleted", deleted, 50), notJoined("no-live-message")},
+		typedCase{"part 60", mapOn(t, p, fixtureFiles(t, "gm-rebuilt"), rebuiltPart(t, 60)), notJoined("conversation-differs")},
+		typedCase{"part 61", mapOn(t, p, fixtureFiles(t, "gm-rebuilt"), rebuiltPart(t, 61)), notJoined("timestamp-differs")},
+		typedCase{"no AUTOINCREMENT", mapOn(t, p, joinStore(t, false, true), p52), notJoined("no-autoincrement")},
+		typedCase{"no sqlite_sequence row", mapOn(t, p, joinStore(t, true, false), p52), notJoined("no-sqlite-sequence")},
+		typedCase{"undecidable schema", mapOn(t, undecidedSchema{}, fixtureFiles(t, "gm-deleted"), p52), notJoined("undecided")},
+	)
+	for _, c := range typed {
+		raw := rawOf(c.r)
+		for k, w := range c.raw {
+			g, has := raw[k]
+			switch {
+			case w == nil && has:
+				t.Errorf("%s: raw.%s = %#v, want absent", c.name, k, g)
+			case w != nil && !reflect.DeepEqual(g, w):
+				t.Errorf("%s: raw.%s = %#v, want %#v", c.name, k, g, w)
+			}
+		}
+	}
 	// the B8 row of docs/invariants/parsers.md lists every key and state word this test pins
 	t.Run("the B8 row lists them", func(t *testing.T) {
 		b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "invariants", "parsers.md"))
@@ -389,6 +439,10 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 			"parts_empty", "attachment_parts", "part_id", "width", "height", "body_state", "no-parts", "conversation_participants.participant_id",
 			"part_rowid", "part_state", "orphan", "part_message_id", "part_message_id_state", "timestamp", "timestamp_status", "body", "message_id",
 			"attachments.mime", "attachments.source_ref", "parts.text", "parts.uri", "parts.content_type", "parts.width", "parts.height", "mms_subject",
+			// Task 8: the typed pass
+			"not-joined-recovered", "body_state", "sender_state", "self_row_state", "conversation_state", "members_state", "part_join", "joined",
+			"not-joined", "part_join_reason", "joined_message_rowid", "no-autoincrement", "no-sqlite-sequence", "no-live-message",
+			"conversation-differs", "timestamp-differs", "undecided", "part_join_basis_undecided",
 		}
 		for _, w := range words {
 			if !strings.Contains(row, "`"+w+"`") {

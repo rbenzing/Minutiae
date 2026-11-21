@@ -315,13 +315,7 @@ func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 		in := fakeInput()
 		mp := mt.build(in)
 		recs, err := mp.Map(mapCtx{in: in, table: mp.Table, cols: mp.Columns}, fakeRow{table: mp.Table, cells: goodCells(mp)})
-		var re *rowrun.RowError
-		switch {
-		case !mt.live && mp.Table == tableParts:
-			if !errors.As(err, &re) {
-				t.Fatalf("%s: a recovered part must be a row warning in this version: %v", mt.name, err)
-			}
-		case err != nil || len(recs) != 1:
+		if err != nil || len(recs) != 1 { // a recovered part is a record of its own (spec 8.2), joined or not
 			t.Fatalf("%s: a good row did not map to its record: %v %+v", mt.name, err, recs)
 		}
 		check := func(cells []cell) {

@@ -46,8 +46,8 @@ var _ parse.RowMapper = Parser{}
 
 // Meta describes the parser. The two primary globs end in the literal bugle_db, so a -wal, -journal or -shm file is
 // never a primary (4I-R21); it reaches the job only as the companion of its primary. Only the two packages are
-// discovered by path: another package's bugle_db is reached through --scan or --artifact, by signature. There are no
-// claims until the typed pass (Task 8).
+// discovered by path: another package's bugle_db is reached through --scan or --artifact, by signature. The claims are
+// ClaimableTables (spec 8.1): the typed recovery pass maps the recovered messages and parts rows.
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android Google Messages and AOSP Messaging (bugle_db)",
@@ -61,6 +61,7 @@ func (Parser) Meta() parse.Meta {
 			{Role: "wal", Companions: []string{"-wal"}},
 			{Role: "journal", Companions: []string{"-journal"}},
 		},
+		Claims: claimsOf(ClaimableTables()),
 	}
 }
 

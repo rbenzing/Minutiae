@@ -1135,11 +1135,17 @@ def recovered_record(table, d, env, basis, file):
         reason = "no-autoincrement"
     elif not seq:
         reason = "no-sqlite-sequence"
+    elif not (mst == "int" and cst == "int" and tst == "int"):
+        reason = "undecided"  # T8b: a key cell of the part that is not an integer (NULL included) decides nothing
     elif live is None:
         reason = "no-live-message"
-    elif not (cst == "int" and live.get("conversation_id") == cid):
+    elif not is_int(live.get("conversation_id")):
+        reason = "undecided"  # T8b: the live key cell is not an integer
+    elif live.get("conversation_id") != cid:
         reason = "conversation-differs"
-    elif not (tst == "int" and live.get("received_timestamp") == ts):
+    elif not is_int(live.get("received_timestamp")):
+        reason = "undecided"
+    elif live.get("received_timestamp") != ts:
         reason = "timestamp-differs"
     counterparty = ""
     if reason:
@@ -1166,6 +1172,71 @@ def recovered_record(table, d, env, basis, file):
             "summary": message_summary(p["channel"], p["direction"], counterparty, bt or ""), "body": bt, "payload": p}
 
 
+def declared_affinity(decl):
+    """The affinity of a declared column type (the SQLite rules, in their order)."""
+    t = (decl or "").upper()
+    if "INT" in t:
+        return "integer"
+    if "CHAR" in t or "CLOB" in t or "TEXT" in t:
+        return "text"
+    if t == "" or "BLOB" in t:
+        return "blob"
+    if "REAL" in t or "FLOA" in t or "DOUB" in t:
+        return "real"
+    return "numeric"
+
+
+def fit_items(files):
+    """The live rowid tables as the host's strict fit sees them (restated from the rule, sharing no code with it): per
+    table its columns as (affinity, not null, has a default, is the rowid alias), read from a COPY of the files."""
+    work = tempfile.mkdtemp(prefix="gm-fit-")
+    try:
+        path = os.path.join(work, "v.db")
+        for role, suffix in (("db", ""), ("wal", "-wal"), ("journal", "-journal")):
+            if role in files:
+                with open(path + suffix, "wb") as f:
+                    f.write(files[role])
+        con = sqlite3.connect(path)
+        names = [r[0] for r in con.execute("select name from sqlite_master where type = 'table' and sql not like 'create virtual%' collate nocase")]
+        items = {}
+        for n in names:
+            info = con.execute("pragma table_info(\"%s\")" % n.replace('"', '""')).fetchall()
+            pks = [c for c in info if c[5] > 0]
+            alias = pks[0][1] if len(pks) == 1 and pks[0][2].upper() == "INTEGER" else None
+            items[n] = [(declared_affinity(c[2]), bool(c[3]), c[4] is not None, c[1] == alias) for c in info]
+        con.close()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return items
+
+
+def fits_strictly(cols, vals):
+    """The host's strict fit of a record to a table: at most its columns and at least up to its last column that ALTER
+    TABLE ADD COLUMN cannot explain (NOT NULL without a default, or the rowid alias); a TEXT column holds only NULL, text
+    or blob; a NOT NULL column no NULL; the rowid alias only NULL."""
+    n = len(vals)
+    if n < 1 or n > len(cols):
+        return False
+    least = 0
+    for i, (_, notnull, dflt, alias) in enumerate(cols):
+        if alias or (notnull and not dflt):
+            least = i + 1
+    if n < least:
+        return False
+    for (aff, notnull, _, alias), v in zip(cols, vals):
+        if aff == "text" and not (v is None or isinstance(v, (str, bytes))):
+            return False
+        if (notnull and v is None) or (alias and v is not None):
+            return False
+    return True
+
+
+def fit_names(items, vals):
+    """The one table the strict fit names for a record, or None when none or several fit (an ambiguous fit names nothing)."""
+    names = [n for n, cols in items.items() if fits_strictly(cols, vals)]
+    return names[0] if len(names) == 1 else None
+
+
 def recover_expect(variant, files):
     """The <variant>.recover.expect.json of a variant that has a scenario: every recovered row of a claimed table mapped
     by spec 8 against the LIVE view of the committed files."""
@@ -1173,6 +1244,13 @@ def recover_expect(variant, files):
     view = C.engine_view(files, list(READ_TABLES))
     env = Env(view)
     basis = join_basis(files)
+    items = fit_items(files)
+    wants = []
+    for w in scen.wants:  # T8a: a row on a page no live object owns is named by the host's fit alone, or by nobody
+        if w.get("basis") == "fit" and fit_names(items, w["vals"]) != w["label"]:
+            w = dict(w, basis="none")  # an ambiguous fit names nothing: a generic row, never typed
+        wants.append(w)
+    scen.wants = wants
 
     def expect_fn(table, d, e, file):
         return recovered_record(table, d, env, basis, file)
@@ -1180,6 +1258,8 @@ def recover_expect(variant, files):
     obj = C.recover_oracle(variant, files, scen, lambda f: env, expect_fn)
     found = {(x["table"], x["rowid"]) for x in obj["digests"]}
     for w in scen.wants:
+        if w.get("basis") == "none":
+            continue
         key = (w.get("label") or w["table"], w["rowid"])
         if key not in found:
             raise SystemExit("%s: the wanted history version %s rowid %d is in no page image" % (variant, w["table"], w["rowid"]))
