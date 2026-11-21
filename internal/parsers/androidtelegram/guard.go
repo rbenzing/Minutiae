@@ -168,6 +168,9 @@ const (
 	reasonBlobUndecoded   = "telegram-blob-undecoded"
 	reasonNoName          = "users row has no name, phone or username" // spec 8.9, 4I R2 shape
 	maxNoNameWarnings     = 1000                                       // one warning per row up to here, then one summary (B9)
+	// maxDistinctKeys bounds the distinct constructor ids and secret-chat keys the counting emitter tracks; both sets grow with
+	// the data and sit outside MemBudget. Overflow folds into other (constructors_seen) or a stated lower bound (secret_chats).
+	maxDistinctKeys = 4096
 )
 
 // countedTables and blobColumns are the tables and TL columns the blob counts name, in the order the note
@@ -188,6 +191,10 @@ type countingEmitter struct {
 	secret map[int64]struct{}          // the distinct enc_chats keys of the secret-chat message records (M4)
 	undec  int64                       // message records whose dialog is undecided (an unreadable uid)
 
+	maxKeys      int   // the cap on len(seen) and len(secret) (maxDistinctKeys; a test lowers it)
+	seenOverflow int64 // message records whose constructor was not tracked: the cap was reached
+	secretCapped bool  // a secret chat key was not tracked: the cap was reached
+
 	noName     []string // the locators of the first users records without a name, a phone or a username
 	noNameRows int64    // all such users records
 	selfs      int64    // users records of the account owner (raw.self)
@@ -196,7 +203,7 @@ type countingEmitter struct {
 func newCountingEmitter(out parse.Emitter) *countingEmitter {
 	return &countingEmitter{
 		Emitter: out, states: map[string]map[string]int64{}, seen: map[string]int64{}, joins: map[string]int64{},
-		secret: map[int64]struct{}{},
+		secret: map[int64]struct{}{}, maxKeys: maxDistinctKeys,
 	}
 }
 
@@ -230,11 +237,19 @@ func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
 	}
 	if table == tableMessages || table == tableMessagesV2 {
 		if id, ok := raw["data_constructor"].(string); ok {
-			c.seen[id]++
+			if _, tracked := c.seen[id]; tracked || len(c.seen) < c.maxKeys {
+				c.seen[id]++
+			} else {
+				c.seenOverflow++
+			}
 		}
 		// one chat is one key in both generations (pre-84 77<<32 and 1<<62|77 are chat 77)
 		if key, ok := raw["enc_chat_id"].(int64); ok && raw["secret_chat"] == true {
-			c.secret[key] = struct{}{}
+			if _, tracked := c.secret[key]; tracked || len(c.secret) < c.maxKeys {
+				c.secret[key] = struct{}{}
+			} else {
+				c.secretCapped = true
+			}
 		}
 		if raw["thread_state"] == stateUndecided {
 			c.undec++

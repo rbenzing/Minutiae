@@ -61,36 +61,42 @@ func foldTable(s string) string {
 
 // checkClaimUniqueness requires every table to be claimed once per platform across the registry, compared
 // case-insensitively (sms and SMS are one table): two claims on one table of one platform would make the owner of its
-// rows ambiguous. The rule is per platform (4I-R23): an artifact's logical path has one scheme, ClaimedTables considers
-// only the jobs whose primary glob matched it, and a primary glob lies inside Meta.Platforms, so parsers of different
-// platforms never claim on one artifact. A parser declaring both platforms counts on both. As amended by 4I4-T10 the
-// rule is also per possible artifact: two claims on one table of one platform do not collide when their files can never
-// be one artifact, decided conservatively from the final segments of the globs of the claims' roles (claimsDisjoint);
-// equal names, a pattern that can match the other's name, two patterns or a role without globs still collide. checkArtifactClaims backs this up per artifact, unchanged.
+// rows ambiguous. The rule is per platform (4I-R23): an artifact's logical path has one scheme, ClaimedTables
+// considers only the jobs whose primary glob matched it, and a primary glob lies inside Meta.Platforms, so parsers of
+// different platforms never claim on one artifact. A parser declaring both platforms counts on both. As amended by
+// 4I4-T10 the rule is also per possible artifact: two claims on one table of one platform do not collide when their
+// files can never be one artifact, decided conservatively from the final segments of the globs of the claims' roles
+// (claimsDisjoint); equal names, a pattern that can match the other's name, two patterns or a role without globs
+// still collide. checkArtifactClaims backs this up per artifact, unchanged.
 func checkClaimUniqueness(regs []Registered) error {
 	type key struct{ platform, table string }
-	owner := map[key][]Registered{}
+	type claimant struct {
+		reg  Registered
+		role string // the role of that parser's own claim
+	}
+	owner := map[key][]claimant{}
 	for _, r := range regs {
 		for _, c := range r.meta.Claims {
 			for _, platform := range r.meta.Platforms {
 				k := key{platform, foldTable(c.Table)}
 				for _, other := range owner[k] {
-					if !claimsDisjoint(other, r, c.Role) {
-						return fmt.Errorf("artparse: parsers %q and %q both claim table %q on platform %q", other.meta.Name, r.meta.Name, c.Table, platform)
+					if !claimsDisjoint(other.reg, other.role, r, c.Role) {
+						return fmt.Errorf("artparse: parsers %q and %q both claim table %q on platform %q", other.reg.meta.Name, r.meta.Name, c.Table, platform)
 					}
 				}
-				owner[k] = append(owner[k], r)
+				owner[k] = append(owner[k], claimant{r, c.Role})
 			}
 		}
 	}
 	return nil
 }
 
-// claimsDisjoint says the files that parsers a and b read in the role of a claim (b's) can never be one artifact: for
-// every pair of globs of that role (one from each parser) the final path segments are provably different under
-// foldTable (segmentsDisjoint). A role either parser lacks, or one without globs, is not provably disjoint (4I4-T10).
-func claimsDisjoint(a, b Registered, role string) bool {
-	ga, gb := roleGlobs(a.meta, role), roleGlobs(b.meta, role)
+// claimsDisjoint says the files parser a reads in the role of its claim (roleA) and the files parser b reads in the role
+// of its claim (roleB) can never be one artifact: for every pair of globs (one from each side) the final path segments
+// are provably different under foldTable (segmentsDisjoint). A role either parser lacks, or one without globs, is not
+// provably disjoint (4I4-T10).
+func claimsDisjoint(a Registered, roleA string, b Registered, roleB string) bool {
+	ga, gb := roleGlobs(a.meta, roleA), roleGlobs(b.meta, roleB)
 	if len(ga) == 0 || len(gb) == 0 {
 		return false
 	}
@@ -127,6 +133,8 @@ func finalSegment(glob string) string {
 // segmentsDisjoint is true only when no file name can match both final segments. Two literals (no glob
 // metacharacter) are disjoint when they differ under foldTable; a literal and a pattern when the pattern does not match
 // the literal (folded). Two patterns, an empty segment and any brace or escape syntax are not decided: they collide.
+// path.Match is not the project's glob (parse/glob.go treats only '*' as special) and over-approximates it, which is sound
+// for literals without any of "*?[]\": such a name is matched by a pattern under both readings alike.
 func segmentsDisjoint(x, y string) bool {
 	const meta = "*?[]{}\\"
 	if x == "" || y == "" || strings.ContainsAny(x, "{}\\") || strings.ContainsAny(y, "{}\\") {

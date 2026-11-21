@@ -290,12 +290,16 @@ func TestRealDataParsers(t *testing.T) {
 			t.Logf("%d records, %d warnings; %d locators re-resolved, %d of another form not re-resolved", len(res.Records), len(res.Warnings), resolved, unresolvable)
 
 			// For each claimed table, records plus counted row warnings equal the independent engine's count.
-			// Only a warning that names a row counts; a table-level summary (no rowid) is not a row.
+			// Only a warning that names a row with no record at that locator counts; a table-level summary (no rowid) is not a row.
+			recLocs := make([]string, 0, len(res.Records))
+			for _, r := range res.Records {
+				recLocs = append(recLocs, r.Locator)
+			}
 			locs := make([]string, 0, len(res.Warnings))
 			for _, w := range res.Warnings {
 				locs = append(locs, w.Locator)
 			}
-			perTableWarnings := rowWarningCounts(locs)
+			perTableWarnings := rowWarningCounts(locs, recLocs)
 			var claimed []string
 			for _, c := range meta.Claims {
 				if _, err := db.Table(context.Background(), c.Table, nil, nil); err != nil {

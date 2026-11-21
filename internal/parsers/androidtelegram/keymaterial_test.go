@@ -208,7 +208,7 @@ func outputTexts(t *testing.T, res parsertest.Result) []string {
 }
 
 // keyBearing are the variants that hold key material by design (I2): telegram-v181 (the CORE enc_chats rows and secret
-// documents), telegram-hostile (enc_chats rows and secret documents cut inside key and inside iv), telegram-layers
+// documents), telegram-hostile (enc_chats rows and secret documents whose key and IV bytes lie in the cell (the decode stops at media.document.thumbs, T5)), telegram-layers
 // (one row per constructor: a secret-kind field filled with the 4i4-layers chain) and telegram-deleted (live enc_chats
 // rows and a deleted secret message with a secret document in its WAL, plan 4I4 Task 14 C1). Every other variant holds
 // none by design, and the test fails when a variant's files say otherwise either way.

@@ -139,3 +139,11 @@ func WithPlatforms(r Registered, p ...string) Registered {
 
 // CheckArtifactClaims is the per-artifact duplicate check of ClaimedTables.
 func CheckArtifactClaims(out []Claimed) error { return checkArtifactClaims("A1", out) }
+
+// ClaimsDisjoint exposes claimsDisjoint to the external test package.
+func ClaimsDisjoint(a Registered, roleA string, b Registered, roleB string) bool {
+	return claimsDisjoint(a, roleA, b, roleB)
+}
+
+// SegmentsDisjoint exposes segmentsDisjoint to the external test package.
+func SegmentsDisjoint(x, y string) bool { return segmentsDisjoint(x, y) }

@@ -507,7 +507,7 @@ func TestClaimUniquenessAllowsDisjointFiles(t *testing.T) {
 	c := newCase(t)
 	opts := artparse.Options{Limits: parse.DefaultLimits()}
 	a := globClaimer(t, "wa", "messages", "android:**/com.whatsapp/databases/msgstore.db", "android:**/WhatsApp/Databases/msgstore*.db", "android:**/WhatsApp/Databases/msgstore*.db.crypt*")
-	b := globClaimer(t, "tg", "messages", "android:**/org.telegram.messenger/files/cache4.db", "android:**/org.telegram.messenger/files/account[0-9]/cache4.db")
+	b := globClaimer(t, "tg", "messages", "android:**/org.telegram.messenger/files/cache4.db", "android:**/org.telegram.messenger/files/account*/cache4.db")
 	if _, err := artparse.New(c, []artparse.Registered{a, b}, opts); err != nil {
 		t.Fatalf("disjoint literal file names refused: %v", err)
 	}
@@ -522,7 +522,9 @@ func TestClaimUniquenessRefusesFilesThatMayMeet(t *testing.T) {
 		"wildcard":     {"android:**/x/*.db", "android:**/y/cache4.db"},
 		"equal":        {"android:**/x/cache4.db", "android:**/y/cache4.db"},
 		"equal-fold":   {"android:**/x/Cache4.db", "android:**/y/cache4.db"},
-		"class":        {"android:**/x/cache[0-9].db", "android:**/y/cache4.db"},
+		"star-literal": {"android:**/x/cache*.db", "android:**/y/cache4.db"},
+		"brace":        {"android:**/x/{a,b}.db", "android:**/y/c.db"},
+		"double-star":  {"android:x/**", "android:y/cache4.db"},
 		"two-patterns": {"android:**/x/msgstore*.db", "android:**/y/cache*.db"},
 		"second-pair":  {"android:**/x/a.db", "android:**/x/b.db"},
 	} {
@@ -565,5 +567,53 @@ func TestClaimedTablesOfAnUnnamedBackupFileAreOfItsPlatformOnly(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Parser != "ios-sms-claim" || got[0].Table != "message" || !got[0].Unparsed {
 		t.Errorf("claims = %+v, want the one Unparsed iOS claim of message and none of the Android parser", got)
+	}
+}
+
+// extraRoleMapper adds a second input role (with the given globs) to a globClaimMapper.
+type extraRoleMapper struct {
+	globClaimMapper
+	role  string
+	globs []string
+}
+
+func (p *extraRoleMapper) Meta() parse.Meta {
+	m := p.globClaimMapper.Meta()
+	m.Inputs = append(m.Inputs, parse.InputSpec{Role: p.role, Globs: p.globs})
+	return m
+}
+
+// 4I4 final review M1: each side of a claim comparison is judged by its own claim's role. A parser whose claim role has
+// other globs than the other parser's must not be compared with the other parser's role, nor the reverse. validateClaims
+// forces "db" today, so claimsDisjoint is driven directly with two different roles.
+func TestClaimsDisjointUsesEachSidesOwnRole(t *testing.T) {
+	a := regFake(t, &extraRoleMapper{globClaimMapper{claimMapper{claimParser{name: "pa", status: parse.Applicable, claims: []string{"t"}}, []string{"t"}}, []string{"android:x/a.db"}}, "alt", []string{"./b.db"}}, "pa")
+	b := globClaimer(t, "pb", "t", "android:y/b.db")
+	if !artparse.ClaimsDisjoint(a, "db", b, "db") {
+		t.Error("a.db vs b.db in the db roles: want disjoint")
+	}
+	if artparse.ClaimsDisjoint(a, "alt", b, "db") {
+		t.Error("a's alt role (b.db) vs b's db role (b.db): the same name, want not disjoint")
+	}
+	if artparse.ClaimsDisjoint(b, "db", a, "alt") {
+		t.Error("the reverse pairing: want not disjoint")
+	}
+}
+
+// 4I4 final review D5: an empty final segment (meta validation rejects such a glob, so it is driven directly) is
+// never decided disjoint.
+func TestSegmentsDisjointRefusesAnEmptySegment(t *testing.T) {
+	if artparse.SegmentsDisjoint("", "a.db") || artparse.SegmentsDisjoint("a.db", "") {
+		t.Error("an empty final segment decided disjoint")
+	}
+}
+
+// 4I4 final review D5: a backslash or a brace segment (meta validation rejects such globs; driven directly) and a "**"
+// final element are never decided disjoint from a literal.
+func TestSegmentsDisjointRefusesEscapeAndBraceSyntax(t *testing.T) {
+	for _, x := range []string{`a\b.db`, "{a,b}.db", "**"} {
+		if artparse.SegmentsDisjoint(x, "c.db") || artparse.SegmentsDisjoint("c.db", x) {
+			t.Errorf("segment %q decided disjoint from c.db", x)
+		}
 	}
 }

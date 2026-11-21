@@ -154,13 +154,21 @@ func noteListSep(names []string, limit int, sep string) string {
 // at most 64, then "other:<n>", cut at 1,000 bytes, F11) secret_chats (secretChatsNote) and self_users (the users records with the self flag, spec 8.10). They follow rowrun.Run: what they count exists only then.
 // secretChatsNote is the note secret_chats (spec 8.10, M4): the distinct secret chats among the message records, by
 // their enc_chats key; when some records' dialog is undecided (an unreadable uid), a lower bound that says how many,
-// never a definite count: ">=<n> (<k> rows with an undecided dialog)".
+// never a definite count: ">=<n> (<k> rows with an undecided dialog)". After maxDistinctKeys distinct keys the count is
+// also a lower bound: ">=<n> (distinct chats capped at <n>)", the two reasons joined by "; ".
 func secretChatsNote(c *countingEmitter) string {
 	n := strconv.Itoa(len(c.secret))
-	if c.undec == 0 {
+	if c.undec == 0 && !c.secretCapped {
 		return n
 	}
-	return ">=" + n + " (" + strconv.FormatInt(c.undec, 10) + " rows with an undecided dialog)"
+	var why []string
+	if c.secretCapped {
+		why = append(why, "distinct chats capped at "+strconv.Itoa(c.maxKeys))
+	}
+	if c.undec > 0 {
+		why = append(why, strconv.FormatInt(c.undec, 10)+" rows with an undecided dialog")
+	}
+	return ">=" + n + " (" + strings.Join(why, "; ") + ")"
 }
 
 func writeCountNotes(out parse.Emitter, c *countingEmitter) {
@@ -206,8 +214,12 @@ func writeCountNotes(out parse.Emitter, c *countingEmitter) {
 		}
 		other += c.seen[id]
 	}
+	other += c.seenOverflow
 	if other > 0 {
 		entries = append(entries, "other:"+strconv.FormatInt(other, 10))
+	}
+	if c.seenOverflow > 0 { // the ranking is a lower bound: constructors first seen after the cap are folded into other
+		out.Note("constructors_seen_capped", strconv.Itoa(c.maxKeys))
 	}
 	out.Note("constructors_seen", noteList(entries, maxSeenNote))
 }
