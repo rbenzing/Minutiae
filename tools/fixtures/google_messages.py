@@ -132,14 +132,18 @@ def cleaned(raw, field, b, limit):
 
 
 def ident(raw, key, b, limit=MAX_IDENT):
-    """An identifier is never cut: over limit it is absent with its state, length and SHA-256."""
-    if len(b) > limit:
-        raw[key + "_state"] = "too-long"
-        raw[key + "_len"] = len(b)
-        raw[key + "_sha256"] = hashlib.sha256(b).hexdigest()
-        return None
-    c = cleaned(raw, key, b, limit)
-    return c.text
+    """An identifier is never cut: over limit, as stored or once each invalid byte is U+FFFD (ruling 4I5-T4c6), it is absent
+    with its state, length and SHA-256."""
+    if len(b) <= limit:
+        c = C.clean(b, 3 * limit)
+        if len(c.text.encode()) <= limit:
+            if c.flags:
+                C.mark(raw, key)
+            return c.text
+    raw[key + "_state"] = "too-long"
+    raw[key + "_len"] = len(b)
+    raw[key + "_sha256"] = hashlib.sha256(b).hexdigest()
+    return None
 
 
 def message_summary(channel, direction, counterparty, text):
@@ -212,7 +216,11 @@ def party_of(prow, role, raw, prefix, unknown):
         shown = {}
         for col, b in dests.items():
             if len(b) <= MAX_IDENT:
-                shown[col] = cleaned(raw, prefix + "_destinations", b, MAX_IDENT).text
+                c = C.clean(b, 3 * MAX_IDENT)
+                if len(c.text.encode()) <= MAX_IDENT:  # never cut (ruling 4I5-T4c6)
+                    if c.flags:
+                        C.mark(raw, prefix + "_destinations")
+                    shown[col] = c.text
         if shown:
             raw[prefix + "_destinations"] = shown
     chosen = None
@@ -225,7 +233,7 @@ def party_of(prow, role, raw, prefix, unknown):
             raw[prefix + "_address_state"] = "empty"
         return None
     b = dests[chosen]
-    if len(b) > MAX_IDENT:
+    if len(b) > MAX_IDENT or len(C.clean(b, 3 * MAX_IDENT).text.encode()) > MAX_IDENT:
         if prefix:
             raw[prefix + "_address_state"] = "too-long"
             raw[prefix + "_address_len"] = len(b)
@@ -571,7 +579,7 @@ def message_record(r, env, remote, file, nan=frozenset(), joined=True):
                     raw["self_subscription_name"] = cleaned(raw, "self_subscription_name", nm, MAX_NAME).text
         elif fst == "null":
             raw["self_row_state"] = "absent"
-        else:
+        elif fst == "bad":  # a column the store lacks states nothing (B4)
             raw["self_row_state"] = "undecided"
         # conversation, members
         th, members = thread_and_members(env, r, raw, unknown, p)
@@ -1001,7 +1009,7 @@ def hostile_rows():
     h(111, [txt("six one")], conversation_id=6)  # H11
     h(112, [txt("six two")], conversation_id=6, sender_id=1, message_status=1)
     h(113, [txt("long destination")], sender_id=8)  # H12
-    h(114, [txt("self with a destination")], sender_id=9, message_status=1)  # H13
+    h(114, [txt("self with a destination")], sender_id=9, message_status=1, sms_message_uri=C.Raw(bytes([255]) * 400))  # H13; the uri is 400 bytes stored, 1200 cleaned (ruling 4I5-T4c6)
     h(115, [txt("real read")], read=1.0)  # H14
     h(116, [txt("blob uri")], sms_message_uri=b"A")  # H15
     ps = [participants_core()[1], participants_core()[2],

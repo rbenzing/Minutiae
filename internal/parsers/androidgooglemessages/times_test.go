@@ -68,9 +68,9 @@ func TestGoogleMessagesTimeFloor(t *testing.T) {
 	}
 }
 
-// B5, 4I5-P2: the sent time is the Time only when received_timestamp is a stored 0 (or NULL, no value); a non-zero
+// B5, 4I5-P2, ruling 4I5-T4c1: the sent time is the Time only when received_timestamp is a stored 0 (or NULL, no value); a non-zero
 // received that is invalid or unreadable gives no Time and no fallback.
-func TestGoogleMessagesTimeFallsBackToSentOnlyOnZero(t *testing.T) {
+func TestGoogleMessagesTimeFallsBackToSentOnlyOnZeroOrNull(t *testing.T) {
 	_, recs := fixtureRecords(t, "gm-aosp-v2")
 	if r := recs[21]; timeText(r.Time) != "2023-11-14T22:13:41Z" || rawOf(r)["time_basis"] != "sent" {
 		t.Errorf("M21: Time %v, raw %v", r.Time, rawOf(r))

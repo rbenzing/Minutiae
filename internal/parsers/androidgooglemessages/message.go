@@ -9,15 +9,11 @@ import (
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
-// idSet (B6, Task 6) and memberCache (B3, Task 5) are the per-job states the later tasks fill; they are declared here so
-// env has its final shape (4I5-P6).
-type (
-	idSet       struct{}
-	memberCache struct{}
-)
+// idSet (B6, Task 6) is the per-job state the later task fills; it is declared here so env has its final shape (4I5-P6).
+type idSet struct{}
 
 // env is the per-job state of the mappings (4I5-P6): the join guard, the decided message ids, the member cache and the
-// counts. A nil *env is the typed pass (Mappings), which joins nothing. IDs and Members are nil until Tasks 6 and 5.
+// counts. A nil *env is the typed pass (Mappings), which joins nothing. IDs is nil until Task 6.
 type env struct {
 	Guard   *joinGuard
 	IDs     *idSet
@@ -70,10 +66,11 @@ func messagesMapping(e *env) parse.TableMapping {
 var storedInts = []string{"seen", "sms_priority", "sms_message_size", "raw_status"}
 
 // mapMessage is the mapping of one messages row (spec 6.1, 6.2, 6.6 to 6.8): the channel, the direction and status of the
-// cited codes, the read state, the times, the stored scalars and the telephony link. The participants, the thread, the
-// body and the attachments follow in Tasks 5 and 6: until then the record states participants_unknown, the kind unknown and
-// the thread by its id alone.
-func mapMessage(_ *env, m parse.MapContext, row parse.Row) ([]records.Record, error) {
+// cited codes, the read state, the times, the stored scalars and the telephony link, and (a live pass, e != nil) the
+// sender, the self row, the direction cross-check, the conversation and its members. The body and the attachments follow in
+// Task 6: until then the kind is unknown. The typed pass (e == nil) joins nothing: participants_unknown and the thread by
+// its id alone.
+func mapMessage(e *env, m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
 		return nil, err
@@ -86,8 +83,18 @@ func mapMessage(_ *env, m parse.MapContext, row parse.Row) ([]records.Record, er
 	msg := message.Message{Kind: message.KindUnknown, ParticipantsUnknown: true, Raw: raw}
 	msg.Channel = channelOf(row, c.At("message_protocol"), raw, unknown)
 	msg.Direction, msg.Status = statusOf(row, c.At("message_status"), raw, unknown)
-	if cid, k := intCellOf(row, c.At("conversation_id")); k == rowrun.CellValue {
-		msg.Thread = &message.Thread{ID: strconv.FormatInt(cid, 10)}
+	counterparty := ""
+	if e == nil { // the typed pass joins nothing (4I5-P6; Task 8 states it)
+		if cid, k := intCellOf(row, c.At("conversation_id")); k == rowrun.CellValue {
+			msg.Thread = &message.Thread{ID: strconv.FormatInt(cid, 10)}
+		}
+	} else {
+		pr, err := partiesOf(m, e, row, c, raw, unknown, msg.Direction)
+		if err != nil {
+			return nil, err
+		}
+		msg.Direction, msg.Participants, msg.ParticipantsUnknown = pr.Direction, pr.Participants, pr.Unknown
+		msg.Thread, msg.Subscription, counterparty = pr.Thread, pr.Subscription, pr.Counterparty
 	}
 
 	rd, rk := intCellOf(row, c.At("read"))
@@ -136,7 +143,7 @@ func mapMessage(_ *env, m parse.MapContext, row parse.Row) ([]records.Record, er
 	if f := rowrun.DamageFlags(row); f != nil {
 		raw["row_flags"] = f
 	}
-	rec.Summary = message.Summary(msg.Channel, msg.Direction, "", "")
+	rec.Summary = message.Summary(msg.Channel, msg.Direction, counterparty, "")
 	rec.Payload = msg.Payload()
 	return []records.Record{rec}, nil
 }

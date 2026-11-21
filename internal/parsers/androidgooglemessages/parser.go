@@ -260,7 +260,8 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 		}
 		return refuse(reasonNotSQLite), nil
 	case err != nil && companion:
-		// a SQLite main file that cannot be opened whole (budget, I/O, damage) proves nothing beside a companion
+		// a SQLite main file that cannot be opened whole (budget, I/O, damage) proves nothing beside a companion: Parse
+		// reopens it and states the real error
 		return parse.Applicability{Status: parse.Applicable, Reason: reasonDeferred}, nil
 	case err != nil:
 		return parse.Applicability{}, err
@@ -358,7 +359,9 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	}
 	cnt := &counts{}
 	ce := newCountingEmitter(out, cnt)
-	steps := []rowrun.Step{{Mapping: messagesMapping(&env{Guard: lv.Guard, Counts: cnt}), Identifying: true}}
+	mc := newMemberCache(in.Budget, cnt)
+	defer mc.release()
+	steps := []rowrun.Step{{Mapping: messagesMapping(&env{Guard: lv.Guard, Members: mc, Counts: cnt}), Identifying: true}}
 	if _, err := rowrun.Run(ctx, in, ce, steps); err != nil {
 		return fmt.Errorf("android.googlemessages: %w", err)
 	}

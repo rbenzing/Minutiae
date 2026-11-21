@@ -17,6 +17,7 @@ import (
 const (
 	reasonJoinUndecided     = "googlemessages-join-undecided"
 	reasonDirectionConflict = "googlemessages-direction-conflict"
+	reasonMembersCut        = "googlemessages-members-cut"
 	reasonTableAbsent       = "table absent"
 	// reasonSchemaPartial is the join note of a join table that a schema read in part does not show: unknown, never
 	// absent.
@@ -167,6 +168,7 @@ type counts struct {
 	JoinUndecided      map[string]int64 // table -> records whose raw.join_undecided names it
 	DirectionConflicts int64            // records whose raw holds a direction_conflict (B7)
 	CutConversations   []int64          // the conversations whose member list was cut (B3), in the order met
+	CutTotals          map[int64]int64  // conversation -> its non-self members before the cut
 }
 
 // countingEmitter counts the records the mappings cannot warn about (restated from androidtelegram/guard.go).
@@ -211,7 +213,29 @@ func (e *countingEmitter) warn(ctx context.Context) error {
 		}
 	}
 	if n := e.c.DirectionConflicts; n > 0 {
-		return e.Warn(ctx, "sqlite:table="+tableMessages, reasonDirectionConflict+": "+strconv.FormatInt(n, 10)+" records")
+		if err := e.Warn(ctx, "sqlite:table="+tableMessages, reasonDirectionConflict+": "+strconv.FormatInt(n, 10)+" records"); err != nil {
+			return err
+		}
+	}
+	return e.warnCut(ctx)
+}
+
+// maxCutWarnings is how many cut conversations are warned about one by one; the rest are one summary warning.
+const maxCutWarnings = 1000
+
+// warnCut raises one warning per conversation whose member list was cut (B3), in the order met, then one summary for
+// the conversations beyond maxCutWarnings.
+func (e *countingEmitter) warnCut(ctx context.Context) error {
+	loc := "sqlite:table=" + tableMembers
+	for i, conv := range e.c.CutConversations {
+		if i == maxCutWarnings {
+			n := len(e.c.CutConversations)
+			return e.Warn(ctx, loc, reasonMembersCut+": "+strconv.Itoa(n)+" conversations, "+strconv.Itoa(n-maxCutWarnings)+" not warned one by one")
+		}
+		if err := e.Warn(ctx, loc, reasonMembersCut+": conversation "+strconv.FormatInt(conv, 10)+": "+
+			strconv.FormatInt(e.c.CutTotals[conv], 10)+" members, "+strconv.Itoa(maxList)+" kept"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
