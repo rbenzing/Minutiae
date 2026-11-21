@@ -2,6 +2,7 @@ package androidgooglemessages_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
 // Spec 5.4: an uncited user version is stated as a note and one counted warning, and is read by the AOSP core signature
@@ -136,6 +138,28 @@ func TestGoogleMessagesMissingOptionalColumnIsNotedOnce(t *testing.T) {
 			t.Errorf("gm-aosp-v1: note columns_missing.%s", tbl)
 		}
 	}
+	// Task 4: the store without mms_subject has no subject and no unknown_columns entry for the column on any record
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 2})
+	msgs := b.CreateTable("messages", ddlMessagesNoSubject)
+	msgs.Insert(1, nil, int64(1), int64(2), int64(1), tT, tT+1000, int64(0), int64(100), int64(1), int64(1), nil, int64(0), int64(0), nil, nil, int64(0), int64(0), int64(0))
+	b.CreateTable("parts", ddlPartsNoWidth)
+	b.CreateTable("participants", ddlParticipantsFull)
+	b.CreateTable("conversations", ddlConvsFull)
+	b.CreateTable("conversation_participants", ddlMembers)
+	res := parseAt(t, remoteApp, dbOnly(b.Bytes()))
+	if res.Err != nil || len(res.Records) != 1 {
+		t.Fatalf("a store without mms_subject: err %v, %d records, want 1", res.Err, len(res.Records))
+	}
+	for _, r := range res.Records {
+		if _, has := r.Payload["subject"]; has {
+			t.Errorf("%s: subject %v", r.Locator, r.Payload["subject"])
+		}
+		for k := range unknownOf(r) {
+			if strings.Contains(k, "mms_subject") {
+				t.Errorf("%s: unknown_columns names %s", r.Locator, k)
+			}
+		}
+	}
 }
 
 // Review Focus 1: two Android users' copies of the same database are two jobs, each stating its own user.
@@ -146,5 +170,33 @@ func TestGoogleMessagesTwoUsersAreKeptApart(t *testing.T) {
 		if res.Err != nil || res.Notes["database_user"] != user {
 			t.Errorf("%s: err %v, note database_user = %q, want %s", remote, res.Err, res.Notes["database_user"], user)
 		}
+	}
+	// Task 4: the canonical records of the two jobs differ only in artifact_id and source_path
+	canon := func(remote string) []string {
+		res := parseAt(t, remote, files)
+		var out []string
+		for _, line := range parsertest.CanonicalRecords(res.Records) {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(line), &m); err != nil {
+				t.Fatal(err)
+			}
+			delete(m, "artifact_id")
+			delete(m, "source_path")
+			b, _ := json.Marshal(m)
+			out = append(out, string(b))
+		}
+		return out
+	}
+	a, b := canon(remoteApp), canon(remoteUser10)
+	if len(a) == 0 || len(a) != len(b) {
+		t.Fatalf("%d and %d records", len(a), len(b))
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Errorf("record %d differs beyond artifact_id and source_path:\n%s\n%s", i, a[i], b[i])
+		}
+	}
+	if ra, rb := parseAt(t, remoteApp, files), parseAt(t, remoteUser10, files); ra.Records[0].SourcePath == rb.Records[0].SourcePath {
+		t.Errorf("both users' records have the source path %s", ra.Records[0].SourcePath)
 	}
 }

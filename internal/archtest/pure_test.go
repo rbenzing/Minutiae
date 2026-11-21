@@ -330,11 +330,12 @@ var stdAllow = map[string]classSet{
 // and SHA-256 of an identifier it never cuts (plan 4I3, spec 9: ident in text.go is the first use, F11), and so does
 // ios.calendar (plan 4I3 Task 9: ident in its text.go, also the length and SHA-256 of external_rep, which it never
 // decodes). android.telegram records the length and SHA-256 of the blobs it cannot decode and of identifiers it never
-// cuts (plan 4I4: sha256Hex in text.go is the first use). Every other parser is without a digest, so the parser class as a whole stays without crypto/sha256.
+// cuts (plan 4I4: sha256Hex in text.go is the first use). android.googlemessages records the length and SHA-256 of
+// identifiers it never cuts (plan 4I5: `sha256Hex` in text.go is the first use). Every other parser is without a digest, so the parser class as a whole stays without crypto/sha256.
 var stdDirAllow = map[string]map[string]bool{
 	"crypto/sha256": {
 		"internal/parsers/androidwhatsapp": true, "internal/parsers/ioswhatsapp": true, "internal/parsers/androidcalendar": true,
-		"internal/parsers/ioscalendar": true, "internal/parsers/androidtelegram": true,
+		"internal/parsers/ioscalendar": true, "internal/parsers/androidtelegram": true, "internal/parsers/androidgooglemessages": true,
 	},
 }
 

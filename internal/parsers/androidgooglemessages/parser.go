@@ -64,8 +64,8 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings are the typed pass's mappings: none until Task 4.
-func (Parser) Mappings() []parse.TableMapping { return nil }
+// Mappings are the typed pass's mappings (4I5-P6): the messages mapping with no per-job state, so it joins nothing.
+func (Parser) Mappings() []parse.TableMapping { return []parse.TableMapping{messagesMapping(nil)} }
 
 // The reasons of Probe (byte-exact, the plan's "Probe reasons").
 const (
@@ -329,7 +329,7 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 // Parse checks the live view (the signature, the rowid aliases of the mapped tables, the join tables, the mapped
 // columns the store lacks) and states the store (writeNotes) before any mapping runs, so the host's note cap keeps those
 // notes. Away from the app path a database without the signature is of another kind: Parse maps nothing and states it
-// in rowrun's not-applicable form. The mappings follow in Task 4.
+// in rowrun's not-applicable form. The messages mapping runs after them.
 func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	if in == nil || out == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
@@ -356,8 +356,10 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	if err := writeNotes(ctx, files, in.Budget, out, lv, app, databaseUser(in.Primary.Logical)); err != nil {
 		return fmt.Errorf("android.googlemessages: %w", err)
 	}
-	ce := newCountingEmitter(out, &counts{})
-	if _, err := rowrun.Run(ctx, in, ce, nil); err != nil {
+	cnt := &counts{}
+	ce := newCountingEmitter(out, cnt)
+	steps := []rowrun.Step{{Mapping: messagesMapping(&env{Guard: lv.Guard, Counts: cnt}), Identifying: true}}
+	if _, err := rowrun.Run(ctx, in, ce, steps); err != nil {
 		return fmt.Errorf("android.googlemessages: %w", err)
 	}
 	return ce.warn(ctx)
