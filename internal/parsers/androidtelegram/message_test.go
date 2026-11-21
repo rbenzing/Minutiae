@@ -356,7 +356,7 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	if v181.Notes["constructors_seen"] != exp.Notes["constructors_seen"] {
 		t.Errorf("telegram-v181: constructors_seen %q, the oracle %q", v181.Notes["constructors_seen"], exp.Notes["constructors_seen"])
 	}
-	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:49,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1" {
-		t.Errorf("telegram-v181: blob_states %q (the oracle, with users.data: %q)", got, exp.Notes["blob_states"])
+	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:49,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" {
+		t.Errorf("telegram-v181: blob_states %q (the oracle: %q)", got, exp.Notes["blob_states"])
 	}
 }

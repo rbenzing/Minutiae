@@ -166,12 +166,12 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 	add := func(name string, p map[string]any, want string) { rows = append(rows, row{name, p, want}) }
 
 	// the identifying-field rule
-	const identifying = "at least one of display_name,phones,emails,organization must be present and not empty"
+	const identifying = "at least one of display_name,phones,emails,organization,ims must be present and not empty"
 	add("nil payload", nil, identifying)
 	add("empty payload", map[string]any{}, identifying)
 	// full() carries the deleted marker and source ids, which would make it a valid tombstone: drop the marker too
 	add("nothing identifying left", mutate(func(p map[string]any) {
-		for _, k := range []string{"display_name", "phones", "emails", "organization", "deleted"} {
+		for _, k := range []string{"display_name", "phones", "emails", "organization", "ims", "deleted"} {
 			delete(p, k)
 		}
 	}), identifying)
@@ -312,7 +312,7 @@ func TestContactAtLeastOneIdentifyingField(t *testing.T) {
 		"only a source id":                      {"source_id": "17", "source_ids": []any{"17"}},
 		"only an account":                       {"accounts": []any{map[string]any{"type": "local"}}},
 		"only an url":                           {"urls": v("https://example.com")},
-		"only an im":                            {"ims": v("alex")},
+		"empty ims list":                        {"ims": []any{}},
 		"only an address":                       {"addresses": []any{map[string]any{"city": "Springfield"}}},
 		"empty display_name and empty lists":    {"display_name": "", "phones": []any{}, "emails": []any{}},
 		"empty organization object":             {"organization": map[string]any{}},
@@ -327,7 +327,7 @@ func TestContactAtLeastOneIdentifyingField(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 			continue
 		}
-		if !strings.Contains(err.Error(), "at least one of display_name,phones,emails,organization") {
+		if !strings.Contains(err.Error(), "at least one of display_name,phones,emails,organization,ims") {
 			t.Errorf("%s: error %q does not name the rule", name, err)
 		}
 	}
@@ -335,6 +335,7 @@ func TestContactAtLeastOneIdentifyingField(t *testing.T) {
 		"display_name alone":       {"display_name": "Alex"},
 		"a phone alone":            {"phones": v("+15551234567")},
 		"an e-mail alone":          {"emails": v("a@example.com")},
+		"an im alone":              {"ims": v("user:17")},
 		"an organization name":     {"organization": map[string]any{"name": "Acme"}},
 		"an organization title":    {"organization": map[string]any{"title": "CTO"}},
 		"empty name, with a phone": {"display_name": "", "phones": v("555-0100")},

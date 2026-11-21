@@ -281,6 +281,7 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 	checkStates(t, "messages", v1, parseAt(t, remoteApp, dbOnly(goBuiltMessages(64, cells, nil))).Records)
 	dialogStates(t)
 	callStates(t)
+	contactStates(t)
 }
 
 // callStates are Task 11's keys (spec 8.7, Q5; the plan's "Calls" vocabulary): the outcome per reason and direction,
@@ -565,6 +566,13 @@ func params(n int) string {
 // checkStates matches the records of one Go-built table to its rows (messages_v2 by position, messages by mid).
 func checkStates(t *testing.T, table string, rows []stateRow, recs []records.Record) {
 	t.Helper()
+	var mine []records.Record
+	for _, r := range recs {
+		if strings.HasPrefix(locatorRow(r.Locator), table+"/") {
+			mine = append(mine, r)
+		}
+	}
+	recs = mine
 	got := byRow(recs)
 	if len(recs) != len(rows) {
 		t.Errorf("%s: %d records for %d rows", table, len(recs), len(rows))
@@ -594,5 +602,87 @@ func checkStates(t *testing.T, table string, rows []stateRow, recs []records.Rec
 				t.Errorf("%s: %s = %v (present %v), want %v", row.name, k, v, has, want)
 			}
 		}
+	}
+}
+
+// tlUser is a TL_user (0xb1b8cc83) blob: flags (set from the fields and extra), flags2 0, id, access_hash when hash,
+// then the name, username and phone strings that are non-nil (constructors.tsv field order, flag bits 1-4).
+func tlUser(id int64, extra uint32, hash bool, first, last, username, phone *string) []byte {
+	flags := extra
+	var body []byte
+	if hash {
+		flags |= 1
+		body = append(body, le64(7)...)
+	}
+	for i, p := range []*string{first, last, username, phone} {
+		if p != nil {
+			flags |= 1 << (i + 1)
+			body = append(body, tlStr(*p)...)
+		}
+	}
+	b := append(append(le32(0xb1b8cc83), le32(flags)...), le32(0)...)
+	return append(append(b, le64(id)...), body...)
+}
+
+// contactStates are Task 12's keys (spec 8.9, T4; the plan's "Contacts" vocabulary): the status label and expiry, a
+// NULL status and blob, a status of another class, the contact join and its mutual flag, the about join and its
+// state, a phone over its limit, the self and bot flags, and an empty name part.
+func contactStates(t *testing.T) {
+	s := func(v string) *string { return &v }
+	const bitSelf, bitBot = 1 << 10, 1 << 14
+	tooLong := strings.Repeat("9", 1100)
+	row := func(uid int64, status, data any) builtRow {
+		return builtRow{uid, map[string]any{"name": "x", "status": status, "data": data}}
+	}
+	users := builtTable{name: "users", ddl: ddlUsers, cols: []string{"uid", "name", "status", "data"}, alias: "uid", rows: []builtRow{
+		row(1, int64(-102), tlUser(1, 0, false, s("A"), nil, nil, nil)),
+		row(2, int64(5000), tlUser(2, 0, true, s("B"), s("C"), s("bc"), s("555"))),
+		row(3, nil, nil),
+		row(4, "x", tlUser(4, 0, false, s("D"), nil, nil, nil)),
+		row(5, int64(0), tlUser(5, 0, false, s("E"), nil, nil, s(tooLong))),
+		row(6, int64(-1000), tlUser(6, bitSelf|bitBot, false, s(""), s("F"), nil, nil)),
+	}}
+	contacts := builtTable{
+		name: "contacts", ddl: "CREATE TABLE contacts (uid INTEGER PRIMARY KEY, mutual INTEGER)", cols: []string{"uid", "mutual"},
+		alias: "uid", rows: []builtRow{{2, map[string]any{"mutual": int64(1)}}},
+	}
+	about := builtTable{
+		name: "users_data", ddl: ddlUsersData, cols: []string{"uid", "about"}, alias: "uid",
+		rows: []builtRow{{2, map[string]any{"about": "hi"}}},
+	}
+	res := parseAt(t, remoteApp, dbOnly(goBuiltWith(181, nil, users, contacts, about)))
+	got := byRow(res.Records)
+	want := map[string]map[string]any{
+		"users/1": {"status": int64(-102), "status_label": "last_month", "status_expires": nil, "contact_row": false, "about_state": "no-users_data-row", "data_state": "decoded-prefix"},
+		"users/2": {"status_expires": int64(5000), "status_label": nil, "contact_row": true, "mutual": int64(1), "about_state": nil, "access_hash_present": true},
+		"users/3": {"status": nil, "data_state": "null", "data_len": nil},
+		"users/4": {"status": nil, "unknown_columns": map[string]any{"users.status": "type-mismatch"}},
+		"users/5": {"phone_state": "too-long", "phone_len": int64(1100)},
+		"users/6": {"self": true, "bot": true, "status_label": "recently_by_me", "display_name_source": "composed"},
+	}
+	for key, w := range want {
+		r, ok := got[key]
+		if !ok {
+			t.Errorf("%s: no record", key)
+			continue
+		}
+		for k, v := range w {
+			g, has := rawOf(r)[k]
+			if (v == nil && has && k != "status") || (v != nil && jsonText(g) != jsonText(v)) {
+				t.Errorf("%s: raw.%s = %v (present %v), want %v", key, k, g, has, v)
+			}
+		}
+	}
+	if g, has := rawOf(got["users/3"])["status"]; !has || g != nil {
+		t.Errorf("users/3: a stored NULL status is raw nil, got %v (present %v)", g, has)
+	}
+	if _, has := got["users/5"].Payload["phones"]; has {
+		t.Error("users/5: a phone over its limit is never cut or shown")
+	}
+	if got["users/6"].Payload["display_name"] != "F" {
+		t.Errorf("users/6: display_name %v, want F (empty first name absent)", got["users/6"].Payload["display_name"])
+	}
+	if res.Notes["self_users"] != "1" {
+		t.Errorf("self_users %q, want 1", res.Notes["self_users"])
 	}
 }

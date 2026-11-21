@@ -58,8 +58,9 @@ func isPhoneCall(v view, kind string) bool {
 // start is the date column's time (nil when the date was not read as a valid time). It returns the call and the
 // record's end time; raw is the row's raw, to which the action's fields are added.
 func callOf(v view, dir string, d dialog, uid int64, uidOK bool, start *records.Time, raw map[string]any) (call.Call, *records.Time) {
-	if f, ok := v.Int("action.flags"); ok {
-		raw["flags"] = f
+	flags, flagsOK := v.Int("action.flags")
+	if flagsOK {
+		raw["flags"] = flags
 	}
 	if id, ok := v.Int("action.call_id"); ok {
 		raw["call_id"] = id
@@ -72,7 +73,6 @@ func callOf(v view, dir string, d dialog, uid int64, uidOK bool, start *records.
 	if video {
 		c.Kind = call.KindVideo
 	}
-	flags, flagsOK := v.Int("action.flags")
 	reason, hasReason := v.ID("action.reason")
 	switch {
 	case hasReason:

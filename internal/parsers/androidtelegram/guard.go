@@ -11,6 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
 )
 
 // The reasons of the warnings and notes about joins (the plan's "Notes and warnings", 4I2 PF13).
@@ -165,6 +166,8 @@ func checkJoinSchema(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, pa
 const (
 	reasonBothGenerations = "telegram-both-generations"
 	reasonBlobUndecoded   = "telegram-blob-undecoded"
+	reasonNoName          = "users row has no name, phone or username" // spec 8.9, 4I R2 shape
+	maxNoNameWarnings     = 1000                                       // one warning per row up to here, then one summary (B9)
 )
 
 // countedTables and blobColumns are the tables and TL columns the blob counts name, in the order the note
@@ -184,6 +187,10 @@ type countingEmitter struct {
 	joins  map[string]int64            // table -> records whose raw.join_undecided names it
 	secret map[int64]struct{}          // the distinct enc_chats keys of the secret-chat message records (M4)
 	undec  int64                       // message records whose dialog is undecided (an unreadable uid)
+
+	noName     []string // the locators of the first users records without a name, a phone or a username
+	noNameRows int64    // all such users records
+	selfs      int64    // users records of the account owner (raw.self)
 }
 
 func newCountingEmitter(out parse.Emitter) *countingEmitter {
@@ -218,6 +225,9 @@ func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
 		}
 		c.states[key][st]++
 	}
+	if table == tableUsers && r.Type == contact.Type {
+		c.countUser(r, raw)
+	}
 	if table == tableMessages || table == tableMessagesV2 {
 		if id, ok := raw["data_constructor"].(string); ok {
 			c.seen[id]++
@@ -240,9 +250,42 @@ func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
 	return c.Emitter.Emit(ctx, r)
 }
 
-// warn raises one counted warning per TL column with undecoded records (locator sqlite:table=<table>, the states in
+// countUser counts a users record: the account owner, and a record with no name, no phone and no username (spec 8.9),
+// whose locator is kept for the first maxNoNameWarnings.
+func (c *countingEmitter) countUser(r records.Record, raw map[string]any) {
+	if raw["self"] == true {
+		c.selfs++
+	}
+	if r.Payload["display_name"] != nil || r.Payload["phones"] != nil {
+		return
+	}
+	ims, _ := r.Payload["ims"].([]any)
+	for _, e := range ims {
+		if m, _ := e.(map[string]any); m["kind"] == kindTelegramUsername {
+			return
+		}
+	}
+	c.noNameRows++
+	if len(c.noName) < maxNoNameWarnings {
+		c.noName = append(c.noName, r.Locator)
+	}
+}
+
+// warn raises one warning per users record without a name, a phone or a username (then one summary of the rest),
+// then one counted warning per TL column with undecoded records (locator sqlite:table=<table>, the states in
 // vocabulary order), then one per table with an undecided join, in table order.
 func (c *countingEmitter) warn(ctx context.Context) error {
+	for _, loc := range c.noName {
+		if err := c.Warn(ctx, loc, reasonNoName); err != nil {
+			return err
+		}
+	}
+	if rest := c.noNameRows - int64(len(c.noName)); rest > 0 {
+		reason := reasonNoName + ": " + strconv.FormatInt(c.noNameRows, 10) + " records, " + strconv.FormatInt(rest, 10) + " not warned one by one"
+		if err := c.Warn(ctx, "sqlite:table="+tableUsers, reason); err != nil {
+			return err
+		}
+	}
 	for _, table := range countedTables() {
 		for _, col := range blobColumns() {
 			counts := c.states[table+"."+col]

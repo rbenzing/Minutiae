@@ -6,7 +6,8 @@
 // internal/recordtypes/common.
 //
 // The payload follows the contract of the plan's F10 table: at least one of a
-// display name, a phone, an e-mail address or an organization (a tombstone, the
+// display name, a phone, an e-mail address, an organization or an instant-messaging handle (an app account
+// identifies its holder: a Telegram user id, plan 4I4) (a tombstone, the
 // deleted marker with a non-empty source id, needs none of them: spec 9.3);
 // everything else optional and absent (never an empty string, object or list) when the parser
 // does not know it (C3). Phone numbers, e-mail addresses and names are the source
@@ -291,7 +292,7 @@ func crossRules(m map[string]any) error {
 	if s, _ := m["display_name"].(string); s != "" {
 		return nil
 	}
-	for _, k := range []string{"phones", "emails"} {
+	for _, k := range []string{"phones", "emails", "ims"} {
 		if l, _ := m[k].([]any); len(l) > 0 {
 			return nil
 		}
@@ -303,7 +304,7 @@ func crossRules(m map[string]any) error {
 			}
 		}
 	}
-	return errors.New("at least one of display_name,phones,emails,organization must be present and not empty")
+	return errors.New("at least one of display_name,phones,emails,organization,ims must be present and not empty")
 }
 
 // Validate checks a contact payload against the v1 contract. Its errors name

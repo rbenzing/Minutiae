@@ -151,7 +151,7 @@ func noteListSep(names []string, limit int, sep string) string {
 // writeCountNotes writes the notes of what the run counted (spec 8.4, 8.10, the plan's notes table): blob_states
 // ("<table>.<col>=<state>:<n>,…" per TL column in table order, the states in vocabulary order, the columns joined by
 // ";", cut at 512 bytes) and constructors_seen (the message blobs' top IDs "0x<id>:<n>" by count descending then ID,
-// at most 64, then "other:<n>", cut at 1,000 bytes, F11) and secret_chats (secretChatsNote). They follow rowrun.Run: what they count exists only then.
+// at most 64, then "other:<n>", cut at 1,000 bytes, F11) secret_chats (secretChatsNote) and self_users (the users records with the self flag, spec 8.10). They follow rowrun.Run: what they count exists only then.
 // secretChatsNote is the note secret_chats (spec 8.10, M4): the distinct secret chats among the message records, by
 // their enc_chats key; when some records' dialog is undecided (an unreadable uid), a lower bound that says how many,
 // never a definite count: ">=<n> (<k> rows with an undecided dialog)".
@@ -183,6 +183,7 @@ func writeCountNotes(out parse.Emitter, c *countingEmitter) {
 		out.Note("blob_states", noteListSep(states, maxNote, ";"))
 	}
 	out.Note("secret_chats", secretChatsNote(c))
+	out.Note("self_users", strconv.FormatInt(c.selfs, 10))
 	if len(c.seen) == 0 {
 		return
 	}

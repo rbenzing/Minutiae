@@ -110,7 +110,7 @@ func TestAndroidTelegramMetaIsValid(t *testing.T) {
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformAndroid {
 		t.Errorf("platforms %v", m.Platforms)
 	}
-	// 4I4-P6: the typed pass maps both message tables, the old generation first (Task 12 adds users)
+	// 4I4-P6: the typed pass maps both message tables, the old generation first, then users
 	var tables []string
 	for _, mp := range (androidtelegram.Parser{}).Mappings() {
 		tables = append(tables, mp.Table)
@@ -118,7 +118,7 @@ func TestAndroidTelegramMetaIsValid(t *testing.T) {
 			t.Errorf("mapping %s has no Map", mp.Table)
 		}
 	}
-	if strings.Join(tables, ",") != "messages,messages_v2" {
+	if strings.Join(tables, ",") != "messages,messages_v2,users" {
 		t.Errorf("Mappings tables %v", tables)
 	}
 }

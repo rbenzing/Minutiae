@@ -78,9 +78,11 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings are the typed pass's mappings (a nil env, 4I4-P6): the message tables, the old generation first.
+// Mappings are the typed pass's mappings (a nil env, 4I4-P6): the message tables, the old generation first, then users.
 func (Parser) Mappings() []parse.TableMapping {
-	return []parse.TableMapping{messageMappingWith(nil, tableMessages), messageMappingWith(nil, tableMessagesV2)}
+	return []parse.TableMapping{
+		messageMappingWith(nil, tableMessages), messageMappingWith(nil, tableMessagesV2), userMappingWith(nil),
+	}
 }
 
 // The reasons of Probe (byte-exact, the plan's "Probe reasons").
@@ -371,8 +373,8 @@ func filesOf(in *parse.Input) (sqlitedb.Files, error) {
 // required columns and rowid aliases; the join tables) and states the store (writeNotes) before any mapping runs, so
 // the host's note cap keeps those notes. Away from the app path a database without the signature is of another kind:
 // Parse maps nothing and states it in rowrun's not-applicable form (F3). Then it maps both message tables (spec 8.3),
-// messages before messages_v2, each optional, through one constructor table (built once per Parse, C2) and the
-// counting emitter (4I4-P9), and after the run raises the counted warnings and writes the count notes.
+// messages before messages_v2, each optional, and users (spec 8.9), through one constructor table (built once per
+// Parse, C2) and the counting emitter (4I4-P9), and after the run raises the counted warnings and writes the count notes.
 func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	if in == nil || out == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
@@ -402,6 +404,7 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	steps := []rowrun.Step{
 		{Mapping: messageMapping(e, tab, tableMessages), Optional: true},
 		{Mapping: messageMapping(e, tab, tableMessagesV2), Optional: true},
+		{Mapping: userMapping(e, tab)},
 	}
 	rep, err := rowrun.Run(ctx, in, ce, steps)
 	if err != nil {
