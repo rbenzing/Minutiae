@@ -52,6 +52,7 @@ func pendingCallRows() map[string][]string {
 		"telegram-layers": {
 			"messages_v2/1003", "messages_v2/1007", "messages_v2/1008", "messages_v2/1022", "messages_v2/1033",
 			"messages_v2/1034", "messages_v2/1042", "messages_v2/1046",
+			"messages_v2/1601", // a phone-call reason carrying a secret-kind encrypted_key (Task 10 fix 1, M7)
 		},
 	}
 }

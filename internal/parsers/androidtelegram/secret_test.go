@@ -80,13 +80,23 @@ func TestTelegramSecretChatMessagesAreFlagged(t *testing.T) {
 		t.Errorf("note join_undecided.enc_chats = %q", res.Notes["join_undecided.enc_chats"])
 	}
 
-	// spec 8.10, 4I4-P9: the note secret_chats counts the distinct secret dialogs, as the oracle does (R8, R9, R57 in
-	// chat 77, R10 in chat -5: two in telegram-v181; P2 in telegram-v64)
-	for v, want := range map[string]string{"telegram-v181": "2", "telegram-v64": "1", "telegram-v159": "0"} {
+	// spec 8.10, 4I4-P9, M4: the note secret_chats counts the distinct secret chats by their enc_chats key, as the
+	// oracle does (R8, R9, R57 in chat 77, R10 in chat -5: two in telegram-v181; P2 in telegram-v64); rows whose dialog
+	// is undecided (an unreadable uid: four in telegram-hostile, beside its chat 77) make it a lower bound that says so, never a definite 0
+	for v, want := range map[string]string{
+		"telegram-v181": "2", "telegram-v64": "1", "telegram-v159": "0",
+		"telegram-hostile": ">=1 (4 rows with an undecided dialog)",
+	} {
 		got := parseFixture(t, v).Notes["secret_chats"]
 		if exp := parsertestNote(t, v, "secret_chats"); got != want || exp != want {
 			t.Errorf("%s: note secret_chats %q, the oracle %q, want %q", v, got, exp, want)
 		}
+	}
+	// one chat in both generations: the pre-84 high-id uid 77<<32 and the v84 dialog id 1<<62|77 share the key 77
+	same := tlMessage{id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "same chat"}.bytes()
+	both := goBuiltMessages(181, []msgCells{{mid: -7, uid: 77 << 32, data: same}}, []msgCells{{mid: -8, uid: 1<<62 | 77, data: same}})
+	if got := parseAt(t, remoteApp, dbOnly(both)).Notes["secret_chats"]; got != "1" {
+		t.Errorf("chat 77 in both generations: note secret_chats %q, want 1", got)
 	}
 }
 
@@ -208,10 +218,117 @@ func encChatsViolations(fset *token.FileSet, files map[string]*ast.File) []strin
 	return out
 }
 
+// encChatsUses checks every use of the identifier tableEncChats (I3): it may be declared only in secret.go, passed
+// as a call argument (the call rules of encChatsViolations apply), be a Req's Table: value, be concatenated in
+// secret.go (the unknown_columns key), or be an element of the census table lists of notes.go (rowNoteTables,
+// readTables: row counts and unmapped tables, never a column). Any other use (a const or var whose value it is, an
+// assignment, a case clause, another list) may alias it past the call rules and is a violation.
+func encChatsUses(fset *token.FileSet, files map[string]*ast.File) []string {
+	var out []string
+	at := func(n ast.Node, msg string) { out = append(out, fset.Position(n.Pos()).String()+": "+msg) }
+	for name, f := range files {
+		var stack []ast.Node
+		ast.Inspect(f, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			if id, ok := n.(*ast.Ident); ok && id.Name == "tableEncChats" && len(stack) > 0 {
+				fn := ""
+				for _, s := range stack {
+					if d, ok := s.(*ast.FuncDecl); ok {
+						fn = d.Name.Name
+					}
+				}
+				switch p := stack[len(stack)-1].(type) {
+				case *ast.ValueSpec:
+					if slices.Contains(p.Names, id) {
+						if name != "secret.go" {
+							at(id, "tableEncChats declared outside secret.go")
+						}
+					} else {
+						at(id, "a const or var whose value is tableEncChats")
+					}
+				case *ast.CallExpr:
+					if p.Fun == ast.Expr(id) {
+						at(id, "tableEncChats called")
+					}
+				case *ast.KeyValueExpr:
+					if k, ok := p.Key.(*ast.Ident); !ok || k.Name != "Table" || p.Value != ast.Expr(id) {
+						at(id, "tableEncChats keyed other than as a Req's Table")
+					}
+				case *ast.BinaryExpr:
+					if name != "secret.go" || p.Op != token.ADD {
+						at(id, "tableEncChats in an expression outside secret.go")
+					}
+				case *ast.CompositeLit:
+					if name != "notes.go" || (fn != "rowNoteTables" && fn != "readTables") {
+						at(id, "tableEncChats in a list that may alias it")
+					}
+				default:
+					at(id, "a use of tableEncChats that may alias it")
+				}
+			}
+			stack = append(stack, n)
+			return true
+		})
+	}
+	return out
+}
+
+// encChatsPresent is the positive half (I3): the real package holds exactly one Req with Table: tableEncChats and
+// Need: encChatsColumns(), and at least one Column call that indexes encChatsColumns() (the user read).
+func encChatsPresent(files map[string]*ast.File) []string {
+	reqs, cols := 0, 0
+	isCols := func(e ast.Expr) bool {
+		c, ok := e.(*ast.CallExpr)
+		if !ok || len(c.Args) != 0 {
+			return false
+		}
+		id, ok := c.Fun.(*ast.Ident)
+		return ok && id.Name == "encChatsColumns"
+	}
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CompositeLit:
+				table, need := false, false
+				for _, e := range x.Elts {
+					if kv, ok := e.(*ast.KeyValueExpr); ok {
+						k, _ := kv.Key.(*ast.Ident)
+						v, _ := kv.Value.(*ast.Ident)
+						table = table || (k != nil && k.Name == "Table" && v != nil && v.Name == "tableEncChats")
+						need = need || (k != nil && k.Name == "Need" && isCols(kv.Value))
+					}
+				}
+				if table && need {
+					reqs++
+				}
+			case *ast.CallExpr:
+				if s, ok := x.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "Column" && len(x.Args) == 2 {
+					if ix, ok := x.Args[1].(*ast.IndexExpr); ok && isCols(ix.X) {
+						cols++
+					}
+				}
+			}
+			return true
+		})
+	}
+	var out []string
+	if reqs != 1 {
+		out = append(out, strconv.Itoa(reqs)+" Reqs with Table: tableEncChats and Need: encChatsColumns(), want 1")
+	}
+	if cols == 0 {
+		out = append(out, "no Column call indexes encChatsColumns()")
+	}
+	return out
+}
+
 // Spec 9 (call 6), F9, T1, ruling T6 c1: the parser names no enc_chats column but uid and user. encChatsColumns is
 // {uid, user} and tableEncChats "enc_chats"; an AST scan of the package's non-test files finds the literal
 // "enc_chats" only in secret.go's const, every Table, Req, Column or Get on tableEncChats takes encChatsColumns() or a
-// rowid, and secret.go names no other enc_chats column. A planted file of each wrong form is caught.
+// rowid, and secret.go names no other enc_chats column; no other use of tableEncChats may alias it (encChatsUses), and
+// the one Req and the user Column read are there (encChatsPresent). A planted file of each wrong form is caught.
 func TestTelegramEncChatsColumnsAllowlisted(t *testing.T) {
 	if got := androidtelegram.EncChatsColumns(); !slices.Equal(got, []string{"uid", "user"}) || androidtelegram.TableEncChats != "enc_chats" {
 		t.Fatalf("encChatsColumns %v, tableEncChats %q", got, androidtelegram.TableEncChats)
@@ -239,8 +356,12 @@ func TestTelegramEncChatsColumnsAllowlisted(t *testing.T) {
 	if files["secret.go"] == nil {
 		t.Fatal("no secret.go")
 	}
-	for _, v := range encChatsViolations(fset, files) {
+	for _, v := range append(append(encChatsViolations(fset, files), encChatsUses(fset, files)...), encChatsPresent(files)...) {
 		t.Error(v)
+	}
+	if got := strings.Join(encChatsPresent(map[string]*ast.File{"secret.go": mustParse(t, token.NewFileSet(), "secret.go",
+		`package p; const tableEncChats = "enc_chats"`)}), "\n"); !strings.Contains(got, "want 1") || !strings.Contains(got, "no Column") {
+		t.Errorf("a package without the Req and the Column read: %q", got)
 	}
 
 	planted := map[string]string{ //nolint:gosec // G101: planted Go source naming column names, not credentials
@@ -251,17 +372,22 @@ func TestTelegramEncChatsColumnsAllowlisted(t *testing.T) {
 		"pass.go":    `package p; func f() { scan(tableEncChats) }`,
 		"secret.go":  `package p; const tableEncChats = "enc_chats"; func g() string { return "khash" }`,
 		"secret2.go": `package p; const tableEncChats = "enc_chats"`,
+		"alias.go":   `package p; const alias = tableEncChats; func f() { db.Table(ctx, alias, []string{"g"}, nil) }`,
+		"assign.go":  `package p; func f() { t := tableEncChats; db.Table(ctx, t, []string{"g"}, nil) }`,
+		"list.go":    `package p; func f() { for _, t := range []string{tableEncChats} { db.Table(ctx, t, nil, nil) } }`,
+		"case.go":    `package p; func f(s string) { switch s { case tableEncChats: } }`,
 	}
 	wants := map[string]string{ //nolint:gosec // G101: violation messages naming column names, not credentials
 		"other.go": `literal "enc_chats" outside`, "table.go": "a Table on tableEncChats", "column.go": "a Column on tableEncChats",
 		"req.go": "a Req on tableEncChats", "pass.go": "scan is passed tableEncChats", "secret.go": "names the enc_chats column khash",
-		"secret2.go": `literal "enc_chats" outside`,
+		"secret2.go": `literal "enc_chats" outside`, "alias.go": "a const or var whose value is tableEncChats",
+		"assign.go": "may alias it", "list.go": "in a list that may alias it", "case.go": "may alias it",
 	}
 	for name, src := range planted {
 		pf := token.NewFileSet()
 		set := map[string]*ast.File{"secret.go": mustParse(t, pf, "secret.go", `package p; const tableEncChats = "enc_chats"`)}
 		set[name] = mustParse(t, pf, name, src)
-		got := strings.Join(encChatsViolations(pf, set), "\n")
+		got := strings.Join(append(encChatsViolations(pf, set), encChatsUses(pf, set)...), "\n")
 		if !strings.Contains(got, wants[name]) {
 			t.Errorf("planted %s: violations %q, want one with %q", name, got, wants[name])
 		}

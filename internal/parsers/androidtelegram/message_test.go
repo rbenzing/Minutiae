@@ -25,7 +25,7 @@ func hostileStopRows() []int64 {
 func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 	res := parseFixture(t, "telegram-hostile")
 	exp := parsertest.LoadFixture(t, "testdata", "telegram-hostile").Expect
-	if len(res.Records) != len(exp.Records) || res.Notes["rows.messages_v2"] != "24" || len(res.Records) != 24 {
+	if len(res.Records) != len(exp.Records) || res.Notes["rows.messages_v2"] != "26" || len(res.Records) != 26 {
 		t.Errorf("%d records, the engine counts %s rows (oracle %d)", len(res.Records), res.Notes["rows.messages_v2"], len(exp.Records))
 	}
 	rows := byRow(res.Records)
@@ -338,13 +338,13 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 			got = append(got, w.Locator+": "+w.Reason)
 		}
 	}
-	want := "sqlite:table=messages_v2: telegram-blob-undecoded: messages_v2.data: 14 records (unknown-constructor:1,truncated:10,malformed:2,cap:1)"
+	want := "sqlite:table=messages_v2: telegram-blob-undecoded: messages_v2.data: 16 records (partial:2,unknown-constructor:1,truncated:10,malformed:2,cap:1)"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("warnings %q, want one %q", got, want)
 	}
 	notes := map[string]string{
-		"blob_states":       "messages_v2.data=decoded:9,unknown-constructor:1,truncated:10,malformed:2,cap:1",
-		"constructors_seen": "0x7600b9d3:20,0x0badf00d:1,0x22eb6aba:1",
+		"blob_states":       "messages_v2.data=decoded:9,partial:2,unknown-constructor:1,truncated:10,malformed:2,cap:1",
+		"constructors_seen": "0x7600b9d3:20,0x555555f9:2,0x0badf00d:1,0x22eb6aba:1",
 	}
 	for k, v := range notes {
 		if res.Notes[k] != v {

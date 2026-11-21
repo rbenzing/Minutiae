@@ -725,6 +725,12 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                 raw["sender_state"] = "absent" if from_read else "blob-undecided"
         else:
             unknown_parts = True
+            # a negative dialog left unresolved keeps the decoded sender in raw, never as a participant (plan 4I4 Task
+            # 10 fix 1, M5)
+            if dclass == "negative" and b is not None and cls:
+                fa = address(b, "from_id")
+                if fa:
+                    raw["from_id"] = fa
     else:
         unknown_parts = True
 
@@ -1148,7 +1154,8 @@ def oracle(files, ddl_name, variant, user_version, refused=False, nan=frozenset(
     remote, file = (REMOTE, "db") if lone else ("", "any")
     counts = {}  # (table, col) -> {state: n}
     seen = {}
-    secret_dialogs = set()
+    secret_dialogs = set()  # by enc_chats key: one chat in both generations is one (plan 4I4 Task 10 fix 1, M4)
+    undecided_dialogs = 0
     for table in ("messages", "messages_v2"):
         for r in view.get(table, []):
             rec = map_message(table, r, env, remote, file, nan)
@@ -1163,7 +1170,9 @@ def oracle(files, ddl_name, variant, user_version, refused=False, nan=frozenset(
                 top = struct.unpack_from("<I", r["data"])[0]
                 seen[top] = seen.get(top, 0) + 1
             if raw.get("secret_chat"):
-                secret_dialogs.add(raw.get("uid"))
+                secret_dialogs.add(raw.get("enc_chat_id"))
+            if raw.get("thread_state") == "undecided":
+                undecided_dialogs += 1
     selfs = 0
     for r in view.get("users", []):
         rec = map_user(r, env, remote, file)
@@ -1200,7 +1209,8 @@ def oracle(files, ddl_name, variant, user_version, refused=False, nan=frozenset(
         if len(order) > 64:
             entries.append("other:%d" % sum(seen[k] for k in order[64:]))
         notes["constructors_seen"] = note_list(entries, MAX_SEEN_NOTE)
-    notes["secret_chats"] = str(len(secret_dialogs))
+    notes["secret_chats"] = str(len(secret_dialogs)) if not undecided_dialogs else ">=%d (%d rows with an undecided dialog)" % (
+        len(secret_dialogs), undecided_dialogs)
     notes["self_users"] = str(selfs)
     unmapped = [t for t in present if t not in READ_TABLES]
     if unmapped:
@@ -1523,6 +1533,11 @@ def layers_rows():
     for i, r in enumerate(media):
         rid = 1501 + i
         rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "media " + r.cls, frm=pu(ANN), media=mandatory(r, "MessageMedia", rid, "")))))
+    assert 1501 + len(media) <= 1601
+    # a secret-kind field on the wire (plan 4I4 Task 10 fix 1, M7): a phone-call reason that carries an encrypted key
+    allow = call_action(9601)
+    allow["reason"] = {"_": "TL_phoneCallDiscardReasonAllowGroupCall", "encrypted_key": secret("4i4-layers", 8)}
+    rows.append(row(1601, 1601, ANN, enc(service(1601, 1601, allow, frm=pu(ANN)))))
     for i, r in enumerate([r for r in ordered if r.typ == "User"]):
         uid = 5000001 + i
         v = mandatory(r, "User", uid, "")
@@ -1574,6 +1589,12 @@ def hostile_rows():
     h(base, date=float(D) + 0.5)
     h(C.Raw(b"text in a blob column"))
     h(base, out=7)
+    # key-bearing rows (plan 4I4 Task 10 fix 1, I2): a secret document cut inside its key and one cut inside its iv
+    # (the decode stops at the thumbs object, which the table lacks, before either; the bytes are in the cell)
+    doc = enc({"_": "TL_message_secret_layer72", "out": True, "id": -20, "ttl": 0, "from_id": SELF, "peer_id": pu(ANN),
+               "date": D + 20, "message": "", "media": enc_document([]), "entities": []})
+    for field in (secret("4i4-dockey", 32), secret("4i4-dociv", 32)):
+        h(doc[:doc.index(field) + len(E.SYNTHETIC_PREFIX) + 6], uid=S77, out=1, read_state=0)
     return out, frozenset({(nan_row["rowid"], "uid")})
 
 
@@ -1764,7 +1785,7 @@ def variant_hostile(work):
     # TEXT in INTEGER columns: written while the column has no type (writable_schema), then the declaration restored
     texty = [r for r in rows if any(isinstance(v, C.Raw) for k, v in r.items() if k != "data")]
     plain = [r for r in rows if r not in texty]
-    fill(con, plain)
+    fill(con, plain, enc=enc_chat_rows())  # the enc_chats key columns (plan 4I4 Task 10 fix 1, I2)
     orig = con.execute("select sql from sqlite_master where name = 'messages_v2'").fetchone()[0]
     con.execute("pragma writable_schema = ON")
     con.execute("update sqlite_master set sql = ? where name = 'messages_v2'", (orig.replace("uid INTEGER,", "uid,"),))

@@ -23,14 +23,16 @@ const (
 )
 
 // joinTables are the tables the mappings join (spec 6.3), with the columns each join needs, as Probe checks them:
-// chats, contacts, users_data and enc_chats, each by its uid rowid alias. users is a mapped table, not a join table.
+// chats, contacts, users_data and enc_chats (its Req names encChatsColumns()), each by its uid rowid alias: every Req
+// but the mapped tables (the message tables and users, a mapped table, not a join table).
 func joinTables() []rowrun.Req {
 	var out []rowrun.Req
 	for _, rq := range reqs() {
 		switch rq.Table {
-		case tableChats, tableContacts, tableUsersData, tableEncChats:
-			out = append(out, rq)
+		case tableMessagesV2, tableMessages, tableUsers:
+			continue
 		}
+		out = append(out, rq)
 	}
 	return out
 }
@@ -180,7 +182,8 @@ type countingEmitter struct {
 	states map[string]map[string]int64 // "<table>.<col>" -> state -> records
 	seen   map[string]int64            // data_constructor of a message record -> records
 	joins  map[string]int64            // table -> records whose raw.join_undecided names it
-	secret map[int64]struct{}          // the distinct dialog ids of the secret-chat message records
+	secret map[int64]struct{}          // the distinct enc_chats keys of the secret-chat message records (M4)
+	undec  int64                       // message records whose dialog is undecided (an unreadable uid)
 }
 
 func newCountingEmitter(out parse.Emitter) *countingEmitter {
@@ -219,8 +222,12 @@ func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
 		if id, ok := raw["data_constructor"].(string); ok {
 			c.seen[id]++
 		}
-		if uid, ok := raw["uid"].(int64); ok && raw["secret_chat"] == true {
-			c.secret[uid] = struct{}{}
+		// one chat is one key in both generations (pre-84 77<<32 and 1<<62|77 are chat 77)
+		if key, ok := raw["enc_chat_id"].(int64); ok && raw["secret_chat"] == true {
+			c.secret[key] = struct{}{}
+		}
+		if raw["thread_state"] == stateUndecided {
+			c.undec++
 		}
 	}
 	if list, ok := raw["join_undecided"].([]any); ok {

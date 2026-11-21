@@ -3535,9 +3535,9 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   (short records written before the `ALTER`s), `telegram-v64` (the pre-84 `messages` rows P1-P6), `telegram-both` (both
   generations), `telegram-otherversion` (182) and `telegram-oldversion` (63) and `telegram-nomessages` (refused: no
   record), `telegram-layers` (one row per Message, forward header, peer, reply header and entity ID, each full media
-  wrapper and one opaque one, one `users` row per User ID and one `chats` row per Chat ID), `telegram-hostile` (unknown
+  wrapper and one opaque one, a phone-call reason carrying a secret-kind `encrypted_key`, one `users` row per User ID and one `chats` row per Chat ID), `telegram-hostile` (unknown
   top ID, R31 cut at every field offset, bad bool, bad vector, a capped count, a long string past the end, a 255
-  prefix, non-zero padding, NULL/REAL/NaN/TEXT `uid`, NULL `mid`, REAL `date`, TEXT `data`, `out` 7) and
+  prefix, non-zero padding, NULL/REAL/NaN/TEXT `uid`, NULL `mid`, REAL `date`, TEXT `data`, `out` 7, two secret documents cut inside their key and inside their iv, and the two `enc_chats` key rows) and
   `telegram-deleted` (rows deleted in the WAL, an edit and a rewrite by `REPLACE INTO`, with its typed recovery
   oracle). Only `telegram-v181` and `telegram-deleted` keep a `-wal`; every database is written with
   `secure_delete = ON` and WAL as the app writes. A NaN cell is written as a REAL marker whose bytes are then replaced

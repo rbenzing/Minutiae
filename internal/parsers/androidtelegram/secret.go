@@ -5,10 +5,13 @@ import (
 	"github.com/rbenzing/minutiae/internal/parse"
 )
 
-// Secret chats and key material (spec 9, call 6, T1, F9). This file holds every access to enc_chats: the table is
-// joined by its rowid alias and read in two columns, uid and user; data (TL EncryptedChat) is never decoded, and no
-// other column (the key, its hashes and fingerprints, the sequence counters) is ever named, requested, scanned or
-// counted beyond the table's row count. TestTelegramEncChatsColumnsAllowlisted pins it.
+// Secret chats and key material (spec 9, call 6, T1, F9). This file holds the only "enc_chats" literal and the join:
+// the table is joined by its rowid alias (Get), and the SQLite decoder reads the joined row whole, key cells included
+// (they are in the captured file already); the parser interprets and emits only user, named through
+// encChatsColumns(). data (TL EncryptedChat) is never decoded, no other column is ever named, and no key byte is
+// emitted (T1). The table is also named by the schema check (reqs in parser.go: Need encChatsColumns()), the join
+// guard (guard.go joinTables, through reqs) and the census row count (notes.go rowNoteTables, readTables): a count and
+// a table name, never a column. TestTelegramEncChatsColumnsAllowlisted pins it.
 
 // tableEncChats is the only "enc_chats" literal of the package (F9).
 const tableEncChats = "enc_chats"
@@ -28,7 +31,7 @@ func encChatID(uid int64) int64 {
 }
 
 // encChatUser joins the enc_chats row of a secret dialog by its key encID (from dialogOf, never from the uid alone;
-// F10) and reads its user column only (spec 8.6, 9): the counterparty's user id, ok when read. A miss states
+// F10) and interprets its user column only (spec 8.6, 9; the decoder reads the row whole): the counterparty's user id, ok when read. A miss states
 // raw.counterparty_state no-enc_chats-row (zero-key for a key of 0, B13); an untrusted join "undecided" with
 // raw.join_undecided; a user cell that is NULL, of another class or unreadable is listed in unknown_columns as
 // enc_chats.user. A nil e is the typed pass (4I4-P6): no join, counterparty_state not-joined-recovered.

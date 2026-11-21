@@ -428,7 +428,11 @@ func TestTelegramDialogIdEdgeValuesAreUndecided(t *testing.T) {
 		{mid: 3, uid: 0, out: int64(1), read: int64(0), data: outRow(3)},
 		{mid: 4, uid: minInt64, out: int64(1), read: int64(0), data: outRow(4)},
 	})
-	for _, r := range parseAt(t, remoteApp, dbOnly(db)).Records {
+	edge := parseAt(t, remoteApp, dbOnly(db)).Records
+	if len(edge) != 4 {
+		t.Fatalf("%d records for the four edge rows", len(edge))
+	}
+	for _, r := range edge {
 		raw := rawOf(r)
 		ps, _ := r.Payload["participants"].([]any)
 		th := threadOf(r)

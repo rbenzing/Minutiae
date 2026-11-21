@@ -1,11 +1,13 @@
 package androidtelegram_test
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,22 +31,54 @@ func chainBytes(seed string, n int) []byte {
 // syntheticPrefix is the marker every synthetic secret field of the fixtures starts with (telegram_tl_encode.py).
 const syntheticPrefix = "SYNTHETIC-NOT-A-KEY-"
 
-// keyPatterns are the fixtures' key material (spec 9, T1): enc_chats g, authkey, fauthkey, khash and data (the
-// SHA-256 chains of their seeds), and a secret document's key and IV (the synthetic marker, then the chain bytes, 32
-// bytes in all: the chain part is the distinctive pattern; the whole field is searched too).
-func keyPatterns() map[string][]byte {
-	doc := func(seed string) []byte { return chainBytes(seed, 32-len(syntheticPrefix)) }
-	return map[string][]byte{
-		"enc_chats.g":        chainBytes("4i4-g", 256),
-		"enc_chats.authkey":  chainBytes("4i4-authkey", 256),
-		"enc_chats.fauthkey": chainBytes("4i4-fauthkey", 256),
-		"enc_chats.khash":    chainBytes("4i4-khash", 32),
-		"enc_chats.data":     chainBytes("4i4-encdata", 64),
-		"document.key":       doc("4i4-dockey"),
-		"document.iv":        doc("4i4-dociv"),
-		"document.key.field": append([]byte(syntheticPrefix), doc("4i4-dockey")...),
-		"document.iv.field":  append([]byte(syntheticPrefix), doc("4i4-dociv")...),
+// keyPattern is one key-material byte pattern and the first of its 8-byte windows that holds a key byte (a secret
+// field starts with the synthetic marker, which alone is no key).
+type keyPattern struct {
+	b     []byte
+	first int
+}
+
+// generatorSource is the fixture generator whose secret-kind values the patterns are derived from (M7).
+const generatorSource = "../../../tools/fixtures/telegram_android.py"
+
+// keyPatterns are the fixtures' key material (spec 9, T1), derived from every literal secret(seed, n) and
+// chain(seed, n) the generator fills (the enc_chats g, authkey, fauthkey, khash and data chains; a secret
+// document's key and IV, file references and every other secret-kind field such as encrypted_key, the
+// "4i4-layers" chain): a chain is its bytes; a secret field is the synthetic marker, then the chain, cut to
+// max(n, len(marker)+4) bytes (telegram_android.py secret), searched whole from its first key-bearing window and, when
+// it holds at least 8 chain bytes, as its chain part. The rule of each form is restated here, never imported.
+func keyPatterns(t *testing.T) map[string]keyPattern {
+	t.Helper()
+	src, err := os.ReadFile(generatorSource)
+	if err != nil {
+		t.Fatal(err)
 	}
+	out := map[string]keyPattern{}
+	re := regexp.MustCompile(`\b(secret|chain)\("([^"]+)", (\d+)\)`)
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		n, err := strconv.Atoi(m[3])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m[1] == "chain" {
+			out["chain:"+m[2]] = keyPattern{b: chainBytes(m[2], n)}
+			continue
+		}
+		field := append([]byte(syntheticPrefix), chainBytes(m[2], n)...)[:max(n, len(syntheticPrefix)+4)]
+		out["secret:"+m[2]] = keyPattern{b: field, first: len(syntheticPrefix) - 7}
+		if part := field[len(syntheticPrefix):]; len(part) >= 8 {
+			out["secret-chain:"+m[2]] = keyPattern{b: part}
+		}
+	}
+	for _, want := range []string{
+		"chain:4i4-g", "chain:4i4-authkey", "chain:4i4-fauthkey", "chain:4i4-khash", "chain:4i4-encdata",
+		"secret:4i4-dockey", "secret:4i4-dociv", "secret:4i4-layers",
+	} {
+		if _, ok := out[want]; !ok {
+			t.Fatalf("the generator fills no %s: the patterns are not derived from it", want)
+		}
+	}
+	return out
 }
 
 // fprint is the fixtures' enc_chats.fprint (a key fingerprint).
@@ -67,18 +101,14 @@ func encodedForms(p []byte) []string {
 	return out
 }
 
-// needles are every form of every pattern and of each of its 8-byte windows, by a label naming the pattern (a
-// whole secret field's windows from the first that holds a key byte).
-func needles() map[string][]string {
+// needles are every form of every pattern and of each of its 8-byte windows from its first key-bearing one, by a
+// label naming the pattern; fprint in decimal and hex.
+func needles(ps map[string]keyPattern) map[string][]string {
 	out := map[string][]string{}
-	for name, p := range keyPatterns() {
-		out[name] = append(out[name], encodedForms(p)...)
-		first := 0
-		if strings.HasSuffix(name, ".field") {
-			first = len(syntheticPrefix) - 7 // a window holds at least one key byte: the marker alone is not a key
-		}
-		for i := first; i+8 <= len(p); i++ {
-			out[name] = append(out[name], encodedForms(p[i:i+8])...)
+	for name, p := range ps {
+		out[name] = append(out[name], encodedForms(p.b)...)
+		for i := p.first; i+8 <= len(p.b); i++ {
+			out[name] = append(out[name], encodedForms(p.b[i:i+8])...)
 		}
 	}
 	dec, h := strconv.FormatUint(fprint, 10), strconv.FormatUint(fprint, 16)
@@ -104,6 +134,19 @@ func newFinder(ns map[string][]string) finder {
 		}
 	}
 	return f
+}
+
+// labels are the labels of every needle found in s.
+func (f finder) labels(s string) map[string]bool {
+	out := map[string]bool{}
+	for i := 0; i+finderKey <= len(s); i++ {
+		for _, n := range f[s[i:i+finderKey]] {
+			if strings.HasPrefix(s[i:], n[1]) {
+				out[n[0]] = true
+			}
+		}
+	}
+	return out
 }
 
 // find is the first needle found in s: its label and form.
@@ -164,23 +207,44 @@ func outputTexts(t *testing.T, res parsertest.Result) []string {
 	return out
 }
 
+// keyBearing are the variants that hold key material by design (I2): telegram-v181 (the CORE enc_chats rows and secret
+// documents), telegram-hostile (enc_chats rows and secret documents cut inside key and inside iv) and telegram-layers
+// (one row per constructor: a secret-kind field filled with the 4i4-layers chain). Every other variant holds none by
+// design, and the test fails when a variant's files say otherwise either way.
+func keyBearing() []string { return []string{"telegram-v181", "telegram-hostile", "telegram-layers"} }
+
 // Spec 9 (call 6), ruling T1: no key material reaches any output of android.telegram. The live pass over every
-// committed variant: no record (payload, raw, Summary, Body, locator), note or warning holds the fixtures' enc_chats
-// g, authkey, fauthkey, khash or data, or a secret document's key or IV, raw, in hex of either case or in standard or
-// URL base64, whole or in any 8-byte window, nor enc_chats.fprint in decimal or hex. The patterns are first found in
-// telegram-v181's files, so the search is never vacuous. The typed pass of telegram-deleted runs once its claims exist
-// (Task 14).
+// committed variant: no record (payload, raw, Summary, Body, locator), note or warning holds any secret-kind value the
+// generator fills (keyPatterns), raw, in hex of either case or in standard or URL base64, whole or in any key-bearing
+// 8-byte window, nor enc_chats.fprint in decimal or hex. A key-bearing variant whose files hold no pattern, another
+// whose files hold one, or a pattern no variant holds fails the test: no subtest asserts nothing unawares. The typed
+// pass of telegram-deleted runs once its claims exist (Task 14).
 func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
-	files := fixtureFiles(t, "telegram-v181")
-	held := append(bytes.Clone(files["db"]), files["wal"]...)
-	for name, p := range keyPatterns() {
-		if !bytes.Contains(held, p) {
-			t.Fatalf("telegram-v181 does not hold the pattern %s: the search would prove nothing", name)
+	ps := keyPatterns(t)
+	f := newFinder(needles(ps))
+	if name, _, ok := f.find("x" + hex.EncodeToString(ps["chain:4i4-khash"].b[3:11]) + "y"); !ok || name != "chain:4i4-khash" {
+		t.Fatal("the finder misses a hex window")
+	}
+	seen := map[string]bool{}
+	for _, v := range variants {
+		files := fixtureFiles(t, v)
+		held := map[string]bool{}
+		for _, role := range []string{"db", "wal", "journal"} {
+			for l := range f.labels(string(files[role])) {
+				held[l], seen[l] = true, true
+			}
+		}
+		switch bearing := slices.Contains(keyBearing(), v); {
+		case bearing && len(held) == 0:
+			t.Errorf("%s is listed as key-bearing but its files hold no pattern: its subtest would assert nothing", v)
+		case !bearing && len(held) > 0:
+			t.Errorf("%s holds %v but is not listed as key-bearing", v, held)
 		}
 	}
-	f := newFinder(needles())
-	if name, _, ok := f.find("x" + hex.EncodeToString(keyPatterns()["enc_chats.khash"][3:11]) + "y"); !ok || name != "enc_chats.khash" {
-		t.Fatal("the finder misses a hex window")
+	for name := range ps {
+		if !seen[name] {
+			t.Errorf("no variant holds the pattern %s", name)
+		}
 	}
 	for _, v := range variants {
 		t.Run(v, func(t *testing.T) {

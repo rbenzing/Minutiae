@@ -376,6 +376,13 @@ func dialogStates(t *testing.T) {
 			map[string]any{"participants_unknown": true},
 		},
 		{
+			// M5: a negative dialog left unresolved keeps the decoded sender in raw, never as a participant
+			"unresolved sender",
+			msgCells{mid: 15, uid: -2000020, data: in(15, peerUser(self), ann)},
+			map[string]any{"dialog_class": "negative", "dialog_class_state": "conflict", "from_id": "user:1000002", "sender_state": nil},
+			map[string]any{"participants_unknown": true, "participants": []any{}},
+		},
+		{
 			"folder",
 			msgCells{mid: 14, uid: 1<<61 | 1, data: in(14, peerUser(self), ann)},
 			map[string]any{"dialog_class": "folder", "sender_state": nil},

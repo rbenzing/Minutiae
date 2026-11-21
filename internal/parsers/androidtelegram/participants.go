@@ -15,7 +15,8 @@ import (
 //     raw.sender_basis "channel-post"; else unknown with raw.sender_state "absent" (the blob's flags say no from_id)
 //     or "blob-undecided" (the blob did not reach it). The app's synthesized from_id (TLRPC:59550-59559) is never
 //     made here: no sender is ever invented;
-//   - a folder, an unresolved negative or an unknown dialog, or an unknown direction: unknown.
+//   - a folder, an unresolved negative or an unknown dialog, or an unknown direction: unknown (an unresolved negative
+//     dialog keeps its decoded sender address in raw.from_id).
 //
 // An inline from_id of a class the table leaves unresolved gives no address: raw.from_id_id (the id as stored) and
 // raw.from_id_class_state "contradictory" (4I4-P11, T5).
@@ -34,6 +35,12 @@ func participantsOf(v view, hasTop bool, state, dir string, d dialog, raw map[st
 	switch {
 	case d.class == classUser:
 		return []message.Participant{{Role: message.RoleFrom, Address: own}}, false
+	case d.class == classNegative:
+		// an unresolved negative dialog keeps the decoded sender in raw, never as a participant (M5)
+		if a, _, ok := peerAddress(v, "from_id"); hasTop && ok {
+			raw["from_id"] = a
+		}
+		return nil, true
 	case d.class != classSecret && !d.class.grouped():
 		return nil, true
 	}
