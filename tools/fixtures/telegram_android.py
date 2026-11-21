@@ -1006,9 +1006,10 @@ def map_call(table, r, raw, b, direction, dclass, uid, time, remote, file):
         slug = ident(raw, "slug", b.val(a + "reason.slug"))
         if slug:
             raw["slug"] = slug
+    # presence is the action's flags, never whether the field was reached (plan 4I4 Task 11 review I1)
     if reason is None:
         outcome = "unknown"
-        raw["reason_state"] = "not-recorded"
+        raw["reason_state"] = "undecided" if flags is None or flags & 1 else "not-recorded"
     elif label == "missed" and direction == "in":
         outcome = "missed"
     elif label == "busy" and direction == "in":
@@ -1020,13 +1021,20 @@ def map_call(table, r, raw, b, direction, dclass, uid, time, remote, file):
     p = {"direction": direction, "outcome": outcome, "kind": "video" if video else "voice", "service": "telegram"}
     duration = b.val(a + "duration")
     time_end = None
-    if duration is not None:
+    if duration is None:
+        if flags is None or flags & 2:
+            raw["duration_state"] = "undecided"
+    else:
         raw["duration"] = duration
-        if duration >= 0:
+        if duration < 0:
+            raw["duration_state"] = "negative"
+        elif duration > 0 and time is None:
+            raw["duration_state"] = "no-start-time"
+        else:
             p["duration_s"] = duration  # facts.tsv unit.call_duration: seconds
-        if duration > 0 and time is not None:
-            time_end = C.iso(r["date"] + duration, "s")
-            raw["time_end_basis"] = "start+duration"
+            if duration > 0:
+                time_end = C.iso(r["date"] + duration, "s")
+                raw["time_end_basis"] = "start+duration"
     if dclass == "user":
         p["address"] = "user:%d" % uid
     else:

@@ -230,3 +230,42 @@ func TestTelegramCallBlobStoppedBeforeActionIsAMessage(t *testing.T) {
 		t.Errorf("R18: type %s kind %v data_state %v", r18.Type, r18.Payload["kind"], rawOf(r18)["data_state"])
 	}
 }
+
+// Spec 8.7, review I1 (presence from the flags): a reason or duration the flags announce but the decode did not read
+// is "undecided", never "not-recorded"; the flags decide, not whether the field was reached. M2: a duration that
+// yields no duration_s or end states why (negative, no-start-time).
+func TestTelegramCallPresenceFollowsTheActionFlags(t *testing.T) {
+	const ann = 1000002
+	unknownReason := append(append(le32(idCallAction), le32(bitCallReason|bitCallTime)...), le64(1)...)
+	unknownReason = append(append(unknownReason, le32(0x0badf00d)...), le32(60)...) // a reason ID the table lacks
+	neg, pos := int32(-3), int32(5)
+	cells := []msgCells{
+		{mid: 1, uid: ann, data: tlService(1, ann, peerUser(1000001), unknownReason)},
+		{mid: 2, uid: ann, data: tlService(2, ann, peerUser(1000001), tlCall{id: 2, duration: &neg}.bytes())},
+		{mid: 3, uid: ann, date: int64(0), data: tlService(3, ann, peerUser(1000001), tlCall{id: 3, duration: &pos}.bytes())},
+		{mid: 4, uid: ann, data: tlService(4, ann, peerUser(1000001), tlCall{id: 4}.bytes())},
+	}
+	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, cells))).Records)
+	want := []map[string]any{
+		{"reason_state": "undecided", "duration_state": "undecided", "reason": nil, "duration": nil},
+		{"reason_state": "not-recorded", "duration_state": "negative", "duration": int64(-3)},
+		{"reason_state": "not-recorded", "duration_state": "no-start-time", "duration": int64(5)},
+		{"reason_state": "not-recorded", "duration_state": nil, "duration": nil},
+	}
+	for i, w := range want {
+		r := got["messages_v2/"+itoa(int64(i+1))]
+		raw := rawOf(r)
+		if r.Type != "call" {
+			t.Errorf("row %d: type %s", i+1, r.Type)
+		}
+		for k, v := range w {
+			g, has := raw[k]
+			if (v == nil && has) || (v != nil && jsonText(g) != jsonText(v)) {
+				t.Errorf("row %d: raw.%s = %v (present %v), want %v", i+1, k, g, has, v)
+			}
+		}
+		if _, has := r.Payload["duration_s"]; has {
+			t.Errorf("row %d: duration_s present", i+1)
+		}
+	}
+}

@@ -20,6 +20,10 @@ const (
 	stateNotUserDialog     = "not-user-dialog"
 	basisStartPlusDuration = "start+duration"
 	unitUnestablished      = "unestablished"
+	stateNegative          = "negative"
+	stateNoStartTime       = "no-start-time"
+	bitCallReason          = 1 << 0 // the action's flags (constructors.tsv): reason F.0, duration F.1
+	bitCallDuration        = 1 << 1
 )
 
 // reasonLabel names a discard reason ID (spec 8.7); "" for an ID the table does not name (the AllowGroupCall reason,
@@ -68,10 +72,14 @@ func callOf(v view, dir string, d dialog, uid int64, uidOK bool, start *records.
 	if video {
 		c.Kind = call.KindVideo
 	}
+	flags, flagsOK := v.Int("action.flags")
 	reason, hasReason := v.ID("action.reason")
-	if hasReason {
+	switch {
+	case hasReason:
 		raw["reason"] = hexID(reason)
-	} else {
+	case !flagsOK || flags&bitCallReason != 0:
+		raw["reason_state"] = stateUndecided // announced by the flags (or the flags unread) but not reached
+	default:
 		raw["reason_state"] = stateReasonNotRecorded
 	}
 	switch label := reasonLabel(reason); {
@@ -89,14 +97,25 @@ func callOf(v view, dir string, d dialog, uid int64, uidOK bool, start *records.
 		}
 	}
 	var end *records.Time
-	if n, ok := v.Int("action.duration"); ok {
+	n, hasDuration := v.Int("action.duration")
+	switch {
+	case !hasDuration:
+		if !flagsOK || flags&bitCallDuration != 0 {
+			raw["duration_state"] = stateUndecided
+		}
+	case unitCallDuration != "seconds":
+		raw["duration"], raw["duration_unit"] = n, unitUnestablished
+	default:
 		raw["duration"] = n
-		if unitCallDuration != "seconds" {
-			raw["duration_unit"] = unitUnestablished
-		} else if n >= 0 {
+		switch {
+		case n < 0:
+			raw["duration_state"] = stateNegative
+		case n > 0 && start == nil:
+			raw["duration_state"] = stateNoStartTime
+		default:
 			secs := float64(n)
 			c.DurationS = &secs
-			if n > 0 && start != nil {
+			if n > 0 {
 				end = &records.Time{T: start.T.Add(time.Duration(n) * time.Second), Basis: start.Basis}
 				raw["time_end_basis"] = basisStartPlusDuration
 			}
