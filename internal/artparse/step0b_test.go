@@ -483,6 +483,62 @@ func TestClaimUniquenessIsPerPlatform(t *testing.T) {
 	}
 }
 
+// globClaimMapper is a claimMapper whose primary role matches the given globs.
+type globClaimMapper struct {
+	claimMapper
+	globs []string
+}
+
+func (p *globClaimMapper) Meta() parse.Meta {
+	m := p.claimMapper.Meta()
+	m.Inputs[0].Globs = p.globs
+	return m
+}
+
+func globClaimer(t *testing.T, name, table string, globs ...string) artparse.Registered {
+	t.Helper()
+	return regFake(t, &globClaimMapper{claimMapper{claimParser{name: name, status: parse.Applicable, claims: []string{table}}, []string{table}}, globs}, name)
+}
+
+// 4I4-T10 (amends 4I-R23): two parsers of one platform may claim one table when every pair of their primary globs ends in
+// different file names (two literals that differ, or a pattern that cannot match the other's literal): no artifact can be
+// matched by both.
+func TestClaimUniquenessAllowsDisjointFiles(t *testing.T) {
+	c := newCase(t)
+	opts := artparse.Options{Limits: parse.DefaultLimits()}
+	a := globClaimer(t, "wa", "messages", "android:**/com.whatsapp/databases/msgstore.db", "android:**/WhatsApp/Databases/msgstore*.db", "android:**/WhatsApp/Databases/msgstore*.db.crypt*")
+	b := globClaimer(t, "tg", "messages", "android:**/org.telegram.messenger/files/cache4.db", "android:**/org.telegram.messenger/files/account[0-9]/cache4.db")
+	if _, err := artparse.New(c, []artparse.Registered{a, b}, opts); err != nil {
+		t.Fatalf("disjoint literal file names refused: %v", err)
+	}
+}
+
+// 4I4-T10: a pattern that matches the other final segment, two patterns, or equal literals (also across case) may meet
+// in one artifact: refused.
+func TestClaimUniquenessRefusesFilesThatMayMeet(t *testing.T) {
+	c := newCase(t)
+	opts := artparse.Options{Limits: parse.DefaultLimits()}
+	for name, pair := range map[string][2]string{
+		"wildcard":     {"android:**/x/*.db", "android:**/y/cache4.db"},
+		"equal":        {"android:**/x/cache4.db", "android:**/y/cache4.db"},
+		"equal-fold":   {"android:**/x/Cache4.db", "android:**/y/cache4.db"},
+		"class":        {"android:**/x/cache[0-9].db", "android:**/y/cache4.db"},
+		"two-patterns": {"android:**/x/msgstore*.db", "android:**/y/cache*.db"},
+		"second-pair":  {"android:**/x/a.db", "android:**/x/b.db"},
+	} {
+		a := globClaimer(t, "pa", "messages", pair[0])
+		b := globClaimer(t, "pb", "MESSAGES", pair[1])
+		if name == "second-pair" { // one disjoint pair is not enough: every pair must be
+			a = globClaimer(t, "pa", "messages", "android:**/x/a.db", "android:**/x/c.db")
+			b = globClaimer(t, "pb", "messages", "android:**/x/b.db", "android:**/x/c.db")
+		}
+		_, err := artparse.New(c, []artparse.Registered{a, b}, opts)
+		if err == nil || !strings.Contains(err.Error(), "both claim table") {
+			t.Errorf("%s: err %v, want the claim collision", name, err)
+		}
+	}
+}
+
 // Defence in depth: two parsers' claims on one folded table for one artifact are an error, never a pick or a drop.
 func TestClaimedTablesOfOneArtifactNeverShareATable(t *testing.T) {
 	ok := []artparse.Claimed{{Table: "message", Parser: "a"}, {Table: "calls", Parser: "b"}, {Table: "message", Parser: "a"}}

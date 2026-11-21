@@ -3,6 +3,7 @@ package artparse
 import (
 	"context"
 	"fmt"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -62,22 +63,88 @@ func foldTable(s string) string {
 // case-insensitively (sms and SMS are one table): two claims on one table of one platform would make the owner of its
 // rows ambiguous. The rule is per platform (4I-R23): an artifact's logical path has one scheme, ClaimedTables considers
 // only the jobs whose primary glob matched it, and a primary glob lies inside Meta.Platforms, so parsers of different
-// platforms never claim on one artifact. A parser declaring both platforms counts on both.
+// platforms never claim on one artifact. A parser declaring both platforms counts on both. As amended by 4I4-T10 the
+// rule is also per possible artifact: two claims on one table of one platform do not collide when their files can never
+// be one artifact, decided conservatively from the final segments of the globs of the claims' roles (claimsDisjoint);
+// equal names, a pattern that can match the other's name, two patterns or a role without globs still collide. checkArtifactClaims backs this up per artifact, unchanged.
 func checkClaimUniqueness(regs []Registered) error {
 	type key struct{ platform, table string }
-	owner := map[key]string{}
+	owner := map[key][]Registered{}
 	for _, r := range regs {
 		for _, c := range r.meta.Claims {
 			for _, platform := range r.meta.Platforms {
 				k := key{platform, foldTable(c.Table)}
-				if other, dup := owner[k]; dup {
-					return fmt.Errorf("artparse: parsers %q and %q both claim table %q on platform %q", other, r.meta.Name, c.Table, platform)
+				for _, other := range owner[k] {
+					if !claimsDisjoint(other, r, c.Role) {
+						return fmt.Errorf("artparse: parsers %q and %q both claim table %q on platform %q", other.meta.Name, r.meta.Name, c.Table, platform)
+					}
 				}
-				owner[k] = r.meta.Name
+				owner[k] = append(owner[k], r)
 			}
 		}
 	}
 	return nil
+}
+
+// claimsDisjoint says the files that parsers a and b read in the role of a claim (b's) can never be one artifact: for
+// every pair of globs of that role (one from each parser) the final path segments are provably different under
+// foldTable (segmentsDisjoint). A role either parser lacks, or one without globs, is not provably disjoint (4I4-T10).
+func claimsDisjoint(a, b Registered, role string) bool {
+	ga, gb := roleGlobs(a.meta, role), roleGlobs(b.meta, role)
+	if len(ga) == 0 || len(gb) == 0 {
+		return false
+	}
+	for _, x := range ga {
+		for _, y := range gb {
+			if !segmentsDisjoint(finalSegment(x), finalSegment(y)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func roleGlobs(m parse.Meta, role string) []string {
+	for _, in := range m.Inputs {
+		if in.Role == role {
+			return in.Globs
+		}
+	}
+	return nil
+}
+
+// finalSegment is the part of glob after its last '/' (after the scheme's ':' when there is no '/').
+func finalSegment(glob string) string {
+	if i := strings.LastIndexByte(glob, '/'); i >= 0 {
+		return glob[i+1:]
+	}
+	if i := strings.IndexByte(glob, ':'); i >= 0 {
+		return glob[i+1:]
+	}
+	return glob
+}
+
+// segmentsDisjoint is true only when no file name can match both final segments. Two literals (no glob
+// metacharacter) are disjoint when they differ under foldTable; a literal and a pattern when the pattern does not match
+// the literal (folded). Two patterns, an empty segment and any brace or escape syntax are not decided: they collide.
+func segmentsDisjoint(x, y string) bool {
+	const meta = "*?[]{}\\"
+	if x == "" || y == "" || strings.ContainsAny(x, "{}\\") || strings.ContainsAny(y, "{}\\") {
+		return false
+	}
+	lx, ly := !strings.ContainsAny(x, meta), !strings.ContainsAny(y, meta)
+	fx, fy := foldTable(x), foldTable(y)
+	switch {
+	case lx && ly:
+		return fx != fy
+	case lx:
+		ok, err := path.Match(fy, fx)
+		return err == nil && !ok
+	case ly:
+		ok, err := path.Match(fx, fy)
+		return err == nil && !ok
+	}
+	return false
 }
 
 // checkArtifactClaims is the defence in depth of ClaimedTables: whatever the registry check let through, two parsers'
