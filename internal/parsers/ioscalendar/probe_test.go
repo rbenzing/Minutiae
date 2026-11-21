@@ -191,7 +191,7 @@ func TestMetaIsValid(t *testing.T) {
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "ios.calendar" || m.Version != "1.0.4" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
+	if m.Name != "ios.calendar" || m.Version != "1.0.5" || len(m.Emits) != 1 || m.Emits[0].Type != "calendar_event" || m.Emits[0].PayloadVersion != 1 {
 		t.Errorf("meta %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformIOS {

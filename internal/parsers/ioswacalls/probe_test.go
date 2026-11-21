@@ -71,7 +71,7 @@ func TestIOSWhatsAppCallsGlobsCompileAndMatch(t *testing.T) { // 4I2-R2
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "ios.whatsapp.calls" || m.Version != "1.0.1" || len(m.Claims) != 1 || m.Claims[0].Table != "ZWACDCALLEVENT" || m.Claims[0].Role != "db" {
+	if m.Name != "ios.whatsapp.calls" || m.Version != "1.0.2" || len(m.Claims) != 1 || m.Claims[0].Table != "ZWACDCALLEVENT" || m.Claims[0].Role != "db" {
 		t.Errorf("identity or claims: %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformIOS || len(m.Emits) != 1 || m.Emits[0].Type != "call" {

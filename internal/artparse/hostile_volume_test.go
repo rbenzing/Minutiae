@@ -178,6 +178,7 @@ var hostileDirs = map[string]string{
 	"android.whatsapp.msgstore": "androidwhatsapp", "android.whatsapp.contacts": "androidwacontacts",
 	"ios.whatsapp.chats": "ioswhatsapp", "ios.whatsapp.calls": "ioswacalls", "ios.whatsapp.contacts": "ioswacontacts",
 	"android.calendar": "androidcalendar", "ios.calendar": "ioscalendar",
+	"android.telegram": "androidtelegram",
 }
 
 // hostileBackupFiles are the parsers whose primary glob no generic device path matches (the iOS WhatsApp databases live in an

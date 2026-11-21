@@ -23,7 +23,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.contacts"
-	Version = "1.0.5"
+	Version = "1.0.6"
 )
 
 // Parser is the android.contacts parser. It holds no state.

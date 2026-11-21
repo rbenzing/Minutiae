@@ -12,7 +12,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "safari.history"
-	Version = "1.0.2"
+	Version = "1.0.3"
 )
 
 // Parser is the safari.history parser. It holds no state.

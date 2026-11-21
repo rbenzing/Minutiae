@@ -14,7 +14,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.sms"
-	Version = "1.0.2"
+	Version = "1.0.3"
 )
 
 // Parser is the ios.sms parser. It holds no state.

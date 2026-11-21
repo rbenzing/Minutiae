@@ -55,6 +55,7 @@ var realDataInputs = map[string]realDataInput{
 	},
 	"android.calendar": {Platform: "android", Logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db", File: "calendar.db"},
 	"ios.calendar":     {Platform: "ios", Logical: "ios:HomeDomain/Library/Calendar/Calendar.sqlitedb", File: "Calendar.sqlitedb"},
+	"android.telegram": {Platform: "android", Logical: "android:/data/data/org.telegram.messenger/files/cache4.db", File: "cache4.db"},
 }
 
 // realDataSet is one set of the layout: the parser (or "ios-backup") and the files of the set, by role.

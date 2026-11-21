@@ -104,11 +104,12 @@ func messageMapping(e *env, tab tl.Table, table string) parse.TableMapping {
 	for i, c := range cols {
 		names[i] = c.Name
 	}
+	once := map[string]bool{} // the live-key notes already stated in this run (recover.go liveKeyState)
 	return parse.TableMapping{Table: table, Columns: cols, Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 		if e != nil && len(e.Guard.bad) > 0 {
 			m = guardedCtx{MapContext: m, g: &e.Guard}
 		}
-		return mapMessage(m, row, e, tab, table, rowrun.Resolve(m, table, names...))
+		return mapMessage(m, row, e, tab, table, rowrun.Resolve(m, table, names...), once)
 	}}
 }
 
@@ -489,7 +490,7 @@ func budgetOf(m parse.MapContext) tl.Budget {
 // phone-call action is one call and no message, callOf); the dialog (resolveDialog: class, thread and joins), the
 // participants (participantsOf) and the Summary (messageSummary) of spec 8.6 and 9. Every decode, the joined chats
 // blob's included, charges the job budget and is freed before the row's mapping returns (F8).
-func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table string, c rowrun.Cols) ([]records.Record, error) {
+func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table string, c rowrun.Cols, once map[string]bool) ([]records.Record, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
 		return nil, err
@@ -565,7 +566,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 		mid, midOK := r.cell("mid")
 		uid, uidOK := r.cell("uid")
 		// messages is keyed by mid alone (T9): its uid need not be read
-		raw["live_key_state"] = liveKeyState(m, table, mid, uid, midOK && (uidOK || table == tableMessages))
+		raw["live_key_state"] = liveKeyState(m, once, table, mid, uid, midOK && (uidOK || table == tableMessages))
 	}
 
 	body := ""

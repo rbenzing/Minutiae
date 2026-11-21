@@ -11,7 +11,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "chromium.history"
-	Version = "1.0.3"
+	Version = "1.0.4"
 )
 
 // Parser is the chromium.history parser. It holds no state.

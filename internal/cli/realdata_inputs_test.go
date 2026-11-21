@@ -43,6 +43,7 @@ var realCLIInputs = map[string]realCLIInput{
 	},
 	"android.calendar": {logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db", file: "calendar.db"},
 	"ios.calendar":     {logical: "ios:HomeDomain/Library/Calendar/Calendar.sqlitedb", file: "Calendar.sqlitedb"},
+	"android.telegram": {logical: "android:/data/data/org.telegram.messenger/files/cache4.db", file: "cache4.db"},
 }
 
 // Every registered parser has a realCLIInputs entry whose logical path its primary glob matches, so a real-data set

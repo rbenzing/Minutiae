@@ -43,6 +43,7 @@ var claimsOf = map[string][]string{
 	"ios.whatsapp.contacts":     {"ZWAADDRESSBOOKCONTACT"},
 	"android.calendar":          {"Events"},
 	"ios.calendar":              {"CalendarItem"},
+	"android.telegram":          {"messages", "messages_v2", "users"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -386,18 +387,25 @@ func TestIOSWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 
 // TestCalendarParsersReadCompanionRolesAndEmitTheirType pins what plan 4I3 promises about the two calendar parsers
 // (4I3-P1): each emits calendar_event at payload version 1 only, reads the database with its WAL and journal
-// companions, and they close the registry in the order Android, iOS.
+// companions, and they stand next to each other in the order Android, iOS (a consecutive block found by name; later
+// plans append after them).
 func TestCalendarParsersReadCompanionRolesAndEmitTheirType(t *testing.T) {
 	want := []string{"android.calendar", "ios.calendar"}
 	all := All()
-	if len(all) < len(want) {
-		t.Fatalf("the registry holds %d parsers", len(all))
+	at := -1
+	for i, p := range all {
+		if p.Meta().Name == want[0] {
+			at = i
+		}
 	}
-	tail := all[len(all)-len(want):]
+	if at < 0 || at+len(want) > len(all) {
+		t.Fatalf("%s is not registered with %d parsers after it", want[0], len(want)-1)
+	}
+	block := all[at : at+len(want)]
 	for i, name := range want {
-		m := tail[i].Meta()
+		m := block[i].Meta()
 		if m.Name != name {
-			t.Fatalf("registry position %d from the end is %s, want %s", len(want)-i, m.Name, name)
+			t.Fatalf("registry position %d after %s is %s, want %s", i, want[0], m.Name, name)
 		}
 		var roles []string
 		for _, in := range m.Inputs {
@@ -409,5 +417,38 @@ func TestCalendarParsersReadCompanionRolesAndEmitTheirType(t *testing.T) {
 		if len(m.Emits) != 1 || m.Emits[0].Type != calendar.Type || m.Emits[0].PayloadVersion != 1 || calendar.PayloadVersion != 1 {
 			t.Errorf("%s emits %+v, want exactly %s at payload version 1", name, m.Emits, calendar.Type)
 		}
+	}
+}
+
+// TestTelegramParserReadsCompanionRolesAndEmitsItsTypes pins what plan 4I4 promises about android.telegram (4I4-P1):
+// it emits exactly message, call and contact at payload version 1, reads cache4.db with its WAL and journal
+// companions through two primary globs, and is the registry's last entry.
+func TestTelegramParserReadsCompanionRolesAndEmitsItsTypes(t *testing.T) {
+	all := All()
+	p := all[len(all)-1]
+	m := p.Meta()
+	if m.Name != "android.telegram" {
+		t.Fatalf("the registry's last entry is %s, want android.telegram", m.Name)
+	}
+	var roles []string
+	for _, in := range m.Inputs {
+		roles = append(roles, in.Role)
+	}
+	if !slices.Equal(roles, []string{"db", "wal", "journal"}) {
+		t.Errorf("roles %v, want db/wal/journal", roles)
+	}
+	if len(m.Inputs) > 0 && len(m.Inputs[0].Globs) != 2 {
+		t.Errorf("the db role has %d globs, want 2 (the primary account and the numbered accounts)", len(m.Inputs[0].Globs))
+	}
+	var types []string
+	for _, e := range m.Emits {
+		if e.PayloadVersion != 1 {
+			t.Errorf("%s emits at payload version %d, want 1", e.Type, e.PayloadVersion)
+		}
+		types = append(types, e.Type)
+	}
+	slices.Sort(types)
+	if want := []string{call.Type, contact.Type, message.Type}; !slices.Equal(types, want) {
+		t.Errorf("emits %v, want exactly %v", types, want)
 	}
 }

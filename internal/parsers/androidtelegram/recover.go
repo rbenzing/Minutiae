@@ -42,13 +42,18 @@ func claimsOf(tables []string) []parse.TableClaim {
 // (the mid index could not be built: its cap, the budget, damage) is stated once per run in the note
 // live_key_undecided.<table>.mid with its cause (the host keeps the first note of a key), so a run of undecided
 // states has a stated reason. This is identity from the row's own key in the same table, not a join.
-func liveKeyState(m parse.MapContext, table string, mid, uid int64, ok bool) string {
+func liveKeyState(m parse.MapContext, once map[string]bool, table string, mid, uid int64, ok bool) string {
 	if !ok {
 		return liveKeyUndecided
 	}
 	rows, short, err := rowrun.Match(m, table, "mid", mid)
 	if err != nil {
-		m.Note("live_key_undecided."+table+".mid", "the live "+table+".mid lookup failed: "+err.Error())
+		if key := "live_key_undecided." + table + ".mid"; !once[key] { // built once per table per run, not per recovered row
+			if once != nil {
+				once[key] = true
+			}
+			m.Note(key, "the live "+table+".mid lookup failed: "+err.Error())
+		}
 		return liveKeyUndecided
 	}
 	if table == tableMessages && len(rows) > 0 {

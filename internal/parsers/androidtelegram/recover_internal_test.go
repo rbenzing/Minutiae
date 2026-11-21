@@ -84,7 +84,7 @@ func TestLiveKeyStateDecidesOnlyOnACompleteAnswer(t *testing.T) {
 		{"v1: decided miss", tableMessages, keyCtx{}, true, liveKeyAbsent},
 	} {
 		c.ctx.notes = map[string]string{}
-		if got := liveKeyState(&c.ctx, c.table, mid, uid, c.ok); got != c.want {
+		if got := liveKeyState(&c.ctx, nil, c.table, mid, uid, c.ok); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
 		note, has := c.ctx.notes["live_key_undecided."+c.table+".mid"]

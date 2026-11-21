@@ -11,7 +11,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.addressbook"
-	Version = "1.0.1"
+	Version = "1.0.2"
 )
 
 // Parser is the ios.addressbook parser. The zero value is the parser; it holds no state.

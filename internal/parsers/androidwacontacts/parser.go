@@ -19,7 +19,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.whatsapp.contacts"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // ErrNotLiveDatabase is returned by Parse for a database that is not in the app's live databases directory (4I-R3).
