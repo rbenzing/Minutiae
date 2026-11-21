@@ -1554,6 +1554,10 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the parser claims its message and users tables (plan 4I4 Task 14): a claiming parser needs a recovery identity
+	if reg, err = reg.WithRecoveryHash(parsertest.FakeHash(androidtelegram.Name + ".recover")); err != nil {
+		t.Fatal(err)
+	}
 	lim := parse.DefaultLimits()
 	lim.MemBudget = tgBudget
 	opt := artparse.Options{Limits: lim}

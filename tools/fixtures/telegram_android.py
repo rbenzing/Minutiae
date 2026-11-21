@@ -63,6 +63,7 @@ SECRET_BIT = 1 << 62
 S77 = SECRET_BIT | 77
 S5 = SECRET_BIT | 0xFFFFFFFB
 FOLDER1 = (1 << 61) | 1
+GONE_USER = 1000012  # the users row telegram-deleted inserts and deletes in its WAL
 I64_MIN = -(1 << 63)
 
 MAX_BODY = 256 << 10
@@ -1826,33 +1827,49 @@ def variant_hostile(work):
 
 
 def variant_deleted(work):
-    """R1, R2, R4 live; in a WAL that is never checkpointed: rows 201-205 inserted (committed), then deleted (a later
-    frame); R1 edited and R2 rewritten with REPLACE INTO (the pinned write_verb.messages_v2.edit and .put, T2: each
-    gets a new rowid; the old image stays in the database file and in earlier frames). secure_delete is ON."""
+    """R1, R2, R4 live with the users SELF and ANN, the chats row of R4's group, the enc_chats rows (their key columns
+    hold the key-material chains, C1 of plan 4I4 Task 14), and the contacts and users_data rows of ANN and of user
+    1000012; in a WAL that is never checkpointed: rows 201-205 (ANN), 206 (an outgoing secret message of chat 77 with
+    a secret document, its key and IV) and 207 (a message of the group 2000001) and the users row 1000012 inserted
+    (committed), then deleted (a later frame), so each recovered row has live users, chats or enc_chats rows that it
+    must not join (B2); R1 edited and R2 rewritten with REPLACE INTO (the pinned write_verb.messages_v2.edit and .put,
+    T2: each gets a new rowid; the old image stays in the database file and in earlier frames). secure_delete is ON."""
     path = os.path.join(work, "cache4.db")
     con = create_db(path, "v181.sql", 181)
-    R = core_messages()
+    R, U = core_messages(), user_rows()
     live = pick(R, (1, 2, 4))
-    fill(con, live)
+    fill(con, live, pick(U, (1, 2)), pick(chat_rows(), (1,)), enc_chat_rows(), [(ANN, 1), (GONE_USER, 1)],
+         [(ANN, "hi there"), (GONE_USER, "gone about")])
     scen = SCENARIOS["telegram-deleted"] = C.Scenario(CLAIMED, alias={"users": "uid", "messages": "mid"})
     scen.write("messages_v2", scen.snap(con, "messages_v2"))
+    scen.write("users", scen.snap(con, "users"))
     old = scen.snap(con, "messages_v2", "rowid in (1, 2)")
     con.execute("pragma wal_checkpoint(truncate)")
     con.close()
     gone = [row(200 + i, 200 + i, ANN, enc(tlmsg(200 + i, 200 + i, "deleted message %d" % i, frm=pu(ANN)))) for i in range(1, 6)]
+    gone.append(row(206, -12, S77, enc({"_": "TL_message_secret_layer72", "out": True, "id": -12, "ttl": 0, "from_id": SELF,
+                                         "peer_id": pu(ANN), "date": D + 206, "message": "deleted secret",
+                                         "media": enc_document([]), "entities": []}), out=1))
+    gone.append(row(207, 207, -2000001, enc(tlmsg(207, 207, "deleted group message", peer=pc(2000001), frm=pu(BOT)))))
     cols = list(gone[0])
+    gone_user = {"uid": GONE_USER, "name": "gone user", "status": 0,
+                 "data": E.encode("User", {"_": "TL_user", "access_hash": 1, "id": GONE_USER, "first_name": "Gone", "phone": "15550000012"})}
     edited = dict(R[1], data=enc(tlmsg(101, 1, "Hello Ann here (edited)", frm=pu(ANN), edit_date=D + 600)))
     edited.pop("rowid")
     put = dict(R[2])
     put.pop("rowid")
     stmts = ["pragma secure_delete = ON", "pragma wal_autocheckpoint = 0", "BEGIN"] + [insert_sql("messages_v2", g, cols) for g in gone] + [
-        "COMMIT", "delete from messages_v2 where rowid between 201 and 205",
+        insert_sql("users", gone_user, list(gone_user)), "COMMIT", "delete from messages_v2 where rowid between 201 and 207",
+        "delete from users where uid = %d" % GONE_USER,
         insert_sql("messages_v2", edited, cols, "replace"), insert_sql("messages_v2", put, cols, "replace")]
     C.kill_child(path, stmts)
     files = {"db": C.read(path), "wal": C.read(path + "-wal")}
     gone_snap = [(g["rowid"], {k: v for k, v in g.items() if k != "rowid"}) for g in gone]
     scen.write("messages_v2", gone_snap)
     scen.want("messages_v2", gone_snap + old)
+    user_snap = [(GONE_USER, gone_user)]
+    scen.write("users", user_snap)
+    scen.want("users", user_snap)
     return files, oracle(files, "v181.sql", "telegram-deleted", 181)
 
 

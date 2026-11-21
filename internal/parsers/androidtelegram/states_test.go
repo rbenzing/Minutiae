@@ -486,29 +486,51 @@ func dialogStates(t *testing.T) {
 	}
 	checkStates(t, "messages_v2", undecided, parseAt(t, remoteApp, dbOnly(goBuiltWith(181, cellsOf(undecided), guarded))).Records)
 
-	// 4I4-P6: the typed pass joins nothing
+	// 4I4-P6: the typed pass joins nothing; ruling T2 (Task 14): it states each row's own (mid, uid) against the live
+	// rows of its table (these rows are themselves live: present; a key cell that is not an integer: undecided)
 	typed := []stateRow{
 		{
 			"typed user",
 			msgCells{mid: 1, uid: ann, data: in(1, peerUser(self), ann)},
-			map[string]any{"thread_user_state": "not-joined-recovered", "account": nil},
+			map[string]any{"thread_user_state": "not-joined-recovered", "account": nil, "live_key_state": "present"},
 			nil,
 		},
 		{
 			"typed chat",
 			msgCells{mid: 2, uid: -2000001, data: in(2, peerChat(2000001), ann)},
-			map[string]any{"thread_title_state": "not-joined-recovered", "dialog_class": "chat", "chat_data_state": nil},
+			map[string]any{"thread_title_state": "not-joined-recovered", "dialog_class": "chat", "chat_data_state": nil, "live_key_state": "present"},
 			map[string]any{"thread": map[string]any{"id": "-2000001", "group": true}},
 		},
 		{
 			"typed secret", o(msgCells{mid: 3, uid: 1<<62 | 77, data: out(3, peerUser(ann))}),
-			map[string]any{"counterparty_state": "not-joined-recovered", "secret_chat": true, "enc_chat_id": 77},
+			map[string]any{"counterparty_state": "not-joined-recovered", "secret_chat": true, "enc_chat_id": 77, "live_key_state": "present"},
 			map[string]any{"participants_unknown": true},
+		},
+		{
+			"typed real mid",
+			msgCells{midCell: 4.5, uid: ann, data: in(4, peerUser(self), ann)},
+			map[string]any{"live_key_state": "undecided", "thread_user_state": "not-joined-recovered"},
+			map[string]any{"guid": nil},
+		},
+		{
+			"typed null uid",
+			msgCells{mid: 5, nullUID: true, data: in(5, peerUser(self), ann)},
+			map[string]any{"live_key_state": "undecided", "thread_state": "undecided"},
+			nil,
 		},
 	}
 	db = goBuiltWith(181, cellsOf(typed), usersTable(ann), chatsTable(builtRow{2000001, map[string]any{"data": tlChat(2000001, "Family")}}),
 		encChatsTable(builtRow{77, map[string]any{"user": int64(ann)}}))
 	checkStates(t, "messages_v2", typed, typedPass(t, db))
+
+	// ruling T2 in the old generation: messages is keyed by its mid, the rowid alias, which the lookup matches as stored
+	typedV1 := []stateRow{{
+		"typed v1",
+		msgCells{mid: 7, uid: ann, data: in(7, peerUser(self), ann)},
+		map[string]any{"live_key_state": "present", "thread_user_state": "not-joined-recovered"},
+		map[string]any{"guid": "7"},
+	}}
+	checkStates(t, "messages", typedV1, typedPass(t, goBuiltMessages(64, cellsOf(typedV1), nil)))
 }
 
 // cellsOf are the cells of the state rows, in order.

@@ -80,3 +80,6 @@ type lostRowid struct{ sqlitedb.Row }
 func (lostRowid) Rowid() (int64, bool)               { return 0, false }
 func (lostRowid) Locator() (string, bool)            { return "", false }
 func (lostRowid) Recovered() *sqlitedb.RecoveredInfo { return &sqlitedb.RecoveredInfo{} }
+
+// PutReinserts is putReinserts (facts.tsv write_verb.*.put).
+const PutReinserts = putReinserts

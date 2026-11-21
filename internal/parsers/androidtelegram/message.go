@@ -560,6 +560,12 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 
 	r.readSideBlobs(row, c)
 	r.readReplyData(row, c, tab, bud)
+	if e == nil && putReinserts {
+		// the typed pass (ruling T2): the recovered row's own key against the live rows of its own table, never a join
+		mid, midOK := r.cell("mid")
+		uid, uidOK := r.cell("uid")
+		raw["live_key_state"] = liveKeyState(m, table, mid, uid, midOK && uidOK)
+	}
 
 	body := ""
 	if hasTop {

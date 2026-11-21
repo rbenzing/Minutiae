@@ -55,9 +55,16 @@ const (
 // Parser is the android.telegram parser. It holds no state.
 type Parser struct{}
 
+// ClaimableTables are the tables whose mapping is total: every messages, messages_v2 and users row gives one record
+// (spec 8.5, 8.7, 8.9), so typed recovery can map the rows that were deleted or superseded (spec 11, call 7). A
+// recovered row joins no table (B2). media_v* and messages_topics (copies of message blobs), chats, contacts,
+// users_data, dialogs, enc_chats (never, spec 9) and every other table are not claimed.
+func ClaimableTables() []string { return []string{tableMessages, tableMessagesV2, tableUsers} }
+
 // Meta describes the parser. The two primary globs end in cache4.db, so a -wal, -journal or -shm file is never a
 // primary (4I-R21); it reaches the job only as the companion of its primary. Only org.telegram.messenger is discovered
-// by path (Q9): another package's cache4.db is reached through --scan or --artifact, by signature.
+// by path (Q9): another package's cache4.db is reached through --scan or --artifact, by signature. The claims are
+// ClaimableTables (spec 11).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android Telegram messages, calls and contacts (cache4.db)",
@@ -67,6 +74,7 @@ func (Parser) Meta() parse.Meta {
 			{Type: call.Type, PayloadVersion: call.PayloadVersion},
 			{Type: contact.Type, PayloadVersion: contact.PayloadVersion},
 		},
+		Claims: claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Required: true, Globs: []string{
 				"android:**/org.telegram.messenger/files/cache4.db",

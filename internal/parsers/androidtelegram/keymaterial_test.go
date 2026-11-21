@@ -208,17 +208,23 @@ func outputTexts(t *testing.T, res parsertest.Result) []string {
 }
 
 // keyBearing are the variants that hold key material by design (I2): telegram-v181 (the CORE enc_chats rows and secret
-// documents), telegram-hostile (enc_chats rows and secret documents cut inside key and inside iv) and telegram-layers
-// (one row per constructor: a secret-kind field filled with the 4i4-layers chain). Every other variant holds none by
-// design, and the test fails when a variant's files say otherwise either way.
-func keyBearing() []string { return []string{"telegram-v181", "telegram-hostile", "telegram-layers"} }
+// documents), telegram-hostile (enc_chats rows and secret documents cut inside key and inside iv), telegram-layers
+// (one row per constructor: a secret-kind field filled with the 4i4-layers chain) and telegram-deleted (live enc_chats
+// rows and a deleted secret message with a secret document in its WAL, plan 4I4 Task 14 C1). Every other variant holds
+// none by design, and the test fails when a variant's files say otherwise either way.
+func keyBearing() []string {
+	return []string{"telegram-v181", "telegram-hostile", "telegram-layers", "telegram-deleted"}
+}
 
 // Spec 9 (call 6), ruling T1: no key material reaches any output of android.telegram. The live pass over every
 // committed variant: no record (payload, raw, Summary, Body, locator), note or warning holds any secret-kind value the
 // generator fills (keyPatterns), raw, in hex of either case or in standard or URL base64, whole or in any key-bearing
 // 8-byte window, nor enc_chats.fprint in decimal or hex. A key-bearing variant whose files hold no pattern, another
 // whose files hold one, or a pattern no variant holds fails the test: no subtest asserts nothing unawares. The typed
-// pass of telegram-deleted runs once its claims exist (Task 14).
+// pass (android.telegram.recover, recrun.Run with a capturing emitter: every recovered record, unmapped reason, note
+// and warning; F15) runs over telegram-deleted and over a Go-built database whose deleted secret rows and enc_chats
+// rows (key columns included) lie only in WAL frames; each must recover at least one secret row, so the check is not
+// vacuous.
 func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
 	ps := keyPatterns(t)
 	f := newFinder(needles(ps))
@@ -255,8 +261,27 @@ func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
 			}
 		})
 	}
-	t.Run("typed-pass/telegram-deleted", func(t *testing.T) {
-		t.Skip("the typed recovery pass of android.telegram.recover claims its tables in Task 14, which removes this skip " +
-			"and searches every recovered record, note and warning for the same patterns")
-	})
+	typed := map[string]map[string][]byte{"telegram-deleted": fixtureFiles(t, "telegram-deleted"), "go-built-wal": secretRowsInWAL(t)}
+	for name, files := range typed {
+		t.Run("typed-pass/"+name, func(t *testing.T) {
+			if held := f.labels(string(files["wal"])); len(held) == 0 {
+				t.Fatalf("%s: the WAL holds no key pattern: the check proves nothing", name)
+			}
+			res := typedRun(t, files)
+			secret := 0
+			for _, r := range res.recs {
+				if rawOf(r)["secret_chat"] == true {
+					secret++
+				}
+			}
+			if secret == 0 {
+				t.Fatalf("%s: the typed pass recovered no secret row (%d records): the check proves nothing", name, len(res.recs))
+			}
+			for _, s := range res.texts(t) {
+				if label, form, ok := f.find(s); ok {
+					t.Errorf("%s: the typed pass's output holds %s (form %q)", name, label, form)
+				}
+			}
+		})
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
 // hostileStopRows are the telegram-hostile rows whose blob stops (H1, the cut rows, bad bool, bad vector, vector count,
@@ -261,8 +262,36 @@ func TestTelegramBothGenerationsEmitBothLabelled(t *testing.T) {
 }
 
 // Review Focus 1: messages_v2 is keyed (mid, uid), so a mid repeats across dialogs. R1 and R44 share mid 101 in two
-// dialogs: two records, equal guid, their own thread ids and locators, never merged.
+// dialogs: two records, equal guid, their own thread ids and locators, never merged. The recovered half (plan 4I4
+// Task 14, ruling T2): a recovered image of mid 101 mapped against telegram-v181's live view is present by its own
+// (mid, uid) only: with uid 1000003 by R44, with uid 1000002 by R1, and with a uid no live row of mid 101 has
+// (1000099) absent, although mid 101 is live twice.
 func TestTelegramSameMidInTwoDialogsIsNotMerged(t *testing.T) {
+	t.Run("recovered", func(t *testing.T) {
+		hd := parsertest.NewHarness(t)
+		rr, ok := parsertest.FirstClaimedRow(t, hd, androidtelegram.Parser{}, deletedBundle(t, hd), tableV2,
+			func(r sqlitefile.RecoveredRow) bool { return r.Rowid != nil && *r.Rowid == 1 })
+		if !ok {
+			t.Fatal("no recovered image of R1 in telegram-deleted")
+		}
+		h := parsertest.NewHarness(t)
+		v181 := parsertest.LoadFixture(t, "testdata", "telegram-v181").Bundle(h, remoteApp)
+		uidAt := recoveredColumn(t, "uid")
+		for _, c := range []struct {
+			uid  int64
+			want string
+		}{{1000003, "present"}, {1000002, "present"}, {1000099, "absent"}} {
+			rr.Values[uidAt].Int = c.uid
+			got := parsertest.MapRecoveredRow(t, h, androidtelegram.Parser{}, v181, rr)
+			if got.Err != nil || len(got.Records) != 1 {
+				t.Fatalf("uid %d: err %v, unmapped %q, %d records", c.uid, got.Err, got.Unmapped, len(got.Records))
+			}
+			raw := rawOf(got.Records[0])
+			if raw["mid"] != int64(101) || raw["uid"] != c.uid || raw["live_key_state"] != c.want {
+				t.Errorf("recovered (mid %v, uid %v): live_key_state %v, want %q", raw["mid"], raw["uid"], raw["live_key_state"], c.want)
+			}
+		}
+	})
 	rows := byRow(parseFixture(t, "telegram-v181").Records)
 	r1, r44 := rows["messages_v2/1"], rows["messages_v2/44"]
 	th := func(r records.Record) any { m, _ := r.Payload["thread"].(map[string]any); return m["id"] }

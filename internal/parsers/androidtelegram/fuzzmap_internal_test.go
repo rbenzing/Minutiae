@@ -69,14 +69,16 @@ func (fakeRow) Range() (records.Range, parse.FileRole) {
 func (r fakeRow) Locator() (string, bool) { return "sqlite:table=" + r.table + ";rowid=1", true }
 
 // joinOutcome is what the fake context answers for a join: a clean miss, a table the database lacks
-// (sqlitedb.ErrNoSuchTable) or a damaged table (an error wrapping sqlitedb.ErrCorrupt). The last two must make the
-// join undecided, never "no row".
+// (sqlitedb.ErrNoSuchTable), a damaged table (an error wrapping sqlitedb.ErrCorrupt) or a hit whose joined row holds
+// the fuzzed cells (Task 13 review M3: hostile users, chats and enc_chats rows reach the dialog path). The missing and
+// damaged tables must make the join undecided, never "no row".
 type joinOutcome byte
 
 const (
 	joinMiss joinOutcome = iota
 	joinNoTable
 	joinDamaged
+	joinHit
 	numOutcomes
 )
 
@@ -90,18 +92,44 @@ func (o joinOutcome) err() error {
 	return nil
 }
 
-// mapCtx knows the columns of the mapped table by the mapping's order; every Get and Match answers with join.
+// joinedColumns are the columns of the joined tables as the v181 DDL declares them (spec 6.3; enc_chats by its two
+// allowlisted columns only, spec 9), so a joined fake row is read at the indexes a database would give.
+func joinedColumns(table string) []string {
+	switch table {
+	case tableUsers:
+		return []string{"uid", "name", colStatus, colData}
+	case tableChats:
+		return []string{"uid", "name", colData}
+	case tableEncChats:
+		return encChatsColumns()
+	case tableContacts:
+		return []string{"uid", colMutual}
+	case tableUsersData:
+		return []string{"uid", colAbout}
+	}
+	return nil
+}
+
+// mapCtx knows the columns of the mapped table by the mapping's order and those of the joined tables
+// (joinedColumns); every Get and Match answers with join, a hit with a row of the joined table holding hit's cells
+// (cycled).
 type mapCtx struct {
 	in    *parse.Input
 	table string
 	cols  []parse.ColumnSpec
 	join  joinOutcome
+	hit   []cell
 }
 
 func (c mapCtx) Input() *parse.Input { return c.in }
 func (mapCtx) Note(_, _ string)      {}
 func (c mapCtx) Column(table, col string) int {
 	if table != c.table {
+		for i, n := range joinedColumns(table) {
+			if n == col {
+				return i
+			}
+		}
 		return -1
 	}
 	for i, s := range c.cols {
@@ -112,9 +140,31 @@ func (c mapCtx) Column(table, col string) int {
 	return -1
 }
 
-func (c mapCtx) Get(string, int64) (parse.Row, bool, error) { return nil, false, c.join.err() }
+// joined is the fake row of a joined table on a hit: one cell per joinedColumns entry, from hit (cycled; NULL when
+// hit is empty).
+func (c mapCtx) joined(table string) fakeRow {
+	cs := make([]cell, len(joinedColumns(table)))
+	for i := range cs {
+		if len(c.hit) > 0 {
+			cs[i] = c.hit[i%len(c.hit)]
+		}
+	}
+	return fakeRow{table: table, cells: cs}
+}
 
-func (c mapCtx) Match(string, string, parse.JoinKey) ([]parse.Row, error) { return nil, c.join.err() }
+func (c mapCtx) Get(table string, _ int64) (parse.Row, bool, error) {
+	if c.join == joinHit && joinedColumns(table) != nil {
+		return c.joined(table), true, nil
+	}
+	return nil, false, c.join.err()
+}
+
+func (c mapCtx) Match(table, _ string, _ parse.JoinKey) ([]parse.Row, error) {
+	if c.join == joinHit && joinedColumns(table) != nil {
+		return []parse.Row{c.joined(table)}, nil
+	}
+	return nil, c.join.err()
+}
 
 const fakeRemote = "/data/data/org.telegram.messenger/files/cache4.db"
 
@@ -160,11 +210,13 @@ func cellOf(cols []parse.ColumnSpec, cells []cell, name string) cell {
 // checkMapped holds a mapping to its contract on any row: no panic, and either a typed row error or exactly one
 // record that validates against its type, carries its place, stamps no recovery and invents nothing the cells do not
 // say (a guid only from an INTEGER mid, a thread only from an INTEGER uid, a time only from an INTEGER date, a Body
-// only from a BLOB data cell); a join the context cannot answer is undecided, never "no row".
+// only from a BLOB data cell); a join the context cannot answer is undecided, never "no row", and on a live message
+// row whose INTEGER uid names a dialog that joins (user, secret, negative) it is named in raw.join_undecided (Task 13
+// review M3). On a hit the joined row holds the row's own cells.
 func checkMapped(t testing.TB, mt mappingUnderTest, join joinOutcome, cells []cell) {
 	t.Helper()
 	mp := mt.m
-	ctx := mapCtx{in: fakeInput(), table: mp.Table, cols: mp.Columns, join: join}
+	ctx := mapCtx{in: fakeInput(), table: mp.Table, cols: mp.Columns, join: join, hit: cells}
 	recs, err := mp.Map(ctx, fakeRow{table: mp.Table, cells: cells})
 	if err != nil {
 		var re *rowrun.RowError
@@ -203,11 +255,19 @@ func checkMapped(t testing.TB, mt mappingUnderTest, join joinOutcome, cells []ce
 			t.Errorf("%s: raw.%s = %q while the join answers %d: an unanswered join is undecided, never no row", mp.Table, k, s, join)
 		}
 	}
-	if (!mt.live || join == joinMiss) && raw["join_undecided"] != nil {
-		t.Errorf("%s: join_undecided %v on a clean miss or with no join", mp.Table, raw["join_undecided"])
+	if (!mt.live || join == joinMiss || join == joinHit) && raw["join_undecided"] != nil {
+		t.Errorf("%s: join_undecided %v on a clean miss, a hit or with no join", mp.Table, raw["join_undecided"])
 	}
 	if mp.Table == tableUsers {
 		return
+	}
+	if uid := cellOf(mp.Columns, cells, "uid"); mt.live && (join == joinNoTable || join == joinDamaged) && uid.kind == cInt {
+		switch c, _ := dialogOf(mp.Table, uid.i); c {
+		case classUser, classSecret, classNegative:
+			if raw["join_undecided"] == nil {
+				t.Errorf("%s: a %s dialog (uid %d) whose join answers %d has no raw.join_undecided", mp.Table, c, uid.i, join)
+			}
+		}
 	}
 	if r.Type == message.Type && r.Payload["guid"] != nil && cellOf(mp.Columns, cells, "mid").kind != cInt {
 		t.Errorf("%s: guid %v from a mid cell of kind %d", mp.Table, r.Payload["guid"], cellOf(mp.Columns, cells, "mid").kind)

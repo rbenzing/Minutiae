@@ -2,6 +2,7 @@ package androidtelegram_test
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,5 +50,18 @@ func TestTelegramFactsMatchTheCode(t *testing.T) {
 				t.Errorf("%s: facts.tsv says %q, the code %q", key, v, got)
 			}
 		}
+	}
+	// ruling T2, F30 (Task 14): putReinserts is true when any pinned put of a message table re-inserts: a REPLACE
+	// statement deletes the stored row of the key and inserts the new one (an UPDATE rewrites it in place)
+	reinserts := false
+	for _, key := range []string{"write_verb.messages_v2.put", "write_verb.messages.put"} {
+		vals := factValues(t, key)
+		if len(vals) == 0 {
+			t.Errorf("facts.tsv has no row %s", key)
+		}
+		reinserts = reinserts || slices.ContainsFunc(vals, func(v string) bool { return strings.HasPrefix(v, "REPLACE ") })
+	}
+	if androidtelegram.PutReinserts != reinserts {
+		t.Errorf("putReinserts = %v, facts.tsv write_verb.*.put says %v", androidtelegram.PutReinserts, reinserts)
 	}
 }

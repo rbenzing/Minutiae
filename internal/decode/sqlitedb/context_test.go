@@ -349,3 +349,56 @@ func TestContextReusesTheRowsItHolds(t *testing.T) {
 		t.Errorf("the first row changed: %q", s)
 	}
 }
+
+// Plan 4I4 Task 13 review M2: the rows a Context holds are charged once and all freed at Close (the budget returns
+// to what it was before the first lookup), and a second Context holds nothing of the first: it reads the row again
+// and charges it again. A first Context makes the same reads before the baseline is taken, so the pages the reader
+// caches for the database (charged until the DB is released, not by the Context) are in the baseline.
+func TestContextReleasesTheRowsItHoldsAtClose(t *testing.T) {
+	d, b := chatDB(t)
+	warm := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, nil)
+	if _, ok, err := warm.Get("thread", 1); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, err := warm.Match("message", "thread_id", sqlitedb.LiteralIntKey(1)); err != nil {
+		t.Fatal(err)
+	}
+	warm.Close()
+	baseline := b.used
+	c := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, nil)
+	if _, ok, err := c.Get("thread", 1); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	once := b.used
+	if once <= baseline {
+		t.Fatalf("a Get charged nothing (used %d, baseline %d): the check proves nothing", once, baseline)
+	}
+	for range 100 {
+		if _, ok, err := c.Get("thread", 1); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		if _, err := c.Match("message", "thread_id", sqlitedb.LiteralIntKey(1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held := b.used
+	c.Close()
+	if b.used != baseline {
+		t.Errorf("used %d after Close, want the baseline %d", b.used, baseline)
+	}
+	c2 := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, nil)
+	defer c2.Close()
+	r, ok, err := c2.Get("thread", 1)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if s, _ := r.Text(1); string(s) != "alpha" {
+		t.Errorf("the second Context read title %q", s)
+	}
+	if b.used != once {
+		t.Errorf("the second Context's Get charged %d bytes, want %d (a fresh read, charged again)", b.used-baseline, once-baseline)
+	}
+	if held <= once {
+		t.Errorf("the Match rows charged nothing (held %d, after one Get %d)", held, once)
+	}
+}

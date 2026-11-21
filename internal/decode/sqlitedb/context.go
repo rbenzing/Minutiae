@@ -41,14 +41,15 @@ type Context struct {
 	reports map[string]*JoinReport
 	build   func(context.Context, *Table, string) (*Index, error) // index build; a test seam, nil means Table.Index with the default cap
 	rows    []Row
-	held    map[heldKey]Row // the rows of rows by (table, rowid): a row handed out once is handed out again, never cloned anew
+	held    map[heldKey]int // the index in rows of each row by (table, rowid): a row handed out once is handed out again, never cloned anew
 	closed  bool
 	err     error // the first failure Column could not report as -1 (see Err)
 }
 
-// heldKey names a row the Context holds: its table (ASCII-folded) and rowid.
+// heldKey names a row the Context holds: its table (the one *Table the Context resolved for the name, so a lookup
+// folds no name and allocates nothing) and rowid.
 type heldKey struct {
-	table string
+	table *Table
 	rowid int64
 }
 
@@ -58,7 +59,7 @@ func NewContext(ctx context.Context, db *DB, in *parse.Input, n Notes) *Context 
 	return &Context{
 		ctx: ctx, db: db, in: in, notes: n,
 		tables: map[string]*Table{}, indexes: map[string]*Index{}, failed: map[string]error{}, reports: map[string]*JoinReport{},
-		held: map[heldKey]Row{},
+		held: map[heldKey]int{},
 	}
 }
 
@@ -142,16 +143,16 @@ func (c *Context) Get(table string, rowid int64) (parse.Row, bool, error) {
 // users or chats row) holds and charges each of them once until Close, not one clone per lookup. The database does
 // not change while it is open, so the held row is the row a new read would give.
 func (c *Context) get(t *Table, rowid int64) (Row, bool, error) {
-	k := heldKey{table: asciiFold(t.name), rowid: rowid}
-	if r, ok := c.held[k]; ok {
-		return r, true, nil
+	k := heldKey{table: t, rowid: rowid}
+	if i, ok := c.held[k]; ok {
+		return c.rows[i], true, nil
 	}
 	r, ok, err := t.Get(c.ctx, rowid)
 	if err != nil || !ok {
 		return Row{}, false, err
 	}
+	c.held[k] = len(c.rows)
 	c.rows = append(c.rows, r)
-	c.held[k] = r
 	return r, true, nil
 }
 

@@ -19,3 +19,10 @@ const (
 // seconds (up to 60, then minutes), so duration_s is the stored value and Record.TimeEnd is start plus it (spec 8.7,
 // 10, T1 c4). Any other value would leave the duration in raw with raw.duration_unit "unestablished".
 const unitCallDuration = "seconds"
+
+// putReinserts is facts.tsv write_verb.*.put: every pinned put of a message table is REPLACE INTO, which deletes a
+// stored (mid, uid) row and inserts the new one (a new rowid in messages_v2, F30), so an older image of a live
+// message is a row the live table no longer holds: the typed pass states each recovered message's own key against the
+// live rows as raw.live_key_state (ruling T2). An UPDATE everywhere would leave the older image to the host's
+// superseded-version relation and the key state unneeded.
+const putReinserts = true
