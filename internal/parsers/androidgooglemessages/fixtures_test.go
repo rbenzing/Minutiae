@@ -13,6 +13,7 @@ import (
 // variants are the committed fixtures of plan 4I5 Task 2 (tools/fixtures/google_messages.py).
 var variants = []string{
 	"gm-aosp-v2", "gm-aosp-v1", "gm-aosp-v2-wal", "gm-journal", "gm-proprietary-shaped", "gm-other-kind", "gm-not-sqlite",
+	"gm-no-members",
 	"gm-deleted", "gm-rebuilt", "gm-hostile",
 }
 

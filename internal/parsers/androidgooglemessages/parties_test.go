@@ -17,8 +17,8 @@ import (
 // explicit nil stores NULL). plainIDs makes participants._id an ordinary column holding the rowid (a key that is not the
 // rowid alias: the join guard of Task 3 then makes every join through it undecided).
 type store struct {
-	participants, conversations, members, messages []mrow
-	plainIDs                                       bool
+	participants, conversations, members, messages, parts []mrow
+	plainIDs                                              bool
 }
 
 func participantDefaults() map[string]any {
@@ -76,7 +76,7 @@ func (s store) builder(t testing.TB) *sqlitetest.Builder {
 	}
 	fill("conversations", s.conversations, nil, false)
 	fill("messages", s.messages, messageDefaults(), false)
-	fill("parts", nil, nil, false)
+	fill("parts", s.parts, map[string]any{"conversation_id": int64(1), "timestamp": tT + 1000, "width": int64(-1), "height": int64(-1)}, false)
 	fill("participants", s.participants, participantDefaults(), s.plainIDs)
 	fill("conversation_participants", s.members, nil, false)
 	return b

@@ -3586,7 +3586,7 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   output for the other families is unchanged. `TestGoogleMessagesFactsCiteTheirSource`,
   `TestGoogleMessagesDDLSnapshotsCiteTheirSource` and `TestGoogleMessagesProprietaryShapeIsMarkedFromMemory`
   (`internal/archtest`) pin the files.
-- Google Messages fixtures (plan 4I5 Task 2): `google_messages.py` (family `google-messages`) writes ten variants into
+- Google Messages fixtures (plan 4I5 Task 2): `google_messages.py` (family `google-messages`) writes eleven variants into
   `internal/parsers/androidgooglemessages/testdata` from the DDL snapshots and `facts.tsv` of `schemas/google-messages`
   (Python 3 and its bundled `sqlite3` only; no Docker; not part of `gen.sh all`):
 
@@ -3602,7 +3602,7 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   900 and 901, rollback mode), `gm-aosp-v1` (`aosp-v1.sql`, P1-P3, C1, C2, M1, M2, M4; `IS_ENTERPRISE` missing),
   `gm-aosp-v2-wal` (M40 in a committed WAL frame, M41 in an uncommitted one), `gm-journal` (M42 in a hot journal),
   `gm-proprietary-shaped` (`proprietary-shaped.sql`, user version 9000, every `fixture_extra_*` cell filled),
-  `gm-other-kind` and `gm-not-sqlite` (no signature, no record), `gm-deleted` (deleted messages and parts and a rewritten
+  `gm-no-members` (the v2 scenario without `conversation_participants`, the one join table the signature does not require: every members join is undecided, never "none"), `gm-other-kind` and `gm-not-sqlite` (no signature, no record), `gm-deleted` (deleted messages and parts and a rewritten
   part text in the page images a killed writer leaves under and in its WAL), `gm-rebuilt` (every table dropped and
   recreated: old parts in freed pages whose `message_id` names a different live message) and `gm-hostile` (H1-H15: codes as
   TEXT, REAL, NaN and BLOB, 1,001 parts, a 4 MiB text part, NUL, invalid UTF-8 and a bidi override, 10 KiB `uri` and

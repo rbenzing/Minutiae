@@ -323,8 +323,8 @@ func TestGoogleMessagesEveryRowIsARecord(t *testing.T) {
 			t.Errorf("%s: %d messages records, the engine counts %d rows", v, got, want)
 		}
 	}
-	if ran != 8 {
-		t.Errorf("%d variants with records, want 8", ran)
+	if ran != 9 {
+		t.Errorf("%d variants with records, want 9", ran)
 	}
 	_, recs := fixtureRecords(t, "gm-aosp-v2")
 	if r, ok := recs[6]; !ok || has(r, "sms_message_uri") || has(r, "sms_link") || has(r, "sms_link_state") {

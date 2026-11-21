@@ -10,6 +10,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
+	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
 // The bounds of the mappings (spec 3, 9): the telephony parsers' caps and the limit of an identifier.
@@ -91,4 +92,70 @@ func textCellOf(row parse.Row, col int) ([]byte, rowrun.CellKind) {
 		k = rowrun.CellOther
 	}
 	return b, k
+}
+
+// setBody states what CleanText did to the body (spec 6.4; restated from androidmms, parsers import no other parser): its
+// flags, a cut with the total length, and the original bytes (base64 within 64 KiB, else SHA-256) with their length.
+func setBody(msg *message.Message, c common.Cleaned) {
+	msg.BodyFlags = c.Flags
+	if c.Truncated {
+		t, n := true, int64(c.TotalBytes)
+		msg.BodyTruncated, msg.BodyTotalBytes = &t, &n
+	}
+	msg.BodyRawB64, msg.BodyRawSHA256 = c.RawB64, c.RawSHA256
+	if c.RawB64 != "" || c.RawSHA256 != "" {
+		n := int64(c.RawLen)
+		msg.BodyRawLen = &n
+	}
+}
+
+// trimPartialRune drops the end of b that may be a cut character: its continuation bytes and one lead byte. It is only
+// applied to a buffer that was cut anyway.
+func trimPartialRune(b []byte) []byte {
+	for len(b) > 0 && b[len(b)-1]&0xC0 == 0x80 {
+		b = b[:len(b)-1]
+	}
+	if len(b) > 0 && b[len(b)-1] >= 0xC0 {
+		b = b[:len(b)-1]
+	}
+	return b
+}
+
+// joinText joins text parts with "\n", keeping at most 2*maxBody bytes, and reports the full length (restated from
+// androidmms). The cut is made on a character boundary, so the cut itself is never reported as invalid UTF-8.
+func joinText(parts [][]byte) (joined []byte, total int64) {
+	limit := 2 * maxBody
+	for i, p := range parts {
+		sep := 0
+		if i > 0 {
+			sep = 1
+		}
+		total += int64(sep + len(p))
+		if len(joined) >= limit {
+			continue
+		}
+		if sep == 1 {
+			joined = append(joined, '\n')
+		}
+		if room := limit - len(joined); len(p) > room {
+			p = p[:room]
+		}
+		joined = append(joined, p...)
+	}
+	if total > int64(len(joined)) {
+		joined = trimPartialRune(joined)
+	}
+	return joined, total
+}
+
+// cleanBody is CleanText of joined at maxBody; a text cut before CleanText (total > len(joined)) is still a cut text.
+func cleanBody(joined []byte, total int64) common.Cleaned {
+	cl := common.CleanText(joined, maxBody)
+	if total > int64(len(joined)) {
+		cl.Truncated, cl.TotalBytes = true, int(total)
+		if !slices.Contains(cl.Flags, common.FlagTruncated) {
+			cl.Flags = append(cl.Flags, common.FlagTruncated)
+		}
+	}
+	return cl
 }

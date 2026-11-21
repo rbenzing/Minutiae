@@ -144,7 +144,11 @@ type countingParser struct {
 }
 
 func (p countingParser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
-	_, err := rowrun.Run(ctx, in, out, []rowrun.Step{{Mapping: androidgooglemessages.CountingMapping(in, p.budget, p.on), Identifying: true}})
+	_, err := rowrun.Run(ctx, in, out, androidgooglemessages.CountingSteps(in, p.budget, nil, func(_, op, table string) {
+		if op == "match" {
+			p.on(table)
+		}
+	}))
 	return err
 }
 

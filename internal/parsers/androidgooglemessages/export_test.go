@@ -1,31 +1,49 @@
 package androidgooglemessages
 
 import (
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
 )
 
-// CountingMapping is the live messages mapping of one job (the joins of Parse, no guard) whose every Match is reported to
-// onMatch with the table it asks. budget is the budget the member cache charges (nil: the job's own, in.Budget).
-func CountingMapping(in *parse.Input, budget *parse.BudgetView, onMatch func(table string)) parse.TableMapping {
-	if budget == nil {
-		budget = in.Budget
+// IDCost is what the decided message id set charges per id.
+const IDCost = idCost
+
+// CountingSteps are the live steps of one job (the joins of Parse, no guard) whose every Get and Match is reported to on
+// with the step (the table being mapped), the operation ("get" or "match") and the table it asks. memberBudget and idBudget
+// are what the member cache and the id set charge (nil: the job's own, in.Budget).
+func CountingSteps(in *parse.Input, memberBudget, idBudget *parse.BudgetView, on func(step, op, table string)) []rowrun.Step {
+	if memberBudget == nil {
+		memberBudget = in.Budget
+	}
+	if idBudget == nil {
+		idBudget = in.Budget
 	}
 	cnt := &counts{}
-	mp := messagesMapping(&env{Members: newMemberCache(budget, cnt), Counts: cnt})
-	inner := mp.Map
-	mp.Map = func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
-		return inner(countingCtx{MapContext: m, on: onMatch}, row)
+	e := &env{Members: newMemberCache(memberBudget, cnt), IDs: newIDSet(idBudget), Counts: cnt}
+	steps := liveSteps(e)
+	for i := range steps {
+		mp := &steps[i].Mapping
+		inner, table := mp.Map, mp.Table
+		mp.Map = func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+			return inner(countingCtx{MapContext: m, on: on, step: table}, row)
+		}
 	}
-	return mp
+	return steps
 }
 
 type countingCtx struct {
 	parse.MapContext
-	on func(table string)
+	on   func(step, op, table string)
+	step string
 }
 
 func (c countingCtx) Match(table, col string, key parse.JoinKey) ([]parse.Row, error) {
-	c.on(table)
+	c.on(c.step, "match", table)
 	return c.MapContext.Match(table, col, key)
+}
+
+func (c countingCtx) Get(table string, rowid int64) (parse.Row, bool, error) {
+	c.on(c.step, "get", table)
+	return c.MapContext.Get(table, rowid)
 }

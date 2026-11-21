@@ -248,6 +248,98 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 			}
 		}
 	}
+	// the body, the attachments and the parts pass (Task 6; spec 6.4, 6.5, 7 R11, R12, B6, 4I5-P9)
+	var many []mrow
+	for i := int64(0); i < 1001; i++ {
+		many = append(many, mrow{2000 + i, map[string]any{"message_id": int64(3), "text": "p"}})
+	}
+	pres, pm := store{
+		participants:  []mrow{person(2, "+15550000002")},
+		conversations: []mrow{{1, map[string]any{}}},
+		messages: []mrow{
+			{1, map[string]any{"mms_subject": "Sub\xff"}},
+			{2, nil},
+			{3, nil},
+			{4, map[string]any{"mms_subject": []byte{1}}},
+		},
+		parts: append([]mrow{
+			{1, map[string]any{"message_id": int64(1), "text": "x"}},
+			{2, map[string]any{"message_id": int64(1), "uri": "u\xff", "content_type": strings.Repeat("c", 5000), "width": int64(3), "height": int64(4)}},
+			{3, map[string]any{"message_id": int64(1), "text": "both", "uri": "content://mms/part/3"}},
+			{4, map[string]any{"message_id": int64(1)}},
+			{900, map[string]any{"message_id": int64(999), "text": "o\xff", "timestamp": int64(50), "conversation_id": int64(3)}},
+			{901, map[string]any{"message_id": nil, "uri": "content://mms/part/901", "content_type": "image/png"}},
+			{902, map[string]any{"message_id": "x", "timestamp": "y", "conversation_id": nil}},
+		}, many...),
+	}.parse(t)
+	for _, c := range []struct {
+		id  int64
+		raw map[string]any
+		pay map[string]any
+	}{
+		{1, map[string]any{
+			"parts": int64(4), "parts_text_and_uri": int64(1), "parts_empty": int64(1), "body_state": nil, "parts_total": nil, "parts_truncated": nil,
+			"attachment_parts": []any{map[string]any{"part_id": int64(2), "width": int64(3), "height": int64(4)}, map[string]any{"part_id": int64(3), "width": int64(-1), "height": int64(-1)}},
+			"text_flags":       []any{"attachments.mime", "attachments.source_ref", "subject"},
+		}, map[string]any{"kind": "media", "text_source": "part", "subject": "Sub�"}},
+		{2, map[string]any{"parts": int64(0), "body_state": "no-parts", "attachment_parts": nil}, map[string]any{"kind": "unknown", "text_source": nil, "attachments": nil, "subject": nil}},
+		{3, map[string]any{"parts": int64(1000), "parts_total": int64(1001), "parts_truncated": true}, map[string]any{"kind": "text"}},
+		{4, map[string]any{"unknown_columns": map[string]any{"mms_subject": "type-mismatch"}}, map[string]any{"subject": nil}},
+	} {
+		r, ok := pm[c.id]
+		if !ok {
+			t.Fatalf("parts row %d: no record", c.id)
+		}
+		raw := rawOf(r)
+		for k, w := range c.raw {
+			g, has := raw[k]
+			switch {
+			case w == nil && has:
+				t.Errorf("parts message %d: raw.%s = %#v, want absent", c.id, k, g)
+			case w != nil && !reflect.DeepEqual(g, w):
+				t.Errorf("parts message %d: raw.%s = %#v, want %#v", c.id, k, g, w)
+			}
+		}
+		for k, w := range c.pay {
+			g, has := r.Payload[k]
+			switch {
+			case w == nil && has:
+				t.Errorf("parts message %d: %s = %#v, want absent", c.id, k, g)
+			case w != nil && !reflect.DeepEqual(g, w):
+				t.Errorf("parts message %d: %s = %#v, want %#v", c.id, k, g, w)
+			}
+		}
+	}
+	orph := partsByRowid(t, pres)
+	for id, w := range map[int64]map[string]any{
+		900: {"part_state": "orphan", "part_rowid": int64(900), "part_message_id": int64(999), "timestamp": int64(50), "timestamp_status": "invalid", "conversation_id": int64(3), "text_flags": []any{"body"}, "part_message_id_state": nil},
+		901: {"part_message_id_state": "null", "part_message_id": nil, "attachment_parts": []any{map[string]any{"part_id": int64(901), "width": int64(-1), "height": int64(-1)}}, "unknown_columns": nil},
+		902: {"part_message_id": nil, "part_message_id_state": nil, "parts_empty": int64(1), "unknown_columns": map[string]any{"message_id": "type-mismatch", "timestamp": "type-mismatch"}},
+	} {
+		r, ok := orph[id]
+		if !ok {
+			t.Fatalf("orphan part %d: no record", id)
+		}
+		raw := rawOf(r)
+		for k, v := range w {
+			g, has := raw[k]
+			switch {
+			case v == nil && has:
+				t.Errorf("orphan part %d: raw.%s = %#v, want absent", id, k, g)
+			case v != nil && !reflect.DeepEqual(g, v):
+				t.Errorf("orphan part %d: raw.%s = %#v, want %#v", id, k, g, v)
+			}
+		}
+	}
+	if r := orph[900]; r.Payload["kind"] != "text" || r.Payload["text_source"] != "part" || r.Payload["thread"].(map[string]any)["id"] != "3" || r.Payload["body_flags"] == nil {
+		t.Errorf("orphan part 900: payload %v", r.Payload)
+	}
+	if r := orph[901]; r.Payload["kind"] != "media" || !reflect.DeepEqual(r.Payload["attachments"], []any{map[string]any{"mime": "image/png", "source_ref": "content://mms/part/901"}}) {
+		t.Errorf("orphan part 901: payload %v", r.Payload)
+	}
+	if pres.Notes["parts.joined"] != "1005" || pres.Notes["orphan_parts"] != "3" {
+		t.Errorf("notes parts.joined %q orphan_parts %q, want 1005 and 3", pres.Notes["parts.joined"], pres.Notes["orphan_parts"])
+	}
 	// the place (spec 5.2): the app is stated from the path and the basis with it
 	for remote, w := range map[string][2]string{
 		remoteApp: {"google_messages", "path"}, remoteAOSP: {"aosp_messaging", "path"}, remoteOther: {"unknown", "none"},
@@ -292,6 +384,11 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 			"no-conversations-row", "sms_thread_id", "archive_status", "is_enterprise", "participant_count", "sort_timestamp", "last_read_timestamp",
 			"sort_timestamp_status", "last_read_timestamp_status", "members_basis", "current", "members_total", "members_cut", "members_state", "none",
 			"members_dangling", "members_without_address", "blocked_member_ids", "self_state", "group_state", "join_undecided", "participants.sub_id",
+			// Task 6: body, attachments, parts and orphan parts
+			"subject", "text_source", "part", "kind", "attachments", "mime", "source_ref", "parts", "parts_total", "parts_truncated", "parts_text_and_uri",
+			"parts_empty", "attachment_parts", "part_id", "width", "height", "body_state", "no-parts", "conversation_participants.participant_id",
+			"part_rowid", "part_state", "orphan", "part_message_id", "part_message_id_state", "timestamp", "timestamp_status", "body", "message_id",
+			"attachments.mime", "attachments.source_ref", "parts.text", "parts.uri", "parts.content_type", "parts.width", "parts.height", "mms_subject",
 		}
 		for _, w := range words {
 			if !strings.Contains(row, "`"+w+"`") {

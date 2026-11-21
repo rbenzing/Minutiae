@@ -183,6 +183,7 @@ class Env:
         self.participants = {r["rowid"]: r for r in view.get("participants", [])}
         self.has_conversations = "conversations" in view
         self.conversations = {r["rowid"]: r for r in view.get("conversations", [])}
+        self.has_members = "conversation_participants" in view
         self.members = {}
         for r in view.get("conversation_participants", []):
             if is_int(r.get("conversation_id")):
@@ -357,8 +358,8 @@ def body_of(plist, p, raw, unknown):
             atts.append(a)
             ap = {"part_id": q["rowid"]}
             for col in ("width", "height"):
-                v = q.get(col)
-                if is_int(v):
+                v, st = int_cell(q, col, unknown, "parts." + col, table="parts")
+                if st == "int":
                     ap[col] = v
             apart.append(ap)
         if tx is not None and uri is not None:
@@ -428,6 +429,10 @@ def thread_and_members(env, r, raw, unknown, p):
         c = cleaned(raw, "thread.title", nm, MAX_NAME)
         if c.text:
             th["title"] = c.text
+    if not env.has_members:  # a store without conversation_participants: the members are undecided, never "none" (ruling T5 c1)
+        raw["join_undecided"] = ["conversation_participants"]
+        raw["members_state"] = "undecided"
+        return th, None
     kept, dangling, undecided, blocked = [], 0, False, []
     group_unreadable = False
     for mrow in env.members.get(cid, []):
@@ -644,8 +649,9 @@ def part_payload(q, unknown, raw, p):
         atts.append(a)
         ap = {"part_id": q["rowid"]}
         for col in ("width", "height"):
-            if is_int(q.get(col)):
-                ap[col] = q[col]
+            v, st = int_cell(q, col, unknown, col, table="parts")
+            if st == "int":
+                ap[col] = v
         raw["attachment_parts"] = [ap]
         p["attachments"] = atts
     if tx is not None and uri is not None:
@@ -746,6 +752,12 @@ def oracle(files, ddl_name, variant, nan=frozenset(), refused=False):
     if uv not in (1, 2):
         exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:schema", "contains":
                                 "googlemessages-schema-uncited: user_version %d is not a cited AOSP version; read by the AOSP core signature" % uv})
+    if not env.has_members:  # every join through the absent table is undecided: a note, and one counted warning (ruling T5 c1)
+        notes["join_undecided.conversation_participants"] = "table absent"
+        n = sum(1 for e in exp["records"] if "conversation_participants" in e["payload"]["raw"].get("join_undecided", []))
+        if n:
+            exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:table=conversation_participants", "contains":
+                                    "googlemessages-join-undecided: conversation_participants: %d records" % n})
     if env.conflicts:
         exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:table=messages", "contains":
                                 "googlemessages-direction-conflict: %d records" % env.conflicts})
@@ -968,6 +980,15 @@ def variant_proprietary(work):
               extra={"messages": {"fixture_extra_flag": 1}, "conversations": {"fixture_extra_note": "synthetic note"},
                      "parts": {"fixture_extra_part": "synthetic part"}})
     return finish(con, path, "proprietary-shaped.sql", "gm-proprietary-shaped")
+
+
+def variant_no_members(work):
+    """A bugle_db without conversation_participants (the one join table the signature does not require): every members join
+    is undecided, stated as such, never "none" (ruling 4I5-T5c1)."""
+    path, con = create(work, "aosp-v2.sql")
+    core_fill(con, [m for m in core_messages() if m[0]["_id"] in (1, 2, 4)], (1, 2, 3), (1, 2), orphans=False)
+    con.execute("drop table conversation_participants")
+    return finish(con, path, "aosp-v2.sql", "gm-no-members")
 
 
 def variant_other_kind(work):
@@ -1248,4 +1269,4 @@ def variant_rebuilt(work):
 
 VARIANTS = {"gm-aosp-v2": variant_v2, "gm-aosp-v1": variant_v1, "gm-aosp-v2-wal": variant_wal, "gm-journal": variant_journal,
             "gm-proprietary-shaped": variant_proprietary, "gm-other-kind": variant_other_kind, "gm-not-sqlite": variant_not_sqlite,
-            "gm-deleted": variant_deleted, "gm-rebuilt": variant_rebuilt, "gm-hostile": variant_hostile}
+            "gm-no-members": variant_no_members, "gm-deleted": variant_deleted, "gm-rebuilt": variant_rebuilt, "gm-hostile": variant_hostile}

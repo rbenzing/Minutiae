@@ -14,6 +14,7 @@ var fixturePins = map[string]string{
 	"gm-hostile.db":            "aa015670b756fcbc6ff0fbf04f1ec7b9fa69db8f3c3b26ef5a10df7801e34329",
 	"gm-journal.db":            "5a72e20b95733ab2f4e5911408eb9d93bfb9d1bf6c79e371f86e2ae96bef4b52",
 	"gm-journal.journal":       "1219828e0f07ac778b6a224616bd34a6ed343cd374313f8c07e97c15a4f8ad3c",
+	"gm-no-members.db":         "7f827c96cf1517a05811c7764492093258a004b60715920abc7980099da5c89d",
 	"gm-not-sqlite.db":         "965c1130b56ab133d9ccb7e5c30535a99f887ed3c2898a61b6b3470941c1911d",
 	"gm-other-kind.db":         "5b130ae6363c5f0480aa8d45957c28f612d998891cfdbc51e922654d07a8e82e",
 	"gm-proprietary-shaped.db": "b3bc16e539bae9b564d7bae0a2a7b5a2f3b6cc9fd2d916a11faa8676f3fd8e55",

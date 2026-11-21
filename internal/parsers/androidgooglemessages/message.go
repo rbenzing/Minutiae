@@ -9,11 +9,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
-// idSet (B6, Task 6) is the per-job state the later task fills; it is declared here so env has its final shape (4I5-P6).
-type idSet struct{}
-
 // env is the per-job state of the mappings (4I5-P6): the join guard, the decided message ids, the member cache and the
-// counts. A nil *env is the typed pass (Mappings), which joins nothing. IDs is nil until Task 6.
+// counts. A nil *env is the typed pass (Mappings), which joins nothing.
 type env struct {
 	Guard   *joinGuard
 	IDs     *idSet
@@ -58,7 +55,13 @@ func specNames(specs []parse.ColumnSpec) []string {
 func messagesMapping(e *env) parse.TableMapping {
 	return parse.TableMapping{
 		Table: tableMessages, Columns: messagesSpecs(),
-		Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) { return mapMessage(e, m, row) },
+		Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+			recs, err := mapMessage(e, m, row)
+			if e != nil { // a live pass: the set of decided ids is every message row that was read and mapped (B6)
+				noteID(e.IDs, row, err)
+			}
+			return recs, err
+		},
 	}
 }
 
@@ -67,8 +70,8 @@ var storedInts = []string{"seen", "sms_priority", "sms_message_size", "raw_statu
 
 // mapMessage is the mapping of one messages row (spec 6.1, 6.2, 6.6 to 6.8): the channel, the direction and status of the
 // cited codes, the read state, the times, the stored scalars and the telephony link, and (a live pass, e != nil) the
-// sender, the self row, the direction cross-check, the conversation and its members. The body and the attachments follow in
-// Task 6: until then the kind is unknown. The typed pass (e == nil) joins nothing: participants_unknown and the thread by
+// sender, the self row, the direction cross-check, the conversation, its members, and the body and attachments of its parts
+// (the subject is stated in both passes). The typed pass (e == nil) joins nothing: participants_unknown and the thread by
 // its id alone.
 func mapMessage(e *env, m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	place, err := rowrun.Where(m, row)
@@ -137,13 +140,27 @@ func mapMessage(e *env, m parse.MapContext, row parse.Row) ([]records.Record, er
 
 	rec := records.Record{Type: message.Type, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator, Range: &place.Range}
 	rec.Time, rec.Times = timesOf(row, c, raw, unknown, msg.Direction)
+	if sb, sk := textCellOf(row, c.At("mms_subject")); sk == rowrun.CellValue {
+		msg.Subject = cleanField(raw, "subject", sb, maxBody)
+	} else {
+		rowrun.Flag(unknown, row, "mms_subject", c.At("mms_subject"), sk)
+	}
+	if e != nil { // the typed pass joins nothing, so no body either (Task 8 states it)
+		id, ok := row.Rowid()
+		if !ok {
+			raw["body_state"] = stateUndecided
+			undecidedJoin(raw, tableParts)
+		} else if err := bodyOf(m, id, raw, unknown, &msg, &rec); err != nil {
+			return nil, err
+		}
+	}
 	if len(unknown) > 0 {
 		raw["unknown_columns"] = unknown
 	}
 	if f := rowrun.DamageFlags(row); f != nil {
 		raw["row_flags"] = f
 	}
-	rec.Summary = message.Summary(msg.Channel, msg.Direction, counterparty, "")
+	rec.Summary = message.Summary(msg.Channel, msg.Direction, counterparty, rec.Body)
 	rec.Payload = msg.Payload()
 	return []records.Record{rec}, nil
 }
@@ -159,4 +176,19 @@ func appOf(m parse.MapContext) (app, basis string) {
 		return a, "path"
 	}
 	return appUnknown, "none"
+}
+
+// noteID adds the row of a mapped messages row to the decided id set (B6). A row that was not mapped, or that has no readable
+// rowid, leaves the set incomplete: its parts are then undecided, never orphans, never silently joined.
+func noteID(ids *idSet, row parse.Row, err error) {
+	if err != nil {
+		ids.markIncomplete("a messages row was not mapped")
+		return
+	}
+	id, ok := row.Rowid()
+	if !ok {
+		ids.markIncomplete("messages _id unreadable")
+		return
+	}
+	ids.add(id)
 }

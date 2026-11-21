@@ -3,6 +3,7 @@ package androidgooglemessages_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -142,7 +143,7 @@ func TestGoogleMessagesMissingOptionalColumnIsNotedOnce(t *testing.T) {
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 2})
 	msgs := b.CreateTable("messages", ddlMessagesNoSubject)
 	msgs.Insert(1, nil, int64(1), int64(2), int64(1), tT, tT+1000, int64(0), int64(100), int64(1), int64(1), nil, int64(0), int64(0), nil, nil, int64(0), int64(0), int64(0))
-	b.CreateTable("parts", ddlPartsNoWidth)
+	b.CreateTable("parts", ddlPartsNoWidth).Insert(7, nil, int64(1), nil, "content://mms/part/1", "image/png", int64(480), tT, int64(1))
 	b.CreateTable("participants", ddlParticipantsFull)
 	b.CreateTable("conversations", ddlConvsFull)
 	b.CreateTable("conversation_participants", ddlMembers)
@@ -156,6 +157,16 @@ func TestGoogleMessagesMissingOptionalColumnIsNotedOnce(t *testing.T) {
 		}
 		for k := range unknownOf(r) {
 			if strings.Contains(k, "mms_subject") {
+				t.Errorf("%s: unknown_columns names %s", r.Locator, k)
+			}
+		}
+		// Task 6: the store without parts.width states no width of the attachment part and no unknown entry for the column
+		ap, _ := rawOf(r)["attachment_parts"].([]any)
+		if len(ap) != 1 || !reflect.DeepEqual(ap[0], map[string]any{"part_id": int64(7), "height": int64(480)}) {
+			t.Errorf("%s: attachment_parts %v, want part 7 with a height and no width", r.Locator, ap)
+		}
+		for k := range unknownOf(r) {
+			if strings.Contains(k, "width") {
 				t.Errorf("%s: unknown_columns names %s", r.Locator, k)
 			}
 		}

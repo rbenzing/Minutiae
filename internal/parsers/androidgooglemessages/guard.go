@@ -169,6 +169,8 @@ type counts struct {
 	DirectionConflicts int64            // records whose raw holds a direction_conflict (B7)
 	CutConversations   []int64          // the conversations whose member list was cut (B3), in the order met
 	CutTotals          map[int64]int64  // conversation -> its non-self members before the cut
+	PartsJoined        int64            // parts of a decided message, joined into its record (B6)
+	Orphans            int64            // parts of no decided message, one record each (R11)
 }
 
 // countingEmitter counts the records the mappings cannot warn about (restated from androidtelegram/guard.go).

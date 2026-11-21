@@ -64,8 +64,15 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings are the typed pass's mappings (4I5-P6): the messages mapping with no per-job state, so it joins nothing.
-func (Parser) Mappings() []parse.TableMapping { return []parse.TableMapping{messagesMapping(nil)} }
+// Mappings are the typed pass's mappings (4I5-P6): the messages and parts mappings with no per-job state, so they join nothing.
+func (Parser) Mappings() []parse.TableMapping {
+	return []parse.TableMapping{messagesMapping(nil), partsMapping(nil)}
+}
+
+// liveSteps are the steps of the live parse (B6): the messages (identifying, they build the set of decided ids), then the parts.
+func liveSteps(e *env) []rowrun.Step {
+	return []rowrun.Step{{Mapping: messagesMapping(e), Identifying: true}, {Mapping: partsMapping(e)}}
+}
 
 // The reasons of Probe (byte-exact, the plan's "Probe reasons").
 const (
@@ -361,10 +368,16 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 	ce := newCountingEmitter(out, cnt)
 	mc := newMemberCache(in.Budget, cnt)
 	defer mc.release()
-	steps := []rowrun.Step{{Mapping: messagesMapping(&env{Guard: lv.Guard, Members: mc, Counts: cnt}), Identifying: true}}
-	if _, err := rowrun.Run(ctx, in, ce, steps); err != nil {
+	ids := newIDSet(in.Budget)
+	defer ids.release()
+	if lv.MessagesUnreadable {
+		ids.markIncomplete("the messages table could not be read whole")
+	}
+	if _, err := rowrun.Run(ctx, in, ce, liveSteps(&env{Guard: lv.Guard, IDs: ids, Members: mc, Counts: cnt})); err != nil {
 		return fmt.Errorf("android.googlemessages: %w", err)
 	}
+	out.Note("parts.joined", strconv.FormatInt(cnt.PartsJoined, 10))
+	out.Note("orphan_parts", strconv.FormatInt(cnt.Orphans, 10))
 	return ce.warn(ctx)
 }
 
