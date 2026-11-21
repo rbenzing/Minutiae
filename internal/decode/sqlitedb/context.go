@@ -41,8 +41,15 @@ type Context struct {
 	reports map[string]*JoinReport
 	build   func(context.Context, *Table, string) (*Index, error) // index build; a test seam, nil means Table.Index with the default cap
 	rows    []Row
+	held    map[heldKey]Row // the rows of rows by (table, rowid): a row handed out once is handed out again, never cloned anew
 	closed  bool
 	err     error // the first failure Column could not report as -1 (see Err)
+}
+
+// heldKey names a row the Context holds: its table (ASCII-folded) and rowid.
+type heldKey struct {
+	table string
+	rowid int64
 }
 
 // NewContext returns a Context over db. ctx is used for cancellation only. n
@@ -51,6 +58,7 @@ func NewContext(ctx context.Context, db *DB, in *parse.Input, n Notes) *Context 
 	return &Context{
 		ctx: ctx, db: db, in: in, notes: n,
 		tables: map[string]*Table{}, indexes: map[string]*Index{}, failed: map[string]error{}, reports: map[string]*JoinReport{},
+		held: map[heldKey]Row{},
 	}
 }
 
@@ -112,7 +120,7 @@ func (c *Context) fail(err error) {
 func (c *Context) Err() error { return c.err }
 
 // Get returns the row of table with the given rowid, owned by the Context (it
-// stays charged until Close); found is false only for a clean miss. A missing
+// stays charged until Close; a row the Context already holds is handed out again); found is false only for a clean miss. A missing
 // table is ErrNoSuchTable. A sticky failure (see Err) is returned first.
 func (c *Context) Get(table string, rowid int64) (parse.Row, bool, error) {
 	if c.err != nil {
@@ -122,11 +130,28 @@ func (c *Context) Get(table string, rowid int64) (parse.Row, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	r, ok, err := t.Get(c.ctx, rowid)
+	r, ok, err := c.get(t, rowid)
 	if err != nil || !ok {
 		return nil, false, err
 	}
+	return r, true, nil
+}
+
+// get is t.Get through the rows the Context holds (plan 4I4 Task 13 fix 1): a row it already handed out is handed
+// out again, so a mapping that joins the same few rows from many rows (every message of a dialog joins its one
+// users or chats row) holds and charges each of them once until Close, not one clone per lookup. The database does
+// not change while it is open, so the held row is the row a new read would give.
+func (c *Context) get(t *Table, rowid int64) (Row, bool, error) {
+	k := heldKey{table: asciiFold(t.name), rowid: rowid}
+	if r, ok := c.held[k]; ok {
+		return r, true, nil
+	}
+	r, ok, err := t.Get(c.ctx, rowid)
+	if err != nil || !ok {
+		return Row{}, false, err
+	}
 	c.rows = append(c.rows, r)
+	c.held[k] = r
 	return r, true, nil
 }
 
@@ -201,14 +226,13 @@ func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, erro
 	}
 	out := make([]parse.Row, 0, len(ids))
 	for _, id := range ids {
-		r, found, err := t.Get(c.ctx, id)
+		r, found, err := c.get(t, id)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			return nil, fmt.Errorf("%w: rowid %d of %s.%s is indexed but no longer resolves", ErrCorrupt, id, t.name, name)
 		}
-		c.rows = append(c.rows, r)
 		out = append(out, r)
 	}
 	return out, nil
@@ -257,7 +281,7 @@ func (c *Context) Close() {
 	for _, r := range c.rows {
 		r.Release()
 	}
-	c.indexes, c.rows, c.tables = nil, nil, nil
+	c.indexes, c.rows, c.tables, c.held = nil, nil, nil, nil
 }
 
 // UndecidedHits returns the UndecidedHits count of one join (names compared ASCII

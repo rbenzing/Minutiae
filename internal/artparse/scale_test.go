@@ -36,6 +36,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"runtime/metrics"
 	"slices"
 	"strings"
 	"testing"
@@ -1564,14 +1565,20 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	debug.FreeOSMemory()
+	debug.FreeOSMemory() // hand back the garbage of the setup (generation, capture) before the measured run
+	// the collector's memory limit as the CLI sets it (internal/cli/parse_recover.go) and runHost does: twice the budget
+	prev := debug.SetMemoryLimit(min(debug.SetMemoryLimit(-1), 2*lim.MemBudget))
+	defer debug.SetMemoryLimit(prev)
+	stop := sampleHeap()
 	start := time.Now()
 	sum, err := h.Run(context.Background(), artparse.RunOptions{})
 	wall := time.Since(start)
+	live, total := stop()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	rss, ok := peakRSS()
+	t.Logf("telegram-decode: peak live heap objects %d MiB, peak Go-mapped memory %d MiB (runtime/metrics, sampled every 50 ms)", live/scaleMiB, total/scaleMiB)
 	res := phaseResult{Phase: "telegram-decode", MemBudget: tgBudget, InputBytes: g.Bytes, Rows: g.Rows["messages_v2"], PeakRSSLimit: tgSizeCap - g.Bytes, TableRows: g.Rows}
 	fillResult(&res, sum, wall, rss, ok)
 	res.Streamed = streamedOf(t, c)
@@ -1593,4 +1600,37 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 		t.Errorf("%d records state budget: a decode's charge outlived its row (F8)", w.budget)
 	}
 	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
+}
+
+// sampleHeap samples runtime/metrics every 50 ms until the returned stop is called, which gives the highest live heap
+// (/memory/classes/heap/objects:bytes, the bytes of objects the last collection kept plus those allocated since) and the
+// highest memory the Go runtime had mapped (/memory/classes/total:bytes) seen: what of a peak resident set is the Go
+// heap, and how much of it is garbage the collector had not yet taken.
+func sampleHeap() (stop func() (live, total int64)) {
+	samples := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}, {Name: "/memory/classes/total:bytes"}}
+	done, out := make(chan struct{}), make(chan [2]int64)
+	go func() {
+		var peak [2]int64
+		tick := time.NewTicker(50 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			metrics.Read(samples)
+			for i, s := range samples {
+				if s.Value.Kind() == metrics.KindUint64 {
+					peak[i] = max(peak[i], int64(s.Value.Uint64()))
+				}
+			}
+			select {
+			case <-done:
+				out <- peak
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	return func() (int64, int64) {
+		close(done)
+		p := <-out
+		return p[0], p[1]
+	}
 }

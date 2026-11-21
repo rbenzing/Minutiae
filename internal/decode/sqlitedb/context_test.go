@@ -307,3 +307,45 @@ func TestMatchOfALiteralKeyIsNeverFlagged(t *testing.T) {
 	}
 	c.Close()
 }
+
+// A row the Context already holds is handed out again, never cloned and charged once more (plan 4I4 Task 13 fix 1):
+// a mapping that joins the same few rows from a million rows (every message of a dialog joins its one users or chats
+// row) holds those few rows until the Context rotates, not one copy per lookup. Get and Match share the rows.
+func TestContextReusesTheRowsItHolds(t *testing.T) {
+	d, b := chatDB(t)
+	c := newCtx(t, d, nil)
+	first, ok, err := c.Get("thread", 1)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	held := b.used
+	for range 1000 {
+		r, ok, err := c.Get("THREAD", 1)
+		if err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		if s, _ := r.Text(1); string(s) != "alpha" {
+			t.Fatalf("title = %q", s)
+		}
+	}
+	if b.used != held {
+		t.Errorf("1,000 Gets of a held row charged %d bytes more", b.used-held)
+	}
+	rows, err := c.Match("message", "thread_id", sqlitedb.LiteralIntKey(1))
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Match = %d rows, %v", len(rows), err)
+	}
+	afterMatch := b.used
+	if _, ok, err := c.Get("message", 3); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, err := c.Match("message", "thread_id", sqlitedb.LiteralIntKey(1)); err != nil {
+		t.Fatal(err)
+	}
+	if b.used != afterMatch {
+		t.Errorf("a Get and a Match of rows a Match handed out charged %d bytes more", b.used-afterMatch)
+	}
+	if s, _ := first.Text(1); string(s) != "alpha" {
+		t.Errorf("the first row changed: %q", s)
+	}
+}
