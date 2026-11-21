@@ -3556,3 +3556,31 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   variants were not regenerated, so their random WAL salts and pins stand): a NULL `mid`, `uid`, `date` or `out` is
   `unknown_columns` `null`, never a stored NULL (spec 12), and a vector's bad count stops at the offset where the
   vector starts, as every failed read of `decode/tl`. Not part of `gen.sh all`; no Docker.
+- Google Messages facts and DDL (plan 4I5 Task 1): `schemas/google-messages/facts.tsv` (header `key value constant contract pin
+  source note`: the AOSP Messaging `message_protocol` and `message_status` codes with their constant names and the
+  channel or direction each maps to, the self-participant, time, trigger, URI, deletion and path facts, each with its pin
+  and `<File>:<line>`), `aosp-v2.sql` (`verified`, user_version 2) and `aosp-v1.sql` (`historical`, user_version 1: v2
+  without `conversations.IS_ENTERPRISE`), the five `bugle_db` tables and the two `parts`/`messages` triggers of
+  `DatabaseHelper.java`, and `proprietary-shaped.sql` (`from-memory`, user_version 9000: v2 plus two UNVERIFIED `parts`
+  columns and synthetic `fixture_extra_*` columns, no RCS name; it is never given to `ddl_crosscheck.py`).
+  `CROSSCHECK.md` holds the pins, the SHA-256 of every fetched file and a row per fact and per table. The pins are
+  `platform/packages/apps/Messaging` at `de315b762312dd1a5d2bbd16e62ef2bd123f61e5` (M; `src/com/android/messaging/`
+  `datamodel/DatabaseHelper.java`, `DatabaseUpgradeHelper.java`, `BugleDatabaseOperations.java`, `MessagingContentProvider.java`,
+  `data/MessageData.java`, `data/ParticipantData.java`, `action/SyncMessageBatch.java`, `action/DeleteMessageAction.java`,
+  `action/UpdateDestinationBlockedAction.java`, `sms/DatabaseMessages.java`, `sms/MmsUtils.java`, plus
+  `res/values/versions.xml` and `AndroidManifest.xml`), `platform/packages/providers/TelephonyProvider` at
+  `android-10.0.0_r1` (T10; `MmsSmsDatabaseHelper.java`) and `platform/frameworks/base` at `android-10.0.0_r1` (F10;
+  `telephony/java/android/provider/Telephony.java`). All are fetched into scratch, one file at a time, and never
+  committed. The cross-check and the snapshot text:
+
+  ```
+  py -3 -I tools/fixtures/ddl_crosscheck.py <src>/M tools/fixtures/schemas/google-messages --family google-messages --snapshot aosp-v2.sql --snapshot aosp-v1.sql --tag main --commit platform/packages/apps/Messaging=de315b762312dd1a5d2bbd16e62ef2bd123f61e5 --write-report <scratch>/ddl.md
+  py -3 -I tools/fixtures/ddl_crosscheck.py <src>/M tools/fixtures/schemas/google-messages --family google-messages --emit <table>
+  ```
+
+  `--family google-messages` evaluates the SDK constant `BaseColumns._ID` as `_id` and writes the heading
+  "# DDL cross-check (plan 4I5)"; the `participants` statement uses a constant the evaluator cannot compute, so its rows
+  are read by hand. Facts only, Apache-2.0: no code is copied, and the files hold no URL. Without `--family` the script's
+  output for the other families is unchanged. `TestGoogleMessagesFactsCiteTheirSource`,
+  `TestGoogleMessagesDDLSnapshotsCiteTheirSource` and `TestGoogleMessagesProprietaryShapeIsMarkedFromMemory`
+  (`internal/archtest`) pin the files.

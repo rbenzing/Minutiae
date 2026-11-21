@@ -1,0 +1,51 @@
+key	value	constant	contract	pin	source	note
+message_protocol.-1	-1	PROTOCOL_UNKNOWN	unknown	M	MessageData.java:114	
+message_protocol.0	0	PROTOCOL_SMS	sms	M	MessageData.java:115	
+message_protocol.1	1	PROTOCOL_MMS	mms	M	MessageData.java:116	
+message_protocol.2	2	PROTOCOL_MMS_PUSH_NOTIFICATION	mms	M	MessageData.java:117	an MMS WAP push notification (not yet downloaded); AOSP has no RCS value
+message_status.0	0	BUGLE_STATUS_UNKNOWN	unknown/unknown	M	MessageData.java:120	
+message_status.1	1	BUGLE_STATUS_OUTGOING_COMPLETE	out/sent	M	MessageData.java:123	
+message_status.2	2	BUGLE_STATUS_OUTGOING_DELIVERED	out/delivered	M	MessageData.java:124	
+message_status.3	3	BUGLE_STATUS_OUTGOING_DRAFT	out/draft	M	MessageData.java:126	
+message_status.4	4	BUGLE_STATUS_OUTGOING_YET_TO_SEND	out/queued	M	MessageData.java:127	
+message_status.5	5	BUGLE_STATUS_OUTGOING_SENDING	out/queued	M	MessageData.java:128	
+message_status.6	6	BUGLE_STATUS_OUTGOING_RESENDING	out/queued	M	MessageData.java:129	
+message_status.7	7	BUGLE_STATUS_OUTGOING_AWAITING_RETRY	out/queued	M	MessageData.java:130	
+message_status.8	8	BUGLE_STATUS_OUTGOING_FAILED	out/failed	M	MessageData.java:131	
+message_status.9	9	BUGLE_STATUS_OUTGOING_FAILED_EMERGENCY_NUMBER	out/failed	M	MessageData.java:132	
+message_status.100	100	BUGLE_STATUS_INCOMING_COMPLETE	in/received	M	MessageData.java:135	
+message_status.101	101	BUGLE_STATUS_INCOMING_YET_TO_MANUAL_DOWNLOAD	in/unknown	M	MessageData.java:136	
+message_status.102	102	BUGLE_STATUS_INCOMING_RETRYING_MANUAL_DOWNLOAD	in/unknown	M	MessageData.java:137	
+message_status.103	103	BUGLE_STATUS_INCOMING_MANUAL_DOWNLOADING	in/unknown	M	MessageData.java:138	
+message_status.104	104	BUGLE_STATUS_INCOMING_RETRYING_AUTO_DOWNLOAD	in/unknown	M	MessageData.java:139	
+message_status.105	105	BUGLE_STATUS_INCOMING_AUTO_DOWNLOADING	in/unknown	M	MessageData.java:140	
+message_status.106	106	BUGLE_STATUS_INCOMING_DOWNLOAD_FAILED	in/unknown	M	MessageData.java:141	
+message_status.107	107	BUGLE_STATUS_INCOMING_EXPIRED_OR_NOT_AVAILABLE	in/unknown	M	MessageData.java:142	
+self.other_than_self_sub_id	-2			M	ParticipantData.java:51,54	OTHER_THAN_SELF_SUB_ID = DEFAULT_SELF_SUB_ID - 1; the default is -1 per the comment at ParticipantData.java:50 (the default constant itself is an AndroidX value, not in the fetched sources)
+self.is_self	sub_id != -2			M	ParticipantData.java:505-507	isSelf() is mSubId != OTHER_THAN_SELF_SUB_ID
+self.default_sub_id	-1			M	DatabaseHelper.java:390	column comment: the default sub id is -1; earlier platform versions always carry it
+self.destinations_null	destinations NULL			M	DatabaseHelper.java:468-474,811	the self participant is inserted with only sub_id set; every destination and name column is NULL by design
+members.exclude_self	conversation_participants excludes the self participant			M	DatabaseHelper.java:476-477	recipients are the conversation's current members, not stored per message
+contact_id.unresolved	-1			M	ParticipantData.java:60	PARTICIPANT_CONTACT_ID_NOT_RESOLVED
+time.unit	ms			M	DatabaseMessages.java:161-163,371-372,381	SMS date copied as is; MMS date, date_sent and expiry multiplied by 1000 (telephony MMS times are seconds)
+time.sentinel	0			M	DatabaseHelper.java:278-293	every timestamp column defaults to 0: 0 is absent, never 1970
+trigger.parts_timestamp_insert	parts.timestamp := messages.received_timestamp on INSERT			M	DatabaseHelper.java:364-372	AFTER INSERT ON parts
+trigger.parts_timestamp_update	parts.timestamp := NEW.received_timestamp on UPDATE OF received_timestamp			M	DatabaseHelper.java:374-380	AFTER UPDATE OF received_timestamp ON messages
+messages.id_autoincrement	yes			M	DatabaseHelper.java:275	messages._id INTEGER PRIMARY KEY AUTOINCREMENT: no id reuse
+rebuild.drop_recreate	yes			M	DatabaseUpgradeHelper.java:41,93	an upgrade failure or any downgrade rebuilds every table
+version.current	2			M	versions.xml:19	database_version
+version.upgrade_1_2	conversations.IS_ENTERPRISE			M	DatabaseUpgradeHelper.java:48-50,59-61	the only upgrade step adds conversations.IS_ENTERPRISE INT DEFAULT(0)
+uri.sms	content://sms			F10	Telephony.java:395	F10 Sms.CONTENT_URI
+uri.mms	content://mms			F10	Telephony.java:2790	F10 Mms.CONTENT_URI
+uri.written	content://sms/<id> | content://mms/<id>			M	DatabaseMessages.java:169,387	sms_message_uri is the telephony authority plus the row id
+uri.mms_part	content://mms/part/<id>			M	MmsUtils.java:1753-1756	a media part uri is the telephony part URI; also built at DatabaseMessages.java:822-823
+sms_id.autoincrement	no			T10	MmsSmsDatabaseHelper.java:995-996	T10 sms._id INTEGER PRIMARY KEY: an id can be reused after a delete
+pdu_id.autoincrement	yes			T10	MmsSmsDatabaseHelper.java:728-729	T10 pdu._id INTEGER PRIMARY KEY AUTOINCREMENT
+parts.text_or_uri	text or media uri, not both			M	DatabaseHelper.java:315	comment on the parts table
+parts.dims_unspecified	-1			M	DatabaseHelper.java:352-355	width and height default to UNSPECIFIED_SIZE; its value is read at MessagingContentProvider.java:144
+read.values	0,1			M	DatabaseHelper.java:231-234,282-283	seen and read are 0/1; DEFAULT(0)
+sync.status_mapping	telephony sync: out failed/outbox/queued or sent with status>=failed -> 8; out complete -> 2; other out -> 1; in -> 100			M	SyncMessageBatch.java:199-222	a fixture fact (bugleStatusForSms)
+delete.row_removal	yes			M	BugleDatabaseOperations.java:1253-1254	a message delete removes the messages row; no tombstone; the telephony row is deleted after (DeleteMessageAction.java:70,82-85)
+blocked.archives	yes			M	UpdateDestinationBlockedAction.java:111-120	blocking archives the conversation, unblocking unarchives it
+path.package_aosp	com.android.messaging			M	AndroidManifest.xml:18	manifest package
+path.database	bugle_db			M	DatabaseHelper.java:46	DATABASE_NAME

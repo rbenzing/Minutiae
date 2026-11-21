@@ -2,7 +2,7 @@
 
     py -3 -I tools/fixtures/ddl_crosscheck.py <sourcedir> <schemasdir>
         [--tag TAG] [--commit REPO=SHA]... [--write-report FILE] [--emit TABLE]...
-        [--snapshot NAME]... [--family calendar|telegram]
+        [--snapshot NAME]... [--family calendar|telegram|google-messages]
 
 <sourcedir> holds the fetched Java files under their base names. They are untrusted text:
 this script reads them as text and applies regular expressions to them; nothing in them is
@@ -43,6 +43,13 @@ of MessagesStorage.java (the upgrade code, with the older definitions, comes aft
 is one subsection ("## DDL cross-check at <tag>") of the section "# DDL cross-check (plan 4I4)" that
 telegram_tl_facts.py --assemble writes into CROSSCHECK.md; it has no MMS note. A snapshot may hold the ALTER TABLE
 ADD COLUMN statements of an upgrade; each is looked up in the sources and cited by file and line.
+
+Plan 4I5 adds --family google-messages and the two Messaging source files (DatabaseHelper.java, DatabaseUpgradeHelper.java).
+The definition at the tag is the first CREATE TABLE of the table (DatabaseHelper.java has one per table); the report heading
+is "# DDL cross-check (plan 4I5)" and it has no MMS note. The constants the statements use are resolved from the other
+fetched files of the directory; a statement that needs an SDK constant (BaseColumns._ID) is reported as unevaluated, to be
+read by hand, except that --family google-messages evaluates BaseColumns._ID (an SDK constant, "_id") for a class that
+implements BaseColumns. Without --family google-messages the output is byte-identical to before.
 """
 import hashlib
 import os
@@ -56,6 +63,8 @@ SRC_FILES = [
     "CalendarDatabaseHelper.java",  # plan 4I3; CalendarContract.java beside it supplies the column constants
     "MessagesStorage.java",  # plan 4I4: the Telegram fresh-create path ...
     "DatabaseMigrationHelper.java",  # ... then the upgrade code (from release 11.4.2 on; earlier tags keep it in MessagesStorage)
+    "DatabaseHelper.java",  # plan 4I5: the Messaging bugle_db fresh-create path ...
+    "DatabaseUpgradeHelper.java",  # plan 4I5: ... and its one upgrade step (an ALTER TABLE ADD COLUMN)
 ]
 # The only columns a historical snapshot may use that no source defines: invented on purpose
 # for the unmapped_columns check (named in the header of mmssms-oem-extended.sql).
@@ -165,6 +174,7 @@ class Source:
 
 class World:
     def __init__(self, srcdir):
+        self.base_columns_id = False  # plan 4I5 (--family google-messages): X._ID of a class implementing BaseColumns is "_id"
         self.files = {}
         for fn in sorted(os.listdir(srcdir)):
             path = os.path.join(srcdir, fn)
@@ -183,6 +193,12 @@ class World:
             for sup in src.supers.get(cls, []):
                 hits += self.find(sup, name, seen)
         return hits
+
+    def sdk_id(self, ident):
+        """True for Class._ID where Class implements the SDK interface BaseColumns, whose _ID is the string "_id"."""
+        parts = ident.split(".")
+        return (self.base_columns_id and len(parts) >= 2 and parts[-1] == "_ID"
+                and any("BaseColumns" in s.supers.get(parts[-2], []) for s in self.files.values()))
 
     def lookup(self, src, ident):
         parts = ident.split(".")
@@ -235,6 +251,8 @@ class World:
         if t.group("id"):
             if i + 1 < len(toks) and toks[i + 1].group("op") == "(":
                 raise Unresolved(t.group("id") + "(")
+            if self.sdk_id(t.group("id")):
+                return "_id", i + 1
             for hit_src, hit_expr in self.lookup(src, t.group("id")):
                 try:
                     return self.evaluate(hit_src, hit_expr, depth + 1), i + 1
@@ -359,6 +377,7 @@ def main(argv):
     opt = lambda k: [argv[i + 1] for i, a in enumerate(argv) if a == k]
     srcdir, schemas = pos[0], pos[1]
     world = World(srcdir)
+    world.base_columns_id = (opt("--family") or [""])[0] == "google-messages"
     creates, alters, unresolved = {}, {}, []
     for name in SRC_FILES:
         src = world.files.get(name)
@@ -373,7 +392,7 @@ def main(argv):
             if table is not None:
                 alters.setdefault(table, []).append((name, line, col))
     family = (opt("--family") or [""])[0]
-    calendar, telegram = family == "calendar", family == "telegram"
+    calendar, telegram, gmsg = family == "calendar", family == "telegram", family == "google-messages"
     if calendar:
         bootstrap_first(world, creates)
     for t in opt("--emit"):
@@ -437,7 +456,7 @@ def main(argv):
     if report:
         tag = (opt("--tag") or ["?"])[0]
         with open(report[0], "w", encoding="utf-8", newline="\n") as f:
-            f.write("# DDL cross-check (plan 4I3)\n\n" if calendar else "# DDL cross-check (plan 4D, Task 4b)\n\n")
+            f.write("# DDL cross-check (plan 4I3)\n\n" if calendar else "# DDL cross-check (plan 4I5)\n\n" if gmsg else "# DDL cross-check (plan 4D, Task 4b)\n\n")
             f.write("Generated by tools/fixtures/ddl_crosscheck.py. Tag: `%s`.\n\n" % tag)
             for c in opt("--commit"):
                 repo, _, sha = c.partition("=")
@@ -455,7 +474,7 @@ def main(argv):
             f.write("| File | Table | Verdict | Evidence |\n|---|---|---|---|\n")
             for fn, tbl, v, ev in rows:
                 f.write("| %s | %s | %s | %s |\n" % (fn, tbl, v, ev))
-            if not calendar and not telegram:
+            if not calendar and not telegram and not gmsg:
                 f.write(MMS_NOTE)
     return 1 if bad else 0
 
