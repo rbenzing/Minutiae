@@ -111,7 +111,7 @@ var allowed = map[string][]string{
 	"tools/parserhash":                     {"internal/parse", "internal/parsers"},
 
 	// plan 4I5: the Google Messages parser (its imports are added as its code lands)
-	"internal/parsers/androidgooglemessages": {},
+	"internal/parsers/androidgooglemessages": {"internal/decode/sqlitedb", "internal/decode/sqlitedb/census", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/message"},
 }
 
 // "internal/cli" may import anything.
