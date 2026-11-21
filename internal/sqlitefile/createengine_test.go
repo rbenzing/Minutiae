@@ -51,6 +51,11 @@ func TestParserRefusesWhatTheEngineRefuses(t *testing.T) {
 		{"non-strict free types", "CREATE TABLE t(a, b VARCHAR(10), c UNSIGNED INT)", true},
 		{"strict quoted type", `CREATE TABLE t(a "INTEGER" PRIMARY KEY, b [TEXT]) STRICT`, true},
 		{"strict quoted wrong type", `CREATE TABLE t(a "VARCHAR") STRICT`, false},
+		// plan 4I5 (ruling T2a): SQLite's tconscomma is a comma or nothing, so consecutive table constraints need no comma
+		{"two foreign keys without a comma", "CREATE TABLE t(a INT, b INT, FOREIGN KEY (a) REFERENCES p(x) ON DELETE CASCADE FOREIGN KEY (b) REFERENCES p(x) ON DELETE SET NULL)", true},
+		{"foreign key then unique without a comma", "CREATE TABLE t(a INT, b INT, FOREIGN KEY (a) REFERENCES p(x) UNIQUE (a, b))", true},
+		{"garbage after a constraint", "CREATE TABLE t(a INT, FOREIGN KEY (a) REFERENCES p(x) junk)", false},
+		{"column definition after a constraint", "CREATE TABLE t(a INT, UNIQUE (a) b INT)", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := engineAccepts(t, c.sql); got != c.ok {
@@ -276,5 +281,19 @@ func TestKeyClauseCollationMatchesEngine(t *testing.T) {
 			t.Errorf("%s: %q vs %q: conflict=%v, engine says %v", c.ddl, c.a, c.b, c.conflict, err)
 		}
 		_ = db.Close()
+	}
+}
+
+// TestConsecutiveTableConstraintsParseToTheirColumns (plan 4I5, ruling T2a): the AOSP messaging DDL writes two FOREIGN KEY
+// clauses with no comma between them; the engine accepts it, so the parser reads the columns and the rowid alias.
+func TestConsecutiveTableConstraintsParseToTheirColumns(t *testing.T) {
+	const stmt = "CREATE TABLE messages (_id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INT, sender_id INT, " +
+		"FOREIGN KEY (conversation_id) REFERENCES conversations(_id) ON DELETE CASCADE FOREIGN KEY (sender_id) REFERENCES participants(_id) ON DELETE SET NULL)"
+	if !engineAccepts(t, stmt) {
+		t.Fatal("the engine refuses the statement: the probe is wrong")
+	}
+	def, _, _ := sqlitefile.ParseCreateTable(stmt)
+	if !def.ParseOK || len(def.Columns) != 3 || def.RowidAlias != 0 || def.Columns[1].Name != "conversation_id" || def.Columns[2].Name != "sender_id" {
+		t.Fatalf("ParseOK %v note %q columns %+v alias %d", def.ParseOK, def.ParseNote, def.Columns, def.RowidAlias)
 	}
 }

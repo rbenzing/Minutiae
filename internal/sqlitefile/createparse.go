@@ -277,6 +277,9 @@ func (p *cparser) columnList(st *tableParse) bool {
 		} else if !p.columnDef(st) {
 			return false
 		}
+		if inConstraints && isTableConstraintStart(p.peek(0)) { // SQLite: the separator of table constraints is a comma or nothing
+			continue
+		}
 		switch t := p.next(); {
 		case t.isPunct(','):
 		case t.isPunct(')'):
