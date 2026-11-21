@@ -13,7 +13,9 @@ package artparse_test
 // waios-decode-1m (the same for a 1,000,000-message iOS ChatStorage.sqlite; the database file plus the peak resident set
 // must stay within 2 GiB; both skip under -short), and for plan 4I3 calendar-gen and calendar-decode (a calendar.db of
 // 500,000 events, 900,000 attendees and 500,000 reminders written by the engine, then parsed with MemBudget 1 GiB; the
-// same 2 GiB bound; both skip under -short). Environment:
+// same 2 GiB bound; both skip under -short), and for plan 4I4 telegram-gen and telegram-decode (a cache4.db of 1,000,000
+// messages_v2 rows over 1,000 dialogs, 10,000 users and 1,000 chats written by the engine, then parsed with MemBudget
+// 1 GiB; no undecided join and no budget state; the same 2 GiB bound; both skip under -short). Environment:
 // MINUTIAE_SCALE_DIR (the work directory; about 4 GiB), MINUTIAE_SCALE_LABEL, MINUTIAE_SCALE_MACHINE,
 // MINUTIAE_SCALE_PHASE, and for gen only MINUTIAE_SCALE_GEN (a comma list of 200m, 1g; both by default).
 //
@@ -48,6 +50,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
+	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/ioswhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
@@ -75,7 +78,7 @@ func scaleEnvOf(t *testing.T) scaleEnv {
 	t.Helper()
 	e := scaleEnv{phase: os.Getenv("MINUTIAE_SCALE_PHASE")}
 	if e.phase == "" {
-		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode) to run the parse scale test; it is manual (see docs/testing.md)")
+		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode, telegram-gen, telegram-decode) to run the parse scale test; it is manual (see docs/testing.md)")
 	}
 	if e.label = os.Getenv("MINUTIAE_SCALE_LABEL"); e.label == "" {
 		t.Fatal("set MINUTIAE_SCALE_LABEL (a name for this run, such as 4h)")
@@ -669,8 +672,12 @@ func TestScaleParse(t *testing.T) {
 		runGenCalendar(t, e)
 	case "calendar-decode":
 		calendarDecode(t, e)
+	case "telegram-gen":
+		runGenTelegram(t, e)
+	case "telegram-decode":
+		telegramDecode(t, e)
 	default:
-		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode)", e.phase)
+		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m, waios-gen, waios-decode-1m, calendar-gen, calendar-decode, telegram-gen, telegram-decode)", e.phase)
 	}
 }
 
@@ -1306,4 +1313,284 @@ func TestScaleParseSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	calendarDecodeRun(t, e)
+	// the telegram phases on a small store, the same way
+	tg, err := genTelegram(genPath(e, "telegram-1m.db"), 2000, 20, 50, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb, _ := json.Marshal(tg)
+	if err := os.WriteFile(genPath(e, "telegram-gen.json"), tb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	telegramDecodeRun(t, e)
+}
+
+// ---- Android Telegram (plan 4I4 task 13, 4I4-P14) ----
+
+const (
+	tgRemotePath = "/data/data/org.telegram.messenger/files/cache4.db"
+	tgDDL        = "../../tools/fixtures/schemas/telegram-android/v181.sql"
+	tgMessages   = 1_000_000
+	tgDialogs    = 1000 // half user dialogs (uid 1..500), half basic groups (uid -1..-500)
+	tgUsers      = 10_000
+	tgChats      = 1000
+	tgBudget     = 1024 * scaleMiB // MemBudget of telegram-decode
+	tgSizeCap    = 2048 * scaleMiB // the database file plus the peak resident set must stay within 2 GiB
+)
+
+// A local TL writer for the generated blobs (spec 6.5: little-endian ints, the short string form or 0xFE and three
+// length bytes from 254 bytes on, zero padding to 4), with the field orders of constructors.tsv: TL_message
+// (0x7600b9d3, TLRPC.java:60187), TL_peerUser (0x59511722), TL_peerChat (0x36c6019a), the vector (0x1cb5c415),
+// TL_messageEntityBold (0xbd610bc9), TL_user (0xb1b8cc83) and TL_chat (0x41cbf256). It is independent of the
+// parser's decoder.
+func tgLE32(b []byte, v uint32) []byte {
+	return append(b, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+}
+
+func tgLE64(b []byte, v int64) []byte {
+	return tgLE32(tgLE32(b, uint32(uint64(v))), uint32(uint64(v)>>32))
+}
+
+func tgStr(b, s []byte) []byte {
+	start := len(b)
+	if len(s) < 254 {
+		b = append(b, byte(len(s)))
+	} else {
+		b = append(b, 0xfe, byte(len(s)), byte(len(s)>>8), byte(len(s)>>16))
+	}
+	b = append(b, s...)
+	for (len(b)-start)%4 != 0 {
+		b = append(b, 0)
+	}
+	return b
+}
+
+// tgMessage is one TL_message blob: flags (from_id when from != 0, entities, out), flags2 0, id, [from_id], peer_id,
+// date, the text, one bold entity over its first four bytes, then the app-local trailer (spec 8.8): one string, the
+// attach path. A dialog uid below 0 is a basic group (TL_peerChat of -uid), else a user dialog (TL_peerUser).
+func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []byte {
+	const bitOut, bitEntities, bitFromID = 1 << 1, 1 << 7, 1 << 8
+	flags := uint32(bitEntities)
+	if out {
+		flags |= bitOut
+	}
+	if from != 0 {
+		flags |= bitFromID
+	}
+	b := tgLE32(tgLE32(tgLE32(make([]byte, 0, 128+len(text)), 0x7600b9d3), flags), 0)
+	b = tgLE32(b, uint32(id))
+	if from != 0 {
+		b = tgLE64(tgLE32(b, 0x59511722), from)
+	}
+	if uid < 0 {
+		b = tgLE64(tgLE32(b, 0x36c6019a), -uid)
+	} else {
+		b = tgLE64(tgLE32(b, 0x59511722), uid)
+	}
+	b = tgLE32(b, uint32(date))
+	b = tgStr(b, text)
+	b = tgLE32(tgLE32(b, 0x1cb5c415), 1)
+	b = tgLE32(tgLE32(tgLE32(b, 0xbd610bc9), 0), 4)
+	return tgStr(b, []byte("/storage/emulated/0/Telegram/img.jpg"))
+}
+
+// tgUser is a TL_user blob with a first name and a phone; tgChat a TL_chat blob with a title.
+func tgUser(id int64) []byte {
+	b := tgLE32(tgLE32(tgLE32(nil, 0xb1b8cc83), 1<<1|1<<4), 0)
+	b = tgLE64(b, id)
+	b = tgStr(b, fmt.Appendf(nil, "User %d", id))
+	return tgStr(b, fmt.Appendf(nil, "1555%07d", id))
+}
+
+func tgChat(id int64) []byte {
+	b := tgLE64(tgLE32(tgLE32(nil, 0x41cbf256), 0), id)
+	return tgStr(b, fmt.Appendf(nil, "Group %d", id))
+}
+
+// genTelegram writes a cache4.db (user version 181) through the engine from the committed v181 snapshot (4I4-P14):
+// users rows 1..users, chats rows 1..chats, and n messages_v2 rows over dialogs dialogs in turn (the first half user
+// dialogs with uid 1..dialogs/2, the rest basic groups with uid -1..-dialogs/2), each a TL_message text blob with an
+// entity and a trailer, every 4th one outgoing; an incoming group message is from one of the users. It returns the
+// rows of each table.
+func genTelegram(path string, n, dialogs, users, chats int64) (calGen, error) {
+	db, err := openGen(path)
+	if err != nil {
+		return calGen{}, err
+	}
+	fail := func(err error) (calGen, error) { _ = db.Close(); return calGen{}, err }
+	if err := execScript(db, tgDDL); err != nil {
+		return fail(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 181"); err != nil {
+		return fail(err)
+	}
+	if err := genRows(db, users, "INSERT INTO users (uid, name, status, data) VALUES (?,?,?,?)", func(id int64) []any {
+		return []any{id, fmt.Sprintf("user %d", id), int64(-100), tgUser(id)}
+	}); err != nil {
+		return fail(err)
+	}
+	if err := genRows(db, chats, "INSERT INTO chats (uid, name, data) VALUES (?,?,?)", func(id int64) []any {
+		return []any{id, fmt.Sprintf("group %d", id), tgChat(id)}
+	}); err != nil {
+		return fail(err)
+	}
+	r, pool := rand.New(rand.NewPCG(14, 4)), bodyPool() //nolint:gosec // a fixed seed: the generated input is repeatable
+	half := dialogs / 2
+	err = genRows(db, n, "INSERT INTO messages_v2 (mid, uid, read_state, send_state, date, data, out, ttl, media, imp, mention, forwards, thread_reply_id, is_channel, reply_to_message_id, group_id, reply_to_story_id) VALUES (?,?,3,0,?,?,?,0,-1,0,0,0,0,0,0,0,0)", func(id int64) []any {
+		d := (id - 1) % dialogs
+		uid := d + 1
+		if d >= half {
+			uid = -(d - half + 1)
+		}
+		out := id%4 == 0
+		var from int64
+		switch {
+		case out:
+		case uid > 0:
+			from = uid
+		default:
+			from = id%users + 1
+		}
+		date := int32(1_600_000_000 + id*30)
+		off := r.IntN(len(pool) - 100)
+		outCol := int64(0)
+		if out {
+			outCol = 1
+		}
+		return []any{id, uid, int64(date), tgMessage(int32(id), from, uid, out, date, pool[off:off+20+r.IntN(60)]), outCol}
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if err := db.Close(); err != nil {
+		return calGen{}, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return calGen{}, err
+	}
+	return calGen{Bytes: st.Size(), Rows: map[string]int64{"messages_v2": n, "users": users, "chats": chats, "dialogs": dialogs}}, nil
+}
+
+// runGenTelegram is the telegram-gen phase: the 1,000,000-message cache4.db under MINUTIAE_SCALE_DIR/input. Under
+// -short it skips.
+func runGenTelegram(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("telegram-gen writes a database of several hundred MiB: skipped under -short")
+	}
+	if err := os.MkdirAll(filepath.Join(e.dir, "input"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	g, err := genTelegram(genPath(e, "telegram-1m.db"), tgMessages, tgDialogs, tgUsers, tgChats)
+	if err != nil {
+		t.Fatalf("gen telegram-1m.db: %v", err)
+	}
+	t.Logf("gen telegram-1m.db: %d bytes, rows %v in %s", g.Bytes, g.Rows, time.Since(start).Round(time.Second))
+	b, _ := json.MarshalIndent(g, "", "  ")
+	if err := os.WriteFile(genPath(e, "telegram-gen.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeResult(t, e, phaseResult{Phase: "telegram-gen", Outcome: "generated", InputBytes: g.Bytes, Rows: g.Rows["messages_v2"], TableRows: g.Rows})
+}
+
+// stateCheckWriter is countWriter that also counts the records of each type, those whose raw names an undecided join
+// and those with a budget state (raw.data_state or any raw.<col>_state "budget"; F8: every decode's charge is freed
+// with its row, so a budget state would be a refused single decode).
+type stateCheckWriter struct {
+	countWriter
+	undecided, budget int64
+	types             map[string]int64
+}
+
+func (w *stateCheckWriter) Add(ctx context.Context, r records.Record) error {
+	if w.types == nil {
+		w.types = map[string]int64{}
+	}
+	w.types[r.Type]++
+	if raw, ok := r.Payload["raw"].(map[string]any); ok {
+		if _, has := raw["join_undecided"]; has {
+			w.undecided++
+		}
+		for k, v := range raw {
+			if strings.HasSuffix(k, "_state") && v == "budget" {
+				w.budget++
+				break
+			}
+		}
+	}
+	return w.countWriter.Add(ctx, r)
+}
+
+// telegramDecode is the telegram-decode phase: the 1,000,000-message store parsed with MemBudget 1 GiB, counting what
+// the parser emits, the records with an undecided join and those with a budget state (there must be none of either).
+// The parser is registered under a synthetic source hash (it is not in the release registry yet); the phase fails when
+// the database file plus the peak resident set exceed 2 GiB. Under -short it skips.
+func telegramDecode(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("telegram-decode parses a database of several hundred MiB with a 1 GiB budget: skipped under -short")
+	}
+	telegramDecodeRun(t, e)
+}
+
+// telegramDecodeRun is the body of telegram-decode on whatever store telegram-gen.json describes (TestScaleParseSmoke
+// runs it on a small one, under -short too).
+func telegramDecodeRun(t *testing.T, e scaleEnv) {
+	t.Helper()
+	b, err := os.ReadFile(genPath(e, "telegram-gen.json")) //nolint:gosec // the operator's work directory
+	if err != nil {
+		t.Fatalf("run the telegram-gen phase first: %v", err)
+	}
+	var g calGen
+	if err := json.Unmarshal(b, &g); err != nil {
+		t.Fatal(err)
+	}
+	c := newScaleCase(t, filepath.Join(e.dir, "cases"), "TELEGRAMDECODE")
+	captureFile(t, c, tgRemotePath, genPath(e, "telegram-1m.db"))
+	reg, err := artparse.Register(androidtelegram.Parser{}, parsertest.FakeHash(androidtelegram.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := parse.DefaultLimits()
+	lim.MemBudget = tgBudget
+	opt := artparse.Options{Limits: lim}
+	w := &stateCheckWriter{}
+	artparse.WithNewWriter(&opt, func(*evidence.Case, records.Parser, records.WriterOptions) (artparse.IngestWriter, error) {
+		return w, nil
+	})
+	h, err := artparse.New(c, []artparse.Registered{reg}, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug.FreeOSMemory()
+	start := time.Now()
+	sum, err := h.Run(context.Background(), artparse.RunOptions{})
+	wall := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	rss, ok := peakRSS()
+	res := phaseResult{Phase: "telegram-decode", MemBudget: tgBudget, InputBytes: g.Bytes, Rows: g.Rows["messages_v2"], PeakRSSLimit: tgSizeCap - g.Bytes, TableRows: g.Rows}
+	fillResult(&res, sum, wall, rss, ok)
+	res.Streamed = streamedOf(t, c)
+	writeResult(t, e, res)
+	t.Logf("telegram-decode: records by type %v, undecided joins %d, budget states %d", w.types, w.undecided, w.budget)
+	if len(sum.Jobs) != 1 {
+		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
+	}
+	if res.Outcome != artparse.OutcomeComplete {
+		t.Errorf("outcome %s (%s), want complete", res.Outcome, res.Reason)
+	}
+	if w.types["message"] != g.Rows["messages_v2"] || w.types["contact"] != g.Rows["users"] || res.Records != g.Rows["messages_v2"]+g.Rows["users"] {
+		t.Errorf("records %v (%d in all), want one message per messages_v2 row (%d) and one contact per users row (%d)", w.types, res.Records, g.Rows["messages_v2"], g.Rows["users"])
+	}
+	if w.undecided != 0 {
+		t.Errorf("%d records name an undecided join: every dialog's users or chats row exists", w.undecided)
+	}
+	if w.budget != 0 {
+		t.Errorf("%d records state budget: a decode's charge outlived its row (F8)", w.budget)
+	}
+	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
 }
