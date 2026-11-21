@@ -24,6 +24,8 @@ android.contacts 1.0.5 src1:sha256:eb2537cd44c7f9503f949dfff534544dffdcf97e0e2f6
 android.contacts 1.0.6 src1:sha256:578b50eb66ca5a96ca27c3c746a07b6be87e878c0a32f6adf8ed49d0d035d96f
 android.contacts.recover 1.0.5 src1:sha256:9562382204fde88a5d2d1f82162ec1b29aec36e7fc324ce492d66a04ff773cea
 android.contacts.recover 1.0.6 src1:sha256:fd5bcf42a4ceee057970818e7307fbe94d068a2bae1eb1e64b32d1536eb1e86e
+android.googlemessages 1.0.0 src1:sha256:1afc99b0901c8aa04a09e7c54117a0037d639310bba605027f6f90336a21fabc
+android.googlemessages.recover 1.0.0 src1:sha256:d695f57138e7d4959f652a4a8ae5c091cb9030cbd1db045b4420b913138cbd26
 android.mmssms 1.0.0 src1:sha256:21e8afef1ee6de11852288c8e61fd538e141794e04f2e6a54ca72606a742bba4
 android.mmssms 1.0.1 src1:sha256:345bcacf16be4a19517f383f6506eb057535f32554157d4b15657eade82e750f
 android.mmssms 1.0.2 src1:sha256:9a7e2225b899807b5fd710a866d8f8f016f09566cb588035c236a0160bf15cb1

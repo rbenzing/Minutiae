@@ -14,6 +14,8 @@ var generated = map[string]identity{
 	"android.calllog@1.0.7":                   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:1025c31239299f431db642d3fbb2f8440f2f2ae1e6b4406606ebd772da648071"},
 	"android.contacts.recover@1.0.6":          {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:fd5bcf42a4ceee057970818e7307fbe94d068a2bae1eb1e64b32d1536eb1e86e"},
 	"android.contacts@1.0.6":                  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:578b50eb66ca5a96ca27c3c746a07b6be87e878c0a32f6adf8ed49d0d035d96f"},
+	"android.googlemessages.recover@1.0.0":    {Package: "github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages", Hash: "src1:sha256:d695f57138e7d4959f652a4a8ae5c091cb9030cbd1db045b4420b913138cbd26"},
+	"android.googlemessages@1.0.0":            {Package: "github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages", Hash: "src1:sha256:1afc99b0901c8aa04a09e7c54117a0037d639310bba605027f6f90336a21fabc"},
 	"android.mmssms.recover@1.0.7":            {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:6e82dd70c4697b58aa51b67b8692d4768be694b2eccc9985b42eab51fc82b6c2"},
 	"android.mmssms@1.0.7":                    {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:5070586786736253bd89c53a6d5117a400ac33ee36d9befc724e57b443936d23"},
 	"android.telegram.recover@1.0.1":          {Package: "github.com/rbenzing/minutiae/internal/parsers/androidtelegram", Hash: "src1:sha256:5f02f75242129d283e7e6603091361b48a21e1749de649f94e2b0a5e23b93613"},
