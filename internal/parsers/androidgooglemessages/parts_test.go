@@ -334,3 +334,38 @@ func TestGoogleMessagesPartShapes(t *testing.T) {
 		t.Errorf("unreadable width: attachment_parts %v unknown %v", ap2, unknownOf(got[2]))
 	}
 }
+
+// B6, R12 (4I5 final review I1): a part whose message_id is neither an integer nor a NULL (REAL, TEXT, an unreadable cell) may
+// name a live message, so it is a row warning and never an orphan record; parts.joined, orphan_parts and the warnings sum to
+// the rows of parts. A NULL message_id stays an orphan record (R11). An unreadable cell cannot be built in a Go-built
+// database (a rowid-less short cell is always read), the fallthrough covers every kind but CellValue and CellNull.
+func TestGoogleMessagesPartWithUndecidedMessageIdIsNoOrphan(t *testing.T) {
+	res, _ := store{
+		participants:  []mrow{person(2, "+15550000002")},
+		conversations: []mrow{{1, map[string]any{}}},
+		messages:      []mrow{{5, map[string]any{"message_status": int64(1)}}},
+		parts: []mrow{
+			{1, map[string]any{"message_id": int64(5), "text": "joined", "conversation_id": int64(1)}},
+			{2, map[string]any{"message_id": 5.0, "text": "real", "conversation_id": int64(1)}},
+			{3, map[string]any{"message_id": "5", "text": "text", "conversation_id": int64(1)}},
+			{4, map[string]any{"message_id": nil, "text": "null", "conversation_id": int64(1)}},
+		},
+	}.parse(t)
+	orphans := partsByRowid(t, res)
+	if len(orphans) != 1 || orphans[4].Body != "null" {
+		t.Errorf("%d orphan records, want the NULL-keyed part 4 only: %v", len(orphans), orphans)
+	}
+	const reason = "part's message_id cannot be read as an integer: its message is undecided"
+	warned := warningsWith(res, reason)
+	if len(warned) != 2 {
+		t.Fatalf("%d part warnings, want 2 (REAL and TEXT keys): %v", len(warned), warned)
+	}
+	for _, w := range warned {
+		if !strings.Contains(w, "table=parts") {
+			t.Errorf("warning %s is not on a parts row", w)
+		}
+	}
+	if res.Notes["parts.joined"] != "1" || res.Notes["orphan_parts"] != "1" {
+		t.Errorf("notes parts.joined %q orphan_parts %q, want 1 and 1", res.Notes["parts.joined"], res.Notes["orphan_parts"])
+	}
+}

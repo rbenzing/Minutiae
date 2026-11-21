@@ -316,7 +316,6 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 	for id, w := range map[int64]map[string]any{
 		900: {"part_state": "orphan", "part_rowid": int64(900), "part_message_id": int64(999), "timestamp": int64(50), "timestamp_status": "invalid", "conversation_id": int64(3), "text_flags": []any{"body"}, "part_message_id_state": nil},
 		901: {"part_message_id_state": "null", "part_message_id": nil, "attachment_parts": []any{map[string]any{"part_id": int64(901), "width": int64(-1), "height": int64(-1)}}, "unknown_columns": nil},
-		902: {"part_message_id": nil, "part_message_id_state": nil, "parts_empty": int64(1), "unknown_columns": map[string]any{"message_id": "type-mismatch", "timestamp": "type-mismatch"}},
 	} {
 		r, ok := orph[id]
 		if !ok {
@@ -339,8 +338,12 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 	if r := orph[901]; r.Payload["kind"] != "media" || !reflect.DeepEqual(r.Payload["attachments"], []any{map[string]any{"mime": "image/png", "source_ref": "content://mms/part/901"}}) {
 		t.Errorf("orphan part 901: payload %v", r.Payload)
 	}
-	if pres.Notes["parts.joined"] != "1005" || pres.Notes["orphan_parts"] != "3" {
-		t.Errorf("notes parts.joined %q orphan_parts %q, want 1005 and 3", pres.Notes["parts.joined"], pres.Notes["orphan_parts"])
+	// part 902 (TEXT message_id, I1) is a row warning, never an orphan record (4I5 final review I1)
+	if _, ok := orph[902]; ok || len(warningsWith(pres, "part's message_id cannot be read as an integer")) != 1 {
+		t.Errorf("part 902: an orphan record or not exactly one row warning: %v", pres.Warnings)
+	}
+	if pres.Notes["parts.joined"] != "1005" || pres.Notes["orphan_parts"] != "2" {
+		t.Errorf("notes parts.joined %q orphan_parts %q, want 1005 and 2", pres.Notes["parts.joined"], pres.Notes["orphan_parts"])
 	}
 	// the place (spec 5.2): the app is stated from the path and the basis with it
 	for remote, w := range map[string][2]string{

@@ -6,6 +6,8 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
+	"github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages"
+	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwacontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/chromium"
@@ -98,7 +100,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 	}
 }
 
-// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the twelve
+// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the fourteen
 // parsers that export ClaimableTables, Meta().Claims equals it in order, on the db role. The three Android
 // parsers are held by claimsOf alone.
 func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
@@ -115,6 +117,8 @@ func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
 		"ios.whatsapp.contacts":     ioswacontacts.ClaimableTables,
 		"android.calendar":          androidcalendar.ClaimableTables,
 		"ios.calendar":              ioscalendar.ClaimableTables,
+		"android.googlemessages":    androidgooglemessages.ClaimableTables,
+		"android.telegram":          androidtelegram.ClaimableTables,
 	}
 	for name, fn := range claimable {
 		var found parse.Parser

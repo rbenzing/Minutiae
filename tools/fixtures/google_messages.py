@@ -728,7 +728,11 @@ def oracle(files, ddl_name, variant, nan=frozenset(), refused=False):
         exp["records"].append(message_record(r, env, remote, file, nan))
     joined = orphans = 0
     for q in view.get("parts", []):
-        if is_int(q.get("message_id")) and q["message_id"] in env.messages:
+        _, mst = int_cell(q, "message_id", {}, table="parts", nan=nan)
+        if mst == "bad":  # REAL, NaN, TEXT or BLOB: it may name any message, so a row warning (4I5 final review I1, B6, R12)
+            exp["warnings"].append({"table": "parts", "rowid": q["rowid"], "contains":
+                                    "part's message_id cannot be read as an integer: its message is undecided"})
+        elif mst == "int" and q["message_id"] in env.messages:
             joined += 1
         else:
             exp["records"].append(part_record(q, env, remote, file, nan))

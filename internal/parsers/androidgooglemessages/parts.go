@@ -55,6 +55,9 @@ func partsMapping(e *env) parse.TableMapping {
 func mapPart(m parse.MapContext, row parse.Row, e *env) ([]records.Record, error) {
 	c := rowrun.Resolve(m, tableParts, specNames(partsSpecs())...)
 	mid, mk := intCellOf(row, c.At("message_id"))
+	if mk != rowrun.CellValue && mk != rowrun.CellNull { // REAL, TEXT, a BLOB, an unread, clipped or lost cell: it may name any message (R12)
+		return nil, rowrun.Unmappable("part's message_id cannot be read as an integer: its message is undecided")
+	}
 	if mk == rowrun.CellValue && e.IDs.has(mid) {
 		e.Counts.PartsJoined++
 		return nil, nil

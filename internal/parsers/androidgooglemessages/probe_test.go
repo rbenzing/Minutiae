@@ -115,7 +115,7 @@ func TestAndroidGoogleMessagesMetaIsValid(t *testing.T) {
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "android.googlemessages" || m.Version != "1.0.0" || len(m.Emits) != 1 || m.Emits[0].Type != "message" || m.Emits[0].PayloadVersion != 1 {
+	if m.Name != "android.googlemessages" || m.Version != "1.0.1" || len(m.Emits) != 1 || m.Emits[0].Type != "message" || m.Emits[0].PayloadVersion != 1 {
 		t.Errorf("meta %+v", m)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformAndroid {

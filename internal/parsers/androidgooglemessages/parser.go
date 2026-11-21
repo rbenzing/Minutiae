@@ -17,7 +17,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.googlemessages"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // The errors of Parse, wrapped with %w.
