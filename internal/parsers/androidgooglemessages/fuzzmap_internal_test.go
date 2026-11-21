@@ -106,7 +106,19 @@ type mapCtx struct {
 
 func (c mapCtx) Input() *parse.Input { return c.in }
 func (mapCtx) Note(_, _ string)      {}
+
+// schemaColumns are the columns of the schema tables the typed pass reads (its join basis and guard).
+var schemaColumns = map[string][]string{"sqlite_master": {"type", "name", "sql"}, "sqlite_sequence": {"name", "seq"}}
+
 func (c mapCtx) Column(table, col string) int {
+	if cols, ok := schemaColumns[table]; ok {
+		for i, n := range cols {
+			if n == col {
+				return i
+			}
+		}
+		return -1
+	}
 	if table != c.table {
 		for i, n := range mappedColumns(table) {
 			if n == col {
@@ -140,9 +152,18 @@ func (c mapCtx) Get(table string, _ int64) (parse.Row, bool, error) {
 	return nil, false, c.join.err()
 }
 
-func (c mapCtx) Match(table, _ string, _ parse.JoinKey) ([]parse.Row, error) {
+func (c mapCtx) Match(table, _ string, key parse.JoinKey) ([]parse.Row, error) {
 	if c.failMatch != nil && table == c.failTable {
 		return nil, c.failMatch
+	}
+	// the schema tables answer well-formed whatever the join outcome (I4): every table's _id is AUTOINCREMENT and
+	// sqlite_sequence holds its row, so a recovered part reaches the joined path whenever its keys equal the live row's
+	text := func(s string) cell { return cell{kind: cText, b: []byte(s)} }
+	switch table {
+	case "sqlite_master":
+		return []parse.Row{fakeRow{table: table, cells: []cell{text("table"), text(key.S), text("CREATE TABLE " + key.S + " (_id INTEGER PRIMARY KEY AUTOINCREMENT, x INT)")}}}, nil
+	case "sqlite_sequence":
+		return []parse.Row{fakeRow{table: table, cells: []cell{text(key.S), {kind: cInt, i: 1}}}}, nil
 	}
 	if c.join == joinHit {
 		return []parse.Row{c.joined(table)}, nil
@@ -318,6 +339,16 @@ func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 		if err != nil || len(recs) != 1 { // a recovered part is a record of its own (spec 8.2), joined or not
 			t.Fatalf("%s: a good row did not map to its record: %v %+v", mt.name, err, recs)
 		}
+		if !mt.live && mp.Table == tableParts { // I4: every cell the integer 1, so the live row the hit answers equals the part's keys
+			cs := make([]cell, len(mp.Columns))
+			for j := range cs {
+				cs[j] = cell{kind: cInt, i: 1}
+			}
+			jr, jerr := mp.Map(mapCtx{in: in, table: mp.Table, cols: mp.Columns, join: joinHit, hit: cs}, fakeRow{table: mp.Table, cells: cs})
+			if jerr != nil || len(jr) != 1 || jr[0].Payload["raw"].(map[string]any)["part_join"] != "joined" {
+				t.Fatalf("%s: the keys equal the live row's and the part is not joined: %v %+v", mt.name, jerr, jr)
+			}
+		}
 		check := func(cells []cell) {
 			for j := range numOutcomes {
 				checkMapped(t, mt, j, cells)
@@ -410,6 +441,7 @@ func FuzzMapAndroidGoogleMessagesRows(f *testing.F) {
 	}
 	f.Add(byte(0), []byte{cNull, cFloat, cText}, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, []byte("\xff\xfe\x00 12"))
 	f.Add(byte(3), []byte{cInt, cText, cBlob}, []byte{}, []byte{})
+	f.Add(byte(1+16*joinHit), []byte{cInt}, []byte{1, 0, 0, 0, 0, 0, 0, 0}, []byte{}) // a typed part whose keys equal the live row's: joined (I4)
 	f.Fuzz(func(t *testing.T, which byte, kinds, nums, texts []byte) {
 		ms := mappingsUnderTest()
 		mt := ms[int(which)%len(ms)]

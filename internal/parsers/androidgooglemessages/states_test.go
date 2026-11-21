@@ -387,8 +387,8 @@ func TestGoogleMessagesStateVocabularyIsPinned(t *testing.T) {
 		typedCase{"part 50", partOf("gm-deleted", deleted, 50), notJoined("no-live-message")},
 		typedCase{"part 60", mapOn(t, p, fixtureFiles(t, "gm-rebuilt"), rebuiltPart(t, 60)), notJoined("conversation-differs")},
 		typedCase{"part 61", mapOn(t, p, fixtureFiles(t, "gm-rebuilt"), rebuiltPart(t, 61)), notJoined("timestamp-differs")},
-		typedCase{"no AUTOINCREMENT", mapOn(t, p, joinStore(t, false, true), p52), notJoined("no-autoincrement")},
-		typedCase{"no sqlite_sequence row", mapOn(t, p, joinStore(t, true, false), p52), notJoined("no-sqlite-sequence")},
+		typedCase{"no AUTOINCREMENT", mapOn(t, p, joinStore(t, joinOpts{noAuto: true}), p52), notJoined("no-autoincrement")},
+		typedCase{"no sqlite_sequence row", mapOn(t, p, joinStore(t, joinOpts{noSeqRow: true}), p52), notJoined("no-sqlite-sequence")},
 		typedCase{"undecidable schema", mapOn(t, undecidedSchema{}, fixtureFiles(t, "gm-deleted"), p52), notJoined("undecided")},
 	)
 	for _, c := range typed {

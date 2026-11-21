@@ -38,7 +38,10 @@ func partsMapping(e *env) parse.TableMapping {
 		Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			if e == nil {
 				if basis == nil {
-					b := joinBasisOf(m)
+					b, err := joinBasisOf(m)
+					if err != nil { // a budget, context or I/O failure: not decided, so asked again by the next row
+						return nil, err
+					}
 					basis = &b
 				}
 				return mapRecoveredPart(m, row, basis)

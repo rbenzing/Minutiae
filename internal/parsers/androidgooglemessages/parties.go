@@ -219,7 +219,8 @@ type partiesResult struct {
 
 // partiesOf joins the sender, the self row and the conversation of a messages row (spec 6.2 cross-check, 6.3, 4I5-P3). It
 // states every join in raw: sender_id, sender_is_self, sender_state, direction_conflict, self_id and its row, the
-// conversation and its members. e must not be nil (the typed pass joins nothing).
+// conversation and its members. e must not be nil: the typed pass calls it for the live message of a joined part with an
+// env holding only the run's guard (liveParties).
 func partiesOf(m parse.MapContext, e *env, row parse.Row, c rowrun.Cols, raw, unknown map[string]any, direction string) (partiesResult, error) {
 	res := partiesResult{Direction: direction}
 	if e.Guard != nil {

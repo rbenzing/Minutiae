@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,36 +118,63 @@ func mapOn(t *testing.T, p parse.RowMapper, files map[string][]byte, rr sqlitefi
 	return got.Records[0]
 }
 
-// joinStore is a Go-built bugle_db holding the live message M2 of gm-deleted (outgoing, conversation 1, received at
-// T+2000, the self P1 and the member Ann P2) and sqlite_sequence. auto false gives messages._id INTEGER PRIMARY KEY without
-// AUTOINCREMENT; seqRow false deletes the messages row of sqlite_sequence after inserting it.
-func joinStore(t *testing.T, auto, seqRow bool) map[string][]byte {
+// joinOpts are the departures of a joinStore from gm-deleted's M2.
+type joinOpts struct {
+	noAuto      bool           // messages._id INTEGER PRIMARY KEY without AUTOINCREMENT
+	noSeqRow    bool           // sqlite_sequence without its messages row (inserted, then deleted)
+	noSeqTable  bool           // no sqlite_sequence table at all
+	plainPartic bool           // participants._id INT PRIMARY KEY (not the rowid alias), with a -wal companion
+	members     int            // non-self members of conversation 1 (default 1: Ann)
+	message     map[string]any // cells of M2 that replace the defaults
+}
+
+// joinStore is a Go-built bugle_db holding the live message M2 of gm-deleted (outgoing, conversation 1, received at T+2000,
+// the self P1 and the member Ann P2) and sqlite_sequence, with the departures of o.
+func joinStore(t *testing.T, o joinOpts) map[string][]byte {
 	t.Helper()
+	m2 := map[string]any{"sender_id": int64(1), "message_status": int64(1), "conversation_id": int64(1), "received_timestamp": tT + 2000}
+	for k, v := range o.message {
+		m2[k] = v
+	}
 	s := store{
 		participants:  []mrow{selfRow(1, 1), person(2, "5550000002")},
 		conversations: []mrow{{1, map[string]any{}}},
 		members:       memberRows(1, 2),
-		messages:      []mrow{{2, map[string]any{"sender_id": int64(1), "message_status": int64(1), "conversation_id": int64(1), "received_timestamp": tT + 2000}}},
+		messages:      []mrow{{2, m2}},
+		plainIDs:      o.plainPartic,
 	}
-	if !auto {
-		s.ddlOf = func(table, ddl string) string {
-			if table != "messages" {
-				return ddl
-			}
-			out := strings.Replace(ddl, "_id INTEGER PRIMARY KEY AUTOINCREMENT", "_id INTEGER PRIMARY KEY", 1)
-			if out == ddl {
-				t.Fatalf("the messages DDL has no AUTOINCREMENT _id: %s", ddl)
-			}
-			return out
+	for i := 1; i < o.members; i++ {
+		id := int64(100 + i)
+		s.participants = append(s.participants, person(id, "555"+strconv.FormatInt(1000000+id, 10)))
+		s.members = append(s.members, memberRows(1, id)...)
+	}
+	s.ddlOf = func(table, ddl string) string {
+		var out string
+		switch {
+		case table == "messages" && o.noAuto:
+			out = strings.Replace(ddl, "_id INTEGER PRIMARY KEY AUTOINCREMENT", "_id INTEGER PRIMARY KEY", 1)
+		case table == "participants" && o.plainPartic:
+			out = strings.Replace(ddl, "_id INT,", "_id INT PRIMARY KEY,", 1)
+		default:
+			return ddl
 		}
+		if out == ddl {
+			t.Fatalf("%s: the DDL was not rewritten: %s", table, ddl)
+		}
+		return out
 	}
 	b := s.builder(t)
-	seq := b.CreateTable("sqlite_sequence", "CREATE TABLE sqlite_sequence(name,seq)")
-	seq.Insert(1, "conversations", int64(1))
-	seq.Insert(2, "messages", int64(2))
-	seq.Insert(3, "participants", int64(2))
-	if !seqRow {
-		seq.Delete(2)
+	if !o.noSeqTable {
+		seq := b.CreateTable("sqlite_sequence", "CREATE TABLE sqlite_sequence(name,seq)")
+		seq.Insert(1, "conversations", int64(1))
+		seq.Insert(2, "messages", int64(2))
+		seq.Insert(3, "participants", int64(2))
+		if o.noSeqRow {
+			seq.Delete(2)
+		}
+	}
+	if o.plainPartic {
+		return withWAL(b.Bytes())
 	}
 	return dbOnly(b.Bytes())
 }
@@ -280,21 +310,56 @@ func TestGoogleMessagesRecoveredPartJoinRule(t *testing.T) {
 		}
 	}
 
-	// Go-built stores holding M2 as gm-deleted does: only the condition named fails
+	// Go-built stores holding M2 as gm-deleted does: only the condition named fails (spec 8.3, I3, I4, T8b, M1, M3)
 	p52 := recoveredRow(t, "gm-deleted", "parts", 52)
+	cols := parsertest.LoadRecoverExpect(t, "testdata", "gm-deleted").Columns["parts"]
+	with := func(col string, v sqlitefile.Value) sqlitefile.RecoveredRow {
+		i := slices.Index(cols, col)
+		if i < 0 {
+			t.Fatalf("the recover oracle lists no parts column %s: %v", col, cols)
+		}
+		rr := p52
+		rr.Values = slices.Clone(p52.Values)
+		rr.Values[i] = v
+		return rr
+	}
+	text := sqlitefile.Value{Kind: sqlitefile.KindText, Bytes: []byte("x"), Len: 1}
+	null := sqlitefile.Value{Kind: sqlitefile.KindNull}
+	corrupt := faultParser{get: map[string]error{"messages": fmt.Errorf("%w: fake", sqlitedb.ErrCorrupt)}}
+	twice := faultParser{twiceMaster: "messages"}
 	for _, c := range []struct {
 		name         string
-		auto, seqRow bool
+		p            parse.RowMapper
+		o            joinOpts
+		rr           sqlitefile.RecoveredRow
 		join, reason string
 	}{
-		{"AUTOINCREMENT with its sqlite_sequence row", true, true, "joined", ""},
-		{"INTEGER PRIMARY KEY without AUTOINCREMENT", false, true, "not-joined", "no-autoincrement"},
-		{"AUTOINCREMENT with the sqlite_sequence row deleted", true, false, "not-joined", "no-sqlite-sequence"},
+		{"AUTOINCREMENT with its sqlite_sequence row", androidgooglemessages.Parser{}, joinOpts{}, p52, "joined", ""},
+		{"INTEGER PRIMARY KEY without AUTOINCREMENT", androidgooglemessages.Parser{}, joinOpts{noAuto: true}, p52, "not-joined", "no-autoincrement"},
+		{"AUTOINCREMENT with the sqlite_sequence row deleted", androidgooglemessages.Parser{}, joinOpts{noSeqRow: true}, p52, "not-joined", "no-sqlite-sequence"},
+		{"no sqlite_sequence in the schema read (I3)", androidgooglemessages.Parser{}, joinOpts{noSeqTable: true}, p52, "not-joined", "undecided"},
+		{"two table rows of messages in sqlite_master (M3)", twice, joinOpts{}, p52, "not-joined", "undecided"},
+		{"the part's message_id TEXT", androidgooglemessages.Parser{}, joinOpts{}, with("message_id", text), "not-joined", "undecided"},
+		{"the part's message_id NULL", androidgooglemessages.Parser{}, joinOpts{}, with("message_id", null), "not-joined", "undecided"},
+		{"the part's conversation_id TEXT", androidgooglemessages.Parser{}, joinOpts{}, with("conversation_id", text), "not-joined", "undecided"},
+		{"the part's conversation_id NULL", androidgooglemessages.Parser{}, joinOpts{}, with("conversation_id", null), "not-joined", "undecided"},
+		{"the part's timestamp TEXT", androidgooglemessages.Parser{}, joinOpts{}, with("timestamp", text), "not-joined", "undecided"},
+		{"the part's timestamp NULL", androidgooglemessages.Parser{}, joinOpts{}, with("timestamp", null), "not-joined", "undecided"},
+		{"the live conversation_id TEXT", androidgooglemessages.Parser{}, joinOpts{message: map[string]any{"conversation_id": "x"}}, p52, "not-joined", "undecided"},
+		{"the live received_timestamp TEXT", androidgooglemessages.Parser{}, joinOpts{message: map[string]any{"received_timestamp": "x"}}, p52, "not-joined", "undecided"},
+		{"a damaged messages Get", corrupt, joinOpts{}, p52, "not-joined", "undecided"},
 	} {
-		r := mapOn(t, androidgooglemessages.Parser{}, joinStore(t, c.auto, c.seqRow), p52)
+		r := mapOn(t, c.p, joinStore(t, c.o), c.rr)
 		if j, why := partJoinOf(r); j != c.join || why != c.reason {
 			t.Errorf("%s: part_join %q reason %q, want %q %q", c.name, j, why, c.join, c.reason)
 		}
+	}
+
+	// M1: a budget failure of the basis lookup is the mapping's error, never a basis
+	h := parsertest.NewHarness(t)
+	b := parsertest.Fixture{Files: joinStore(t, joinOpts{})}.Bundle(h, remoteApp)
+	if got := parsertest.MapRecoveredRow(t, h, faultParser{matchErr: parse.ErrBudget}, b, p52); !errors.Is(got.Err, parse.ErrBudget) {
+		t.Errorf("a budget failure of the sqlite_master lookup: err %v, unmapped %q, %d records, want the budget error", got.Err, got.Unmapped, len(got.Records))
 	}
 
 	// an undecidable schema answer: every part of the run is undecided
@@ -322,10 +387,115 @@ func TestGoogleMessagesRecoveredPartJoinRule(t *testing.T) {
 		{"CREATE TABLE messages (x INT, \"_id\" INTEGER PRIMARY KEY AUTOINCREMENT)", true},
 		{"CREATE TABLE messages (_id INTEGER, x TEXT CHECK (x <> 'a, _id PRIMARY KEY AUTOINCREMENT'))", false},
 		{"CREATE TABLE messages (_ID INTEGER PRIMARY KEY DEFAULT 'AUTOINCREMENT')", false},
+		// M2: a comment is no word of a definition and its comma does not split
+		{"CREATE TABLE messages (_id INTEGER PRIMARY KEY -- AUTOINCREMENT\n, x INT)", false},
+		{"CREATE TABLE messages (x INT /* AUTOINCREMENT */, _id INTEGER PRIMARY KEY)", false},
+		{"CREATE TABLE messages /* ( */ (/* a, b */ _id INTEGER PRIMARY KEY AUTOINCREMENT, x INT)", true},
 	} {
 		if got := androidgooglemessages.AutoincrementID(c.sql); got != c.want {
 			t.Errorf("autoincrementID(%q) = %v, want %v", c.sql, got, c.want)
 		}
+	}
+	// I2: the rowid alias of a join table, read from its sql
+	for _, c := range []struct {
+		sql  string
+		want bool
+	}{
+		{"CREATE TABLE participants (_id INTEGER PRIMARY KEY AUTOINCREMENT, sub_id INT)", true},
+		{"CREATE TABLE participants (_id integer primary key, sub_id INT)", true},
+		{"CREATE TABLE participants (_id INT PRIMARY KEY, sub_id INT)", false},
+		{"CREATE TABLE participants (_id INTEGER PRIMARY KEY DESC, sub_id INT)", false},
+		{"CREATE TABLE participants (_id INTEGER PRIMARY KEY, sub_id INT) WITHOUT ROWID", false},
+		{"CREATE TABLE participants (_id INTEGER, sub_id INT, PRIMARY KEY (_id))", false}, // not read: guarded, never trusted
+	} {
+		if got := androidgooglemessages.RowidAliasID(c.sql); got != c.want {
+			t.Errorf("rowidAliasID(%q) = %v, want %v", c.sql, got, c.want)
+		}
+	}
+}
+
+// noteSink keeps the notes of a mapping context.
+type noteSink map[string]string
+
+func (n noteSink) Note(k, v string) { n[k] = v }
+
+// mapWithNotes maps a recovered parts row as MapRecoveredRow does, against the live view of files at the app path, and
+// returns its one record with the notes the mapping made.
+func mapWithNotes(t *testing.T, files map[string][]byte, rr sqlitefile.RecoveredRow) (records.Record, map[string]string) {
+	t.Helper()
+	h := parsertest.NewHarness(t)
+	p := androidgooglemessages.Parser{}
+	in := parsertest.Fixture{Files: files}.Bundle(h, remoteApp).Input(h, p, false)
+	f := sqlitedb.Files{DB: in.Primary.R, DBSize: in.Primary.Size}
+	if a, ok := in.Artifacts["wal"]; ok {
+		f.WAL, f.WALSize = a.R, a.Size
+	}
+	db, err := sqlitedb.Open(t.Context(), f, in.Budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Release()
+	tbl, err := db.Table(t.Context(), "parts", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := sqlitedb.FromRecovered(tbl, rr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer row.Release()
+	notes := noteSink{}
+	mc := sqlitedb.NewContext(t.Context(), db, in, notes)
+	defer mc.Close()
+	recs, err := p.Mappings()[1].Map(mc, row)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recovered part: err %v, %d records", err, len(recs))
+	}
+	return recs[0], notes
+}
+
+// B1a (I1): a joined part copies the raw that qualifies its copied parties: an outgoing part's members_basis current and
+// members_total, its sender_is_self; a conversation over 1,000 members gives members_cut and the cut is stated (the note
+// members_cut.<conversation>, the typed pass's statement of the live pass's counted warning), never silent. Nothing of the
+// thread, status or times is copied.
+func TestGoogleMessagesJoinedPartCopiesItsPartyRaw(t *testing.T) {
+	p52 := recoveredRow(t, "gm-deleted", "parts", 52)
+	r, notes := mapWithNotes(t, joinStore(t, joinOpts{}), p52)
+	raw := rawOf(r)
+	if raw["members_basis"] != "current" || raw["members_total"] != int64(1) || raw["sender_is_self"] != true || raw["part_join"] != "joined" {
+		t.Errorf("joined part 52: members_basis %v members_total %v sender_is_self %v part_join %v", raw["members_basis"], raw["members_total"], raw["sender_is_self"], raw["part_join"])
+	}
+	for _, k := range []string{"members_cut", "sms_thread_id", "group_state", "self_sub_id", "self_id", "sender_id", "label_message_status", "time_basis", "received_timestamp_status"} {
+		if v, ok := raw[k]; ok {
+			t.Errorf("joined part 52: raw.%s = %v: B1a copies only the raw of the parties", k, v)
+		}
+	}
+	if len(notes) != 0 {
+		t.Errorf("joined part 52 without a cut: notes %v", notes)
+	}
+	r, notes = mapWithNotes(t, joinStore(t, joinOpts{members: 1001}), p52)
+	raw = rawOf(r)
+	if raw["members_cut"] != true || raw["members_total"] != int64(1001) || len(rolesOf(r)) != 1000 {
+		t.Errorf("a 1,001-member conversation: members_cut %v members_total %v %d participants", raw["members_cut"], raw["members_total"], len(rolesOf(r)))
+	}
+	if got := notes["members_cut.1"]; got != "googlemessages-members-cut: conversation 1: 1001 members, 1000 kept" {
+		t.Errorf("the cut is not stated: note members_cut.1 = %q (notes %v)", got, notes)
+	}
+}
+
+// I2: a join table whose _id is not the rowid alias (participants._id INT PRIMARY KEY, beside a -wal companion, so Probe
+// deferred) is guarded in the typed pass: a joined part's party joins through it are undecided (join_undecided, participants
+// unknown), never attached by rowid, and the guard is noted.
+func TestGoogleMessagesTypedPassGuardsTheJoinTables(t *testing.T) {
+	p52 := recoveredRow(t, "gm-deleted", "parts", 52)
+	r, notes := mapWithNotes(t, joinStore(t, joinOpts{plainPartic: true}), p52)
+	raw := rawOf(r)
+	ju, _ := raw["join_undecided"].([]any)
+	if raw["part_join"] != "joined" || !slices.Contains(ju, any("participants")) || r.Payload["participants_unknown"] != true || len(rolesOf(r)) != 0 {
+		t.Errorf("guarded participants: part_join %v join_undecided %v participants %v (unknown %v)", raw["part_join"], raw["join_undecided"], rolesOf(r), r.Payload["participants_unknown"])
+	}
+	if notes["join_undecided.participants"] != "column _id is not the rowid alias" {
+		t.Errorf("the guard is not noted: %v", notes)
 	}
 }
 
@@ -470,4 +640,47 @@ func jsonText(v any) string {
 		return "unencodable: " + err.Error()
 	}
 	return string(b)
+}
+
+// faultParser is the parser whose mapping context fails as told: get[table] is every Get of that table's error; matchErr
+// is every Match's error; twiceMaster answers the sqlite_master lookup of that name with its rows twice.
+type faultParser struct {
+	androidgooglemessages.Parser
+	get         map[string]error
+	matchErr    error
+	twiceMaster string
+}
+
+func (p faultParser) Mappings() []parse.TableMapping {
+	ms := p.Parser.Mappings()
+	for i := range ms {
+		inner := ms[i].Map
+		ms[i].Map = func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+			return inner(faultCtx{MapContext: m, p: p}, row)
+		}
+	}
+	return ms
+}
+
+type faultCtx struct {
+	parse.MapContext
+	p faultParser
+}
+
+func (c faultCtx) Get(table string, rowid int64) (parse.Row, bool, error) {
+	if err := c.p.get[table]; err != nil {
+		return nil, false, err
+	}
+	return c.MapContext.Get(table, rowid)
+}
+
+func (c faultCtx) Match(table, col string, key parse.JoinKey) ([]parse.Row, error) {
+	if c.p.matchErr != nil {
+		return nil, c.p.matchErr
+	}
+	rows, err := c.MapContext.Match(table, col, key)
+	if err == nil && c.p.twiceMaster != "" && strings.EqualFold(table, "sqlite_master") && key.S == c.p.twiceMaster {
+		rows = append(rows, rows...)
+	}
+	return rows, err
 }

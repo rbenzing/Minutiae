@@ -1079,31 +1079,98 @@ def variant_hostile(work):
 # ---------------------------------------------------------------- the typed recovery oracle (spec 8)
 
 
+def column_defs(sql):
+    """(definitions, tail): the body of a CREATE TABLE statement split at its top-level commas, and the text after its
+    closing parenthesis. A comma inside parentheses, quotes or a comment (-- to the end of the line, /* */) does not split;
+    the text inside parentheses and comments is blanked and white space inside quotes is joined (a quoted word keeps its
+    quotes). Restated from the spec's rule, sharing no code with the Go reader."""
+    defs, cur, depth, quote, i = [], [], -1, None, 0
+    while i < len(sql):
+        ch = sql[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            elif ch.isspace():
+                ch = "_"
+            if depth >= 0:
+                cur.append(" " if depth > 0 else ch)
+            i += 1
+            continue
+        if sql.startswith("--", i):
+            j = sql.find("\n", i)
+            i = len(sql) if j < 0 else j
+            ch = " "
+        elif sql.startswith("/*", i):
+            j = sql.find("*/", i + 2)
+            i = len(sql) if j < 0 else j + 1
+            ch = " "
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "[":
+            quote = "]"
+        elif ch == "(":
+            depth += 1
+            if depth == 0:
+                i += 1
+                continue
+            ch = " "
+        elif ch == ")":
+            if depth == 0:
+                defs.append("".join(cur))
+                return defs, sql[i + 1:]
+            if depth > 0:
+                depth -= 1
+            ch = " "
+        elif ch == "," and depth == 0:
+            defs.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        if depth >= 0:
+            cur.append(" " if depth > 0 else ch)
+        i += 1
+    return (defs + ["".join(cur)], "") if depth >= 0 else ([], "")
+
+
+def id_words(sql):
+    """(the upper-cased words of the _id column definition, the upper-cased words after the body), or None."""
+    defs, tail = column_defs(sql)
+    for d in defs:
+        w = d.split()
+        if w and w[0].strip('"`[]\'').lower() == "_id":
+            return [x.upper() for x in w], tail.upper().split()
+    return None
+
+
+def autoincrement_id(sql):
+    """The _id definition holds PRIMARY, KEY and AUTOINCREMENT (spec 8.3 condition 1)."""
+    iw = id_words(sql)
+    return bool(iw) and all(x in iw[0][1:] for x in ("PRIMARY", "KEY", "AUTOINCREMENT"))
+
+
 def join_basis(files):
-    """spec 8.3 condition 1: the live messages _id is INTEGER PRIMARY KEY AUTOINCREMENT and sqlite_sequence holds a
-    messages row. (autoincrement, has sequence row)"""
+    """spec 8.3 condition 1 (with I3, M3): None when the one live table row of messages declares _id ... PRIMARY KEY
+    AUTOINCREMENT and sqlite_sequence holds a messages row; else the reason: no-autoincrement, no-sqlite-sequence, or
+    undecided (no table row or two of them, or no sqlite_sequence in the schema)."""
     view = C.engine_view(files, ["sqlite_master", "sqlite_sequence"])
-    auto = False
-    for m in view.get("sqlite_master", []):
-        if m["type"] == b"table" and m["name"] == b"messages":
-            sql = m["sql"].decode("utf-8")
-            body = sql[sql.index("(") + 1:]
-            depth, cur, defs = 0, "", []
-            for ch in body:
-                if ch == "(":
-                    depth += 1
-                elif ch == ")":
-                    depth -= 1
-                if ch == "," and depth == 0:
-                    defs.append(cur)
-                    cur = ""
-                else:
-                    cur += ch
-            defs.append(cur)
-            first = defs[0].upper().split()
-            auto = first[0] == "_ID" and "PRIMARY" in first and "KEY" in first and "AUTOINCREMENT" in first
-    seq = any(s.get("name") == b"messages" for s in view.get("sqlite_sequence", []))
-    return auto, seq
+    rows = [m for m in view.get("sqlite_master", []) if m["type"] == b"table" and m["name"] == b"messages"]
+    if len(rows) != 1:
+        return "undecided"
+    if not autoincrement_id(rows[0]["sql"].decode("utf-8")):
+        return "no-autoincrement"
+    if "sqlite_sequence" not in view:
+        return "undecided"
+    if not any(s.get("name") == b"messages" for s in view["sqlite_sequence"]):
+        return "no-sqlite-sequence"
+    return None
+
+
+PARTY_KEYS = ("sender_is_self", "sender_state", "direction_conflict", "self_state", "join_undecided", "blocked_member_ids")
+
+
+def party_key(k):
+    """B1a: a raw key (or text_flags field) of the live message that qualifies the parties a joined part copies."""
+    return k in PARTY_KEYS or k.startswith("members_") or k.startswith("from_")
 
 
 def recovered_record(table, d, env, basis, file):
@@ -1128,13 +1195,10 @@ def recovered_record(table, d, env, basis, file):
     if cst == "int":
         raw["conversation_id"] = cid
     bt = part_payload(d, unknown, raw, p)
-    auto, seq = basis
     live = env.messages.get(mid) if mst == "int" else None
     reason = None
-    if not auto:
-        reason = "no-autoincrement"
-    elif not seq:
-        reason = "no-sqlite-sequence"
+    if basis:
+        reason = basis
     elif not (mst == "int" and cst == "int" and tst == "int"):
         reason = "undecided"  # T8b: a key cell of the part that is not an integer (NULL included) decides nothing
     elif live is None:
@@ -1160,6 +1224,17 @@ def recovered_record(table, d, env, basis, file):
         p["channel"], p["direction"], p["participants"] = lp["channel"], lp["direction"], lp["participants"]
         if lp.get("participants_unknown"):
             p["participants_unknown"] = True
+        # B1a: the raw that qualifies the copied parties, and the unread cells of the party joins; nothing of the thread
+        lraw = lp["raw"]
+        for k, v in lraw.items():
+            if party_key(k):
+                raw[k] = v
+        flags = sorted(set(raw.get("text_flags", [])) | {f for f in lraw.get("text_flags", []) if party_key(f)})
+        if flags:
+            raw["text_flags"] = flags
+        for k, v in lraw.get("unknown_columns", {}).items():
+            if k.startswith("participants.") or k.startswith("conversation_participants."):
+                unknown[k] = v
         if cst == "int":  # B1, spec 8.2: the part's own conversation only; nothing else of the live record is copied
             p["thread"] = {"id": str(cid)}
         if p["participants"]:
@@ -1186,9 +1261,31 @@ def declared_affinity(decl):
     return "numeric"
 
 
+NUMBER = re.compile(r"^[+-]?(0[xX][0-9a-fA-F]+|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?)$")
+
+
+def default_kind(dflt, aff):
+    """The class of a column's DEFAULT as the host reads it (M4): None (no default), 'expr' (parenthesized, CURRENT_*, a
+    signed term that is not a number), 'inexact' (a number the host does not reproduce exactly: over 20 characters, or a
+    real stored into a TEXT column) or 'literal' (a number, a string, a blob, NULL, TRUE, FALSE or a bare word)."""
+    if dflt is None:
+        return None
+    t = dflt.strip()
+    if t.startswith("(") or t.upper() in ("CURRENT_TIME", "CURRENT_DATE", "CURRENT_TIMESTAMP"):
+        return "expr"
+    if t[:1] in "+-" and not NUMBER.match(t):
+        return "expr"
+    if NUMBER.match(t):
+        real = not t.lstrip("+-").lower().startswith("0x") and any(ch in t for ch in ".eE")
+        if len(t) > 20 or (real and aff == "text"):
+            return "inexact"
+    return "literal"
+
+
 def fit_items(files):
     """The live rowid tables as the host's strict fit sees them (restated from the rule, sharing no code with it): per
-    table its columns as (affinity, not null, has a default, is the rowid alias), read from a COPY of the files."""
+    table its stored columns as (affinity, not null, default class, rowid alias, generated), read from a COPY of the files
+    (a virtual generated column is not stored, so it is no position of the record)."""
     work = tempfile.mkdtemp(prefix="gm-fit-")
     try:
         path = os.path.join(work, "v.db")
@@ -1200,10 +1297,11 @@ def fit_items(files):
         names = [r[0] for r in con.execute("select name from sqlite_master where type = 'table' and sql not like 'create virtual%' collate nocase")]
         items = {}
         for n in names:
-            info = con.execute("pragma table_info(\"%s\")" % n.replace('"', '""')).fetchall()
+            info = con.execute("pragma table_xinfo(\"%s\")" % n.replace('"', '""')).fetchall()
             pks = [c for c in info if c[5] > 0]
             alias = pks[0][1] if len(pks) == 1 and pks[0][2].upper() == "INTEGER" else None
-            items[n] = [(declared_affinity(c[2]), bool(c[3]), c[4] is not None, c[1] == alias) for c in info]
+            items[n] = [(declared_affinity(c[2]), bool(c[3]), default_kind(c[4], declared_affinity(c[2])), c[1] == alias, c[6] == 3)
+                        for c in info if c[6] != 2]
         con.close()
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1211,19 +1309,20 @@ def fit_items(files):
 
 
 def fits_strictly(cols, vals):
-    """The host's strict fit of a record to a table: at most its columns and at least up to its last column that ALTER
-    TABLE ADD COLUMN cannot explain (NOT NULL without a default, or the rowid alias); a TEXT column holds only NULL, text
-    or blob; a NOT NULL column no NULL; the rowid alias only NULL."""
+    """The host's strict fit of a record to a table: at most its stored columns and at least up to its last column that
+    ALTER TABLE ADD COLUMN cannot explain (the rowid alias, a generated column, an inexact default, NOT NULL without a
+    literal default); a TEXT column holds only NULL, text or blob; a NOT NULL column no NULL; the rowid alias only NULL."""
     n = len(vals)
     if n < 1 or n > len(cols):
         return False
     least = 0
-    for i, (_, notnull, dflt, alias) in enumerate(cols):
-        if alias or (notnull and not dflt):
+    for i, (_, notnull, dflt, alias, generated) in enumerate(cols):
+        addable = not alias and not generated and dflt != "inexact" and (not notnull or dflt == "literal")
+        if not addable:
             least = i + 1
     if n < least:
         return False
-    for (aff, notnull, _, alias), v in zip(cols, vals):
+    for (aff, notnull, _, alias, _), v in zip(cols, vals):
         if aff == "text" and not (v is None or isinstance(v, (str, bytes))):
             return False
         if (notnull and v is None) or (alias and v is not None):
