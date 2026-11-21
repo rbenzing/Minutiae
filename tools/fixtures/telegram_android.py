@@ -760,7 +760,15 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
             map_media(b, media, attachments, raw)
             raw["media"] = media
         elif b.stop_at("media"):
-            raw["media"] = {"constructor": hx(b.stop_at("media")["id"])}
+            # an ID that was read is its constructor; a stop before or at the ID for another reason is its state,
+            # never an ID that is not on the wire (plan 4I4 Task 9 review I1)
+            st = b.stop_at("media")
+            if st["kind"] in ("unknown-constructor", "opaque"):
+                raw["media"] = {"constructor": hx(st["id"])}
+            else:
+                raw["media"] = {"state": st["kind"]}
+                if st["id"] and O.table().get(st["id"]) is not None:
+                    raw["media"].update({"constructor": hx(st["id"]), "type": media_type(O.table()[st["id"]].cls)})
         else:
             gate = [it for it in b.row.items if it.name == "media"]
             if gate and gate[0].word is not None and b.val(gate[0].word) is not None and not b.val(gate[0].word) >> gate[0].bit & 1:
@@ -853,7 +861,7 @@ def map_media(b, media, attachments, raw):
                 media["mime_type"] = cleaned(raw, "media.mime_type", mime, MAX_SHORT) or ""
                 if not media["mime_type"]:
                     del media["mime_type"]
-            for k, key in (("access_hash", "access_hash_present"), ("file_reference", "file_reference_present"), ("key", "key_present")):
+            for k, key in (("access_hash", "access_hash_present"), ("file_reference", "file_reference_present"), ("key", "key_present"), ("iv", "iv_present")):
                 if b.has(d + k):
                     media[key] = True
             att = {}
@@ -942,9 +950,12 @@ def trailer(raw, b, cls):
         parts = s[2:].split(b"||")
         path, pairs = parts[-1], parts[:-1]
         params = []
-        for pr in pairs:
+        for i, pr in enumerate(pairs):
             k, sep, v = pr.partition(b"|=|")
-            params.append({"key": C.clean(k, MAX_ID).text, "value": C.clean(v, MAX_ID).text})
+            ck, cv = C.clean(k, MAX_ID), C.clean(v, MAX_ID)
+            if i < MAX_PARAMS and (ck.flags or cv.flags):
+                mark(raw, "attach_params")  # an altered or cut param is never a silent cut (Task 9 review M2)
+            params.append({"key": ck.text, "value": cv.text})
         if params:
             raw["attach_params"] = params[:MAX_PARAMS]
             raw["attach_params_total"] = len(params)
@@ -952,7 +963,8 @@ def trailer(raw, b, cls):
                 raw["attach_params_truncated"] = True
     if path:
         c = C.clean(path, MAX_SHORT)
-        raw["attach_path"] = c.text
+        if c.text:
+            raw["attach_path"] = c.text
         if c.flags:
             raw["attach_path_flags"] = ",".join(c.flags)
 

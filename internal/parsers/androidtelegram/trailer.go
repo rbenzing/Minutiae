@@ -65,7 +65,9 @@ func readTrailer(b []byte, v view, c tl.Constructor, raw map[string]any) {
 	}
 	if len(path) > 0 {
 		cl := common.CleanText(path, maxAttachPath)
-		raw["attach_path"] = cl.Text
+		if cl.Text != "" {
+			raw["attach_path"] = cl.Text
+		}
 		if len(cl.Flags) > 0 {
 			raw["attach_path_flags"] = strings.Join(cl.Flags, ",")
 		}
@@ -97,7 +99,8 @@ func trailerShape(rest []byte, v view, c tl.Constructor) (s []byte, fwdID *int64
 
 // attachParams states the pairs of a trailer string after its "||" (spec 8.8): the pieces split on "||" left to
 // right, each but the last a key|=|value pair, the last the path it returns. At most maxParams pairs are kept as
-// [{key, value}] in order, keys and values cleaned at 1 KiB; attach_params_total counts them all and
+// [{key, value}] in order, keys and values cleaned at 1 KiB (one altered or cut names attach_params in
+// raw.text_flags); attach_params_total counts them all and
 // attach_params_truncated says more were met. The pieces are walked in place: nothing is allocated past the cap.
 func attachParams(raw map[string]any, s []byte) []byte {
 	sep := []byte("||")
@@ -115,10 +118,11 @@ func attachParams(raw map[string]any, s []byte) []byte {
 			continue
 		}
 		k, val, _ := bytes.Cut(p, []byte("|=|"))
-		list = append(list, map[string]any{
-			"key":   common.CleanText(k, maxParamText).Text,
-			"value": common.CleanText(val, maxParamText).Text,
-		})
+		ck, cv := common.CleanText(k, maxParamText), common.CleanText(val, maxParamText)
+		if len(ck.Flags)+len(cv.Flags) > 0 {
+			markText(raw, "attach_params") // a key or value altered or cut is never a silent cut (review M2)
+		}
+		list = append(list, map[string]any{"key": ck.Text, "value": cv.Text})
 	}
 	if total > 0 {
 		raw["attach_params"], raw["attach_params_total"] = list, total

@@ -115,3 +115,38 @@ func TestTelegramTrailerThatLeavesBytesIsUnparsed(t *testing.T) {
 		t.Errorf("pinned shape: %v %v %v", raw["trailer_state"], raw["attach_path"], raw["fwd_msg_id"])
 	}
 }
+
+// Spec 6.5, 8.8 (TLRPC:59562-59690), review M4(b): a secret class writes the string alone, whatever its flags and
+// id: a TL_message_secret with flags 0x4 and a negative id reads its string and no fwd_msg_id, and the same string
+// followed by an int32 is unparsed.
+func TestTelegramSecretTrailerIsStringOnly(t *testing.T) {
+	const ann, self = 1000002, 1000001
+	secret := func(id int32, tail []byte) []byte {
+		b := append(le32(0x555555fa), le32(flagFwdBit)...)
+		b = append(b, le32(uint32(id))...)
+		b = append(b, le32(0)...)   // ttl
+		b = append(b, le32(ann)...) // from_id
+		b = append(b, peerUser(self)...)
+		b = append(b, le32(baseDate)...)
+		b = append(b, tlStr("s")...)
+		b = append(b, le32(0x3ded6320)...)                     // media: empty
+		b = append(append(b, le32(0x1cb5c415)...), 0, 0, 0, 0) // entities: none
+		return append(b, tail...)
+	}
+	path := tlStr("/sdcard/s.jpg")
+	cells := []msgCells{
+		{mid: -5, uid: 1<<62 | 5, data: secret(-5, path)},
+		{mid: -6, uid: 1<<62 | 5, data: secret(-6, append(append([]byte{}, path...), le32(9)...))},
+	}
+	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, cells))).Records)
+	r1, r2 := rawOf(got["messages_v2/1"]), rawOf(got["messages_v2/2"])
+	if r1["data_state"] != "decoded" || r1["trailer_state"] != "read" || r1["attach_path"] != "/sdcard/s.jpg" || r1["fwd_msg_id"] != nil {
+		t.Errorf("string only: %v %v %v fwd %v", r1["data_state"], r1["trailer_state"], r1["attach_path"], r1["fwd_msg_id"])
+	}
+	if r2["trailer_state"] != "unparsed" || r2["attach_path"] != nil || r2["fwd_msg_id"] != nil {
+		t.Errorf("string and int: %v %v %v", r2["trailer_state"], r2["attach_path"], r2["fwd_msg_id"])
+	}
+}
+
+// flagFwdBit is MESSAGE_FLAG_FWD (TLRPC:64).
+const flagFwdBit = 0x4

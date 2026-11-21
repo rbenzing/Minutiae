@@ -206,6 +206,20 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 			map[string]any{"kind": "media"},
 		},
 		{
+			// review I1: a blob cut right before the media ID states the stop, never an ID that was not read
+			"media ID cut",
+			msgCells{mid: 45, uid: ann, data: cutBeforeMedia(45)},
+			map[string]any{"data_state": "truncated", "data_stop_path": "media", "media": map[string]any{"state": "truncated"}},
+			map[string]any{"kind": "unknown"},
+		},
+		{
+			// review M2: a param cut at 1 KiB is named in raw.text_flags
+			"trailer param cut",
+			msgCells{mid: 46, uid: ann, data: tlMessage{id: 46, from: ann, peer: self, date: baseDate, text: "x", tail: tlStr("||k|=|" + strings.Repeat("v", 2048) + "||p")}.bytes()},
+			map[string]any{"trailer_state": "read", "attach_params_total": 1, "text_flags": "attach_params", "attach_path": "p"},
+			nil,
+		},
+		{
 			"reply copy",
 			msgCells{mid: 43, uid: ann, data: in(43), replydata: tlMessage{id: 9, from: ann, peer: self, date: baseDate - 1, text: "q\x00"}.bytes()},
 			map[string]any{
@@ -261,6 +275,12 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 		cells = append(cells, r.cells)
 	}
 	checkStates(t, "messages", v1, parseAt(t, remoteApp, dbOnly(goBuiltMessages(64, cells, nil))).Records)
+}
+
+// cutBeforeMedia is a TL_message with the media flag set whose blob ends right before the media constructor ID.
+func cutBeforeMedia(id int32) []byte {
+	full := tlMessage{id: id, from: 1000002, peer: 1000001, date: baseDate, text: "x", media: le32(0x3ded6320)}.bytes()
+	return full[:len(full)-4]
 }
 
 // params is the params prefix of a trailer string with n pairs k<i>|=|v (spec 6.5).

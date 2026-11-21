@@ -45,11 +45,12 @@ func mediaLabel(class string) string {
 
 // mediaSummary states the media of a message blob whose top constructor c was read (spec 8.5, raw only; T3: the
 // sub-types beyond the summary are 4I4b): raw.media {type, constructor, ...} for a media object that was read, or one
-// the decode stopped at (an opaque one by its class's label; an ID the table lacks by its constructor alone). The
+// the decode stopped at (mediaStop). The
 // summary holds what was read of the class's fields: document id, date, mime_type, size, dc_id; photo id, date; geo
 // and venue lat, long (finite and within +-90/+-180, else <k>_state "out-of-range" and the stored bits <k>_bits);
 // venue title, address; contact phone_number (an identifier, never cut), first_name, last_name, vcard, user_id;
-// webpage url, display_url; access_hash_present, file_reference_present, key_present (never the bytes, spec 9). It
+// webpage url, display_url; access_hash_present, file_reference_present, key_present, iv_present (never the bytes,
+// spec 9). It
 // returns a document's attachment, {mime, size} each only when read and valid: never a name, never a source_ref
 // (call 5).
 func mediaSummary(v view, tab tl.Table, c tl.Constructor, raw map[string]any) []message.Attachment {
@@ -57,11 +58,7 @@ func mediaSummary(v view, tab tl.Table, c tl.Constructor, raw map[string]any) []
 		return nil
 	}
 	if s := v.stopAt("media"); s != nil {
-		m := map[string]any{"constructor": hexID(s.ID)}
-		if mc, ok := tab[s.ID]; ok && s.Kind == tl.StopOpaque {
-			m["type"] = mediaLabel(mc.Name)
-		}
-		raw["media"] = m
+		raw["media"] = mediaStop(s, tab)
 		return nil
 	}
 	id, ok := v.ID("media")
@@ -105,6 +102,28 @@ func mediaSummary(v view, tab tl.Table, c tl.Constructor, raw map[string]any) []
 	return nil
 }
 
+// mediaStop is raw.media of a decode that stopped at the media object itself: an ID that was read (one the table
+// lacks, or an opaque one with its class's label) is its constructor; a stop before the ID was read or at it for
+// another reason (the blob ends inside the ID, the depth bound) is state <the stop kind>, never an ID that is not on
+// the wire (review I1; data_stop_path says where).
+func mediaStop(s *tl.Stop, tab tl.Table) map[string]any {
+	switch s.Kind {
+	case tl.StopUnknownConstructor:
+		return map[string]any{"constructor": hexID(s.ID)}
+	case tl.StopOpaque:
+		m := map[string]any{"constructor": hexID(s.ID)}
+		if mc, ok := tab[s.ID]; ok {
+			m["type"] = mediaLabel(mc.Name)
+		}
+		return m
+	}
+	m := map[string]any{"state": s.Kind}
+	if mc, ok := tab[s.ID]; ok && s.ID != 0 { // the ID was read and known: a refusal after it (the budget)
+		m["constructor"], m["type"] = hexID(s.ID), mediaLabel(mc.Name)
+	}
+	return m
+}
+
 // photoSummary states a photo's id and date and whether its access hash and file reference were read.
 func photoSummary(v view, m map[string]any) {
 	if !v.Has("media.photo") {
@@ -132,8 +151,10 @@ func documentSummary(v view, m, raw map[string]any) []message.Attachment {
 	}
 	mime := mediaText(v, m, raw, "mime_type", d+"mime_type", maxShort)
 	present(v, m, d)
-	if v.Has(d + "key") {
-		m["key_present"] = true // a KSecret: its length only was read, never the bytes (spec 9)
+	for _, k := range []string{"key", "iv"} {
+		if v.Has(d + k) {
+			m[k+"_present"] = true // a KSecret: its length only was read, never the bytes (spec 9)
+		}
 	}
 	var a message.Attachment
 	a.Mime = mime
