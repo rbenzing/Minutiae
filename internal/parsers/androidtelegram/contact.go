@@ -292,6 +292,11 @@ func mapUser(m parse.MapContext, row parse.Row, e *env, tab tl.Table, c rowrun.C
 	if username != "" {
 		cn.IMs = append(cn.IMs, contact.Value{Value: username, Kind: kindTelegramUsername})
 	}
+	if cn.DisplayName == "" && len(cn.Phones) == 0 && len(cn.IMs) == 0 {
+		// a recovered row whose rowid is lost and that names nobody identifies no contact: unmapped, a counted warning,
+		// never a record the contact contract refuses (the mapping stays total)
+		return nil, rowrun.Unmappable(reasonNoName)
+	}
 	if err := joinContact(m, e, uid, uidOK, raw, r.unknown); err != nil {
 		return nil, err
 	}

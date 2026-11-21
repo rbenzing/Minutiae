@@ -2,6 +2,8 @@ package androidtelegram_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"strconv"
 	"strings"
@@ -657,7 +659,7 @@ func contactStates(t *testing.T) {
 		"users/2": {"status_expires": int64(5000), "status_label": nil, "contact_row": true, "mutual": int64(1), "about_state": nil, "access_hash_present": true},
 		"users/3": {"status": nil, "data_state": "null", "data_len": nil},
 		"users/4": {"status": nil, "unknown_columns": map[string]any{"users.status": "type-mismatch"}},
-		"users/5": {"phone_state": "too-long", "phone_len": int64(1100)},
+		"users/5": {"phone_state": "too-long", "phone_len": int64(1100), "phone_sha256": sha256Hex(tooLong)},
 		"users/6": {"self": true, "bot": true, "status_label": "recently_by_me", "display_name_source": "composed"},
 	}
 	for key, w := range want {
@@ -685,4 +687,9 @@ func contactStates(t *testing.T) {
 	if res.Notes["self_users"] != "1" {
 		t.Errorf("self_users %q, want 1", res.Notes["self_users"])
 	}
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

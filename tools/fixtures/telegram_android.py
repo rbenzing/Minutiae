@@ -186,14 +186,19 @@ def call_summary(direction, outcome, address):
     return " ".join(parts)
 
 
-def contact_summary(display, phones):
+def contact_summary(display, phones, ims):
     name = summarize(display or "", 80, True)
     phone = ""
     for p in phones:
         phone = summarize(p, 32)
         if phone:
             break
-    return " ".join(x for x in (name, phone) if x)
+    if name or phone:
+        return " ".join(x for x in (name, phone) if x)
+    for im in ims:  # an app account identifies a contact that has nothing else (plan 4I4 Task 12)
+        if summarize(im["value"], 80, True):
+            return summarize(im["value"], 80, True)
+    return ""
 
 
 def note_list(names, limit=MAX_NOTE, sep=","):
@@ -1128,7 +1133,7 @@ def map_user(r, env, remote, file):
         raw["unknown_columns"] = unknown
     p["raw"] = raw
     body = "\n".join(x for x in (display, phones[0] if phones else None, username, about) if x)
-    rec = record("users", r, "contact", None, None, body, contact_summary(display, phones), p, remote, file)
+    rec = record("users", r, "contact", None, None, body, contact_summary(display, phones, ims), p, remote, file)
     rec["_warn"] = not (display or phones or username)
     return rec
 

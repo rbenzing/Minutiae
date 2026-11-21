@@ -6,9 +6,9 @@
 // internal/recordtypes/common.
 //
 // The payload follows the contract of the plan's F10 table: at least one of a
-// display name, a phone, an e-mail address, an organization or an instant-messaging handle (an app account
-// identifies its holder: a Telegram user id, plan 4I4) (a tombstone, the
-// deleted marker with a non-empty source id, needs none of them: spec 9.3);
+// display name, a phone, an e-mail address, an organization or an instant-messaging handle (an app
+// account identifies its holder: a Telegram user id, plan 4I4); a tombstone, the deleted marker with a non-empty
+// source id, needs none of them (spec 9.3);
 // everything else optional and absent (never an empty string, object or list) when the parser
 // does not know it (C3). Phone numbers, e-mail addresses and names are the source
 // strings, never normalized (C5). Unknown fields in a stored payload are ignored
@@ -361,7 +361,8 @@ func joinNonEmpty(parts ...string) string {
 // Summary builds the record summary: the display name (at most 80 characters) and
 // the first phone (at most 32 bytes), one line, through common.Summarize (format
 // and bidi characters are shown as <U+XXXX>). A contact with neither shows its
-// first e-mail address, then its organization (name, else title, else department).
+// first e-mail address, then its organization (name, else title, else department), then its first instant-messaging
+// handle (an app account, as stored).
 func Summary(c Contact) string {
 	name := common.SummarizeChars(c.DisplayName, 80)
 	phone := ""
@@ -383,6 +384,11 @@ func Summary(c Contact) string {
 			if s := common.SummarizeChars(v, 80); s != "" {
 				return s
 			}
+		}
+	}
+	for _, v := range c.IMs { // an app account identifies a contact that has nothing else (plan 4I4)
+		if s := common.SummarizeChars(v.Value, 80); s != "" {
+			return s
 		}
 	}
 	if c.Deleted != nil { // a tombstone: the source row that was deleted

@@ -331,6 +331,10 @@ func TestContactAtLeastOneIdentifyingField(t *testing.T) {
 			t.Errorf("%s: error %q does not name the rule", name, err)
 		}
 	}
+	// an im whose value is empty identifies nobody: refused (by the value rule, before the identifying rule)
+	if err := contact.Validate(map[string]any{"ims": v("")}); err == nil {
+		t.Error("an im with an empty value: accepted")
+	}
 	accepted := map[string]map[string]any{
 		"display_name alone":       {"display_name": "Alex"},
 		"a phone alone":            {"phones": v("+15551234567")},
@@ -737,6 +741,8 @@ func TestSummary(t *testing.T) {
 		{"organization without name", contact.Contact{Organization: &contact.Organization{Title: "CTO"}}, "CTO"},
 		{"skips an empty first phone", contact.Contact{DisplayName: "A", Phones: []contact.Value{{Value: ""}, {Value: "2"}}}, "A 2"},
 		{"collapses whitespace", contact.Contact{DisplayName: "A\nB\t C", Phones: []contact.Value{{Value: "1 \n 2"}}}, "A B C 1 2"},
+		{"an app account when nothing else", contact.Contact{IMs: []contact.Value{{Value: "user:17", Kind: "telegram"}}}, "user:17"},
+		{"an e-mail beats an app account", contact.Contact{Emails: []contact.Value{{Value: "a@example.com"}}, IMs: []contact.Value{{Value: "user:17"}}}, "a@example.com"},
 		{"nothing", contact.Contact{}, ""},
 		{"tombstone shows its first source id", contact.Contact{Deleted: map[string]any{"source": "deleted_contacts"}, SourceIDs: []string{"", "9", "10"}}, "deleted contact 9"},
 		{"a named deleted contact keeps its name", contact.Contact{DisplayName: "Alex", Deleted: map[string]any{"source": "x"}, SourceIDs: []string{"9"}}, "Alex"},

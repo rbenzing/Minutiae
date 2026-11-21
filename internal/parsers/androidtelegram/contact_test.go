@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
+	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
@@ -165,3 +167,32 @@ func TestTelegramEmptyNamePartsAreAbsent(t *testing.T) {
 		walk(n, r.Payload)
 	}
 }
+
+// Review I1 (Task 12 fix 1): a recovered users row whose rowid is lost has no ims, so with no name or phone either it
+// identifies nobody: it is unmapped (a counted warning), never a record the contact contract would refuse.
+func TestTelegramRecoveredNamelessUserWithoutRowidIsUnmapped(t *testing.T) {
+	users := builtTable{name: "users", ddl: ddlUsers, cols: []string{"uid", "name", "status", "data"}, alias: "uid", rows: []builtRow{
+		{7, map[string]any{"name": "x", "status": int64(0)}}, // a NULL blob: no name, no phone
+		{8, map[string]any{"name": "x", "status": int64(0), "data": tlUser(8, 0, false, ptr("Ann"), nil, nil, nil)}},
+	}}
+	h := parsertest.NewHarness(t)
+	p := androidtelegram.Parser{}
+	in := inputAt(t, h, p, remoteApp, dbOnly(goBuiltWith(181, nil, users)), false)
+	sink := &recordSink{}
+	rep, err := rowrun.Run(t.Context(), in, sink, []rowrun.Step{{Mapping: androidtelegram.LostRowidUsersMapping()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unmapped int64
+	for _, tr := range rep.Tables {
+		unmapped += tr.Unmapped
+	}
+	if len(sink.recs) != 1 || unmapped != 1 {
+		t.Fatalf("%d records and %d unmapped rows, want the named row kept and the nameless one unmapped", len(sink.recs), unmapped)
+	}
+	if err := contact.Validate(sink.recs[0].Payload); err != nil {
+		t.Errorf("the kept record: %v", err)
+	}
+}
+
+func ptr(s string) *string { return &s }

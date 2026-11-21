@@ -1,6 +1,11 @@
 package androidtelegram
 
-import "github.com/rbenzing/minutiae/internal/decode/tl"
+import (
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/decode/tl"
+	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
+)
 
 // The test-only door of the external tests to the package's internals (compiled into test builds only).
 
@@ -57,3 +62,21 @@ const TableEncChats = tableEncChats
 
 // EncChatsColumns is encChatsColumns.
 func EncChatsColumns() []string { return encChatsColumns() }
+
+// LostRowidUsersMapping is the typed pass's users mapping over rows that present as recovered rows whose rowid is lost
+// (parse.Row.Rowid false, no locator), as a recovery host hands them over.
+func LostRowidUsersMapping() parse.TableMapping {
+	m := userMappingWith(nil)
+	inner := m.Map
+	m.Map = func(mc parse.MapContext, row parse.Row) ([]records.Record, error) {
+		return inner(mc, lostRowid{row.(sqlitedb.Row)})
+	}
+	return m
+}
+
+// lostRowid is a stored row that reports itself recovered with no rowid and no locator.
+type lostRowid struct{ sqlitedb.Row }
+
+func (lostRowid) Rowid() (int64, bool)               { return 0, false }
+func (lostRowid) Locator() (string, bool)            { return "", false }
+func (lostRowid) Recovered() *sqlitedb.RecoveredInfo { return &sqlitedb.RecoveredInfo{} }
