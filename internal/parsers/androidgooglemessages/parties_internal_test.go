@@ -24,3 +24,15 @@ func TestGoogleMessagesSelfRuleMatchesFacts(t *testing.T) {
 		}
 	}
 }
+
+// Task 5 review I1 (4I5-P6): every cached member set is charged a fixed base, so conversations with no member cannot fill
+// the cache uncharged.
+func TestGoogleMessagesMemberSetIsChargedABase(t *testing.T) {
+	if got := (&memberSet{}).cost(); got != setBaseCost || got <= 0 {
+		t.Errorf("an empty member set costs %d, want the base %d", got, setBaseCost)
+	}
+	s := &memberSet{Unknown: map[string]any{"a": 1}, Joins: []string{"x", "y"}}
+	if got, want := s.cost(), int64(setBaseCost+64+32); got != want {
+		t.Errorf("cost %d, want %d", got, want)
+	}
+}

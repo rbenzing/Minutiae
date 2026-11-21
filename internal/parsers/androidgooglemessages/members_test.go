@@ -170,3 +170,31 @@ func TestGoogleMessagesDanglingMemberIsStated(t *testing.T) {
 		t.Errorf("no members: raw %v parties %v", rawOf(r), rolesOf(r))
 	}
 }
+
+// Task 5 review M2 (B2): an unreadable participant_id may name the device owner, so the member count is undecided: it is
+// listed in unknown_columns and never counted as dangling, and group is omitted. A NULL stays dangling.
+func TestGoogleMessagesUnreadableMemberIdIsUndecided(t *testing.T) {
+	_, got := store{
+		participants:  []mrow{person(2, "+15550000002")},
+		conversations: []mrow{{1, map[string]any{}}, {2, map[string]any{}}},
+		members: []mrow{
+			{0, map[string]any{"conversation_id": int64(1), "participant_id": int64(2)}},
+			{0, map[string]any{"conversation_id": int64(1), "participant_id": "x"}},
+			{0, map[string]any{"conversation_id": int64(2), "participant_id": int64(2)}},
+			{0, map[string]any{"conversation_id": int64(2), "participant_id": nil}},
+		},
+		messages: []mrow{
+			{1, map[string]any{"sender_id": int64(2), "message_status": int64(1), "conversation_id": int64(1)}},
+			{2, map[string]any{"sender_id": int64(2), "message_status": int64(1), "conversation_id": int64(2)}},
+		},
+	}.parse(t)
+	r := got[1]
+	_, group := threadMap(r)["group"]
+	if group || rawOf(r)["group_state"] != "undecided" || has(r, "members_dangling") || unknownOf(r)["conversation_participants.participant_id"] != "type-mismatch" {
+		t.Errorf("unreadable id: group present %v raw %v", group, rawOf(r))
+	}
+	r = got[2]
+	if threadMap(r)["group"] != false || rawOf(r)["members_dangling"] != int64(1) || has(r, "group_state") {
+		t.Errorf("NULL id: group %v raw %v", threadMap(r)["group"], rawOf(r))
+	}
+}

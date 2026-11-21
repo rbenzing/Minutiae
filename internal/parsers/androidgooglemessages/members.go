@@ -10,19 +10,23 @@ import (
 // memberCost is what one cached member is charged to the job budget (4I5-P6): this plus the length of its address.
 const memberCost = 96
 
+// setBaseCost is what every cached member set is charged before its members.
+const setBaseCost = 256
+
 // memberSet is the members of one conversation as the mappings state them (spec 6.3, B2, B3): the current non-self
 // participants in conversation_participants rowid order, at most maxList of them, with the counts of all of them.
 type memberSet struct {
-	Parties       []party // the kept members that have an address
-	Total         int     // the non-self members (before the cut)
-	Cut           bool    // Total > maxList
-	Dangling      int     // member rows naming no participants row (or an unreadable participant_id)
-	Without       int     // kept members with no usable address
-	Blocked       []int64 // ids of the kept members whose blocked is 1
-	SelfUndecided bool    // a member whose self-ness cannot be decided stays a member (B2)
-	Undecided     bool    // the members cannot be decided: the join is undecided, never "none"
-	Joins         []string
-	Unknown       map[string]any // the unreadable cells met, keyed <table>.<col>
+	Parties        []party // the kept members that have an address
+	Total          int     // the non-self members (before the cut)
+	Cut            bool    // Total > maxList
+	Dangling       int     // member rows naming no participants row (or an unreadable participant_id)
+	Without        int     // kept members with no usable address
+	Blocked        []int64 // ids of the kept members whose blocked is 1
+	SelfUndecided  bool    // a member whose self-ness cannot be decided stays a member (B2)
+	GroupUndecided bool    // a member row whose participant_id cannot be read: the member count is undecided, so is group
+	Undecided      bool    // the members cannot be decided: the join is undecided, never "none"
+	Joins          []string
+	Unknown        map[string]any // the unreadable cells met, keyed <table>.<col>
 }
 
 func (s *memberSet) cost() int64 {
@@ -30,7 +34,8 @@ func (s *memberSet) cost() int64 {
 	for _, p := range s.Parties {
 		n += memberCost + int64(len(p.Address)+len(p.Name))
 	}
-	return n + int64(len(s.Blocked))*8
+	// a fixed base per set: conversations with no member at all still grow the charge (they cannot fill the cache uncharged)
+	return n + int64(len(s.Blocked))*8 + setBaseCost + int64(len(s.Unknown))*64 + int64(len(s.Joins))*16
 }
 
 // memberCache holds the members of each conversation, read once per job (B3) and charged to the job budget (4I5-P6). A
@@ -129,7 +134,13 @@ func readMembers(m parse.MapContext, conv int64, pc rowrun.Cols) (*memberSet, er
 	for _, mr := range rows {
 		pid, k := intCellOf(mr, pidCol)
 		if k != rowrun.CellValue {
-			s.Dangling++
+			if k == rowrun.CellNull { // a NULL names no participant: dangling
+				s.Dangling++
+				continue
+			}
+			// an unreadable participant_id may name anyone, the device owner included: undecided, never dangling
+			rowrun.Flag(s.Unknown, mr, tableMembers+".participant_id", pidCol, k)
+			s.GroupUndecided = true
 			continue
 		}
 		jraw := map[string]any{}

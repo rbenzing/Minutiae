@@ -432,6 +432,8 @@ func threadOf(m parse.MapContext, e *env, row parse.Row, c rowrun.Cols, pc rowru
 	}
 	if set.SelfUndecided {
 		raw["self_state"] = stateUndecided
+	}
+	if set.SelfUndecided || set.GroupUndecided {
 		raw["group_state"] = stateUndecided
 	} else {
 		g := set.Total > 1

@@ -429,8 +429,13 @@ def thread_and_members(env, r, raw, unknown, p):
         if c.text:
             th["title"] = c.text
     kept, dangling, undecided, blocked = [], 0, False, []
+    group_unreadable = False
     for mrow in env.members.get(cid, []):
         pid = mrow.get("participant_id")
+        if pid is not None and not is_int(pid):  # unreadable: undecided, never dangling (Task 5 review M2)
+            unknown["conversation_participants.participant_id"] = "type-mismatch"
+            group_unreadable = True
+            continue
         prow = env.participants.get(pid) if is_int(pid) else None
         if prow is None:
             dangling += 1
@@ -465,6 +470,7 @@ def thread_and_members(env, r, raw, unknown, p):
         raw["blocked_member_ids"] = blocked
     if undecided:
         raw["self_state"] = "undecided"
+    if undecided or group_unreadable:
         raw["group_state"] = "undecided"
     else:
         th["group"] = total > 1
