@@ -508,7 +508,9 @@ func TestClaimUniquenessAllowsDisjointFiles(t *testing.T) {
 	opts := artparse.Options{Limits: parse.DefaultLimits()}
 	a := globClaimer(t, "wa", "messages", "android:**/com.whatsapp/databases/msgstore.db", "android:**/WhatsApp/Databases/msgstore*.db", "android:**/WhatsApp/Databases/msgstore*.db.crypt*")
 	b := globClaimer(t, "tg", "messages", "android:**/org.telegram.messenger/files/cache4.db", "android:**/org.telegram.messenger/files/account*/cache4.db")
-	if _, err := artparse.New(c, []artparse.Registered{a, b}, opts); err != nil {
+	gm := globClaimer(t, "gm", "messages", "android:**/com.google.android.apps.messaging/databases/bugle_db", "android:**/com.android.messaging/databases/bugle_db")
+	gmp := globClaimer(t, "gmp", "parts", "android:**/com.google.android.apps.messaging/databases/bugle_db", "android:**/com.android.messaging/databases/bugle_db") // parts is claimed by no other parser (4I5 spec 12)
+	if _, err := artparse.New(c, []artparse.Registered{a, b, gm, gmp}, opts); err != nil {
 		t.Fatalf("disjoint literal file names refused: %v", err)
 	}
 }

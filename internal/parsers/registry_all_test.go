@@ -44,6 +44,7 @@ var claimsOf = map[string][]string{
 	"android.calendar":          {"Events"},
 	"ios.calendar":              {"CalendarItem"},
 	"android.telegram":          {"messages", "messages_v2", "users"},
+	"android.googlemessages":    {"messages", "parts"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -421,14 +422,18 @@ func TestCalendarParsersReadCompanionRolesAndEmitTheirType(t *testing.T) {
 }
 
 // TestTelegramParserReadsCompanionRolesAndEmitsItsTypes pins what plan 4I4 promises about android.telegram (4I4-P1):
-// it emits exactly message, call and contact at payload version 1, reads cache4.db with its WAL and journal
-// companions through two primary globs, and is the registry's last entry.
+// it emits exactly message, call and contact at payload version 1 and reads cache4.db with its WAL and journal
+// companions through two primary globs. It finds the parser by name: later parsers follow it in the registry.
 func TestTelegramParserReadsCompanionRolesAndEmitsItsTypes(t *testing.T) {
-	all := All()
-	p := all[len(all)-1]
-	m := p.Meta()
-	if m.Name != "android.telegram" {
-		t.Fatalf("the registry's last entry is %s, want android.telegram", m.Name)
+	var m parse.Meta
+	found := false
+	for _, p := range All() {
+		if p.Meta().Name == "android.telegram" {
+			m, found = p.Meta(), true
+		}
+	}
+	if !found {
+		t.Fatal("android.telegram is not registered")
 	}
 	var roles []string
 	for _, in := range m.Inputs {
@@ -450,5 +455,37 @@ func TestTelegramParserReadsCompanionRolesAndEmitsItsTypes(t *testing.T) {
 	slices.Sort(types)
 	if want := []string{call.Type, contact.Type, message.Type}; !slices.Equal(types, want) {
 		t.Errorf("emits %v, want exactly %v", types, want)
+	}
+}
+
+// TestGoogleMessagesParserReadsCompanionRolesAndEmitsOneType pins what plan 4I5 promises about android.googlemessages
+// (4I5-P1): it emits exactly message at payload version 1, reads bugle_db with its WAL and journal companions through
+// two primary globs, claims messages and parts, and is the registry's last entry.
+func TestGoogleMessagesParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
+	all := All()
+	m := all[len(all)-1].Meta()
+	if m.Name != "android.googlemessages" {
+		t.Fatalf("the registry's last entry is %s, want android.googlemessages", m.Name)
+	}
+	var roles []string
+	for _, in := range m.Inputs {
+		roles = append(roles, in.Role)
+	}
+	if !slices.Equal(roles, []string{"db", "wal", "journal"}) {
+		t.Errorf("roles %v, want db/wal/journal", roles)
+	}
+	if len(m.Inputs) > 0 && len(m.Inputs[0].Globs) != 2 {
+		t.Errorf("the db role has %d globs, want 2 (the Messages and the AOSP package)", len(m.Inputs[0].Globs))
+	}
+	if len(m.Emits) != 1 || m.Emits[0].Type != message.Type || m.Emits[0].PayloadVersion != 1 {
+		t.Errorf("emits %+v, want exactly %s at payload version 1", m.Emits, message.Type)
+	}
+	var claims []string
+	for _, c := range m.Claims {
+		claims = append(claims, c.Table)
+	}
+	slices.Sort(claims)
+	if want := []string{"messages", "parts"}; !slices.Equal(claims, want) {
+		t.Errorf("claims %v, want %v", claims, want)
 	}
 }

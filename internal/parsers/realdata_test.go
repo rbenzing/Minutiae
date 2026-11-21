@@ -312,6 +312,14 @@ func TestRealDataParsers(t *testing.T) {
 			for _, tb := range claimed {
 				k := strings.ToLower(tb)
 				got := perTableRecords[k] + perTableWarnings[k]
+				if noteKey, ok := noteRows[p.Meta().Name][tb]; ok { // a row folded into another record is counted by its note (B6)
+					n, err := strconv.ParseInt(res.Notes[noteKey], 10, 64)
+					if err != nil {
+						t.Errorf("table %s: note %s = %q is missing or not an integer: %v", tb, noteKey, res.Notes[noteKey], err)
+						continue
+					}
+					got += n
+				}
 				if want, ok := counts[tb]; ok && got != want {
 					t.Errorf("table %s: %d records + %d row warnings != %d rows counted by the independent engine", tb, perTableRecords[k], perTableWarnings[k], want)
 				} else if ok {
@@ -431,3 +439,8 @@ func TestRealDataTypedRecovery(t *testing.T) {
 		})
 	}
 }
+
+// noteRows names, per parser and claimed table, the run note that counts the rows of that table which have no record
+// of their own because the parser folded them into another record: android.googlemessages joins a text part into its
+// message, so parts: joined + orphan records + row warnings = rows (4I5, B6).
+var noteRows = map[string]map[string]string{"android.googlemessages": {"parts": "parts.joined"}}

@@ -53,9 +53,10 @@ var realDataInputs = map[string]realDataInput{
 		Platform: "ios", Logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite", File: "ContactsV2.sqlite",
 		Extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
 	},
-	"android.calendar": {Platform: "android", Logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db", File: "calendar.db"},
-	"ios.calendar":     {Platform: "ios", Logical: "ios:HomeDomain/Library/Calendar/Calendar.sqlitedb", File: "Calendar.sqlitedb"},
-	"android.telegram": {Platform: "android", Logical: "android:/data/data/org.telegram.messenger/files/cache4.db", File: "cache4.db"},
+	"android.calendar":       {Platform: "android", Logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db", File: "calendar.db"},
+	"ios.calendar":           {Platform: "ios", Logical: "ios:HomeDomain/Library/Calendar/Calendar.sqlitedb", File: "Calendar.sqlitedb"},
+	"android.telegram":       {Platform: "android", Logical: "android:/data/data/org.telegram.messenger/files/cache4.db", File: "cache4.db"},
+	"android.googlemessages": {Platform: "android", Logical: "android:/data/data/com.google.android.apps.messaging/databases/bugle_db", File: "bugle_db"},
 }
 
 // realDataSet is one set of the layout: the parser (or "ios-backup") and the files of the set, by role.

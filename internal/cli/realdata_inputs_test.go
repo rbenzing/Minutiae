@@ -41,9 +41,10 @@ var realCLIInputs = map[string]realCLIInput{
 		logical: "ios:AppDomainGroup-group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite", file: "ContactsV2.sqlite",
 		extra: map[string]string{"container_meta": ".com.apple.mobile_container_manager.metadata.plist"},
 	},
-	"android.calendar": {logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db", file: "calendar.db"},
-	"ios.calendar":     {logical: "ios:HomeDomain/Library/Calendar/Calendar.sqlitedb", file: "Calendar.sqlitedb"},
-	"android.telegram": {logical: "android:/data/data/org.telegram.messenger/files/cache4.db", file: "cache4.db"},
+	"android.calendar":       {logical: "android:/data/data/com.android.providers.calendar/databases/calendar.db", file: "calendar.db"},
+	"ios.calendar":           {logical: "ios:HomeDomain/Library/Calendar/Calendar.sqlitedb", file: "Calendar.sqlitedb"},
+	"android.telegram":       {logical: "android:/data/data/org.telegram.messenger/files/cache4.db", file: "cache4.db"},
+	"android.googlemessages": {logical: "android:/data/data/com.google.android.apps.messaging/databases/bugle_db", file: "bugle_db"},
 }
 
 // Every registered parser has a realCLIInputs entry whose logical path its primary glob matches, so a real-data set

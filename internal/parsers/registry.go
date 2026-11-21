@@ -8,6 +8,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalendar"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcontacts"
+	"github.com/rbenzing/minutiae/internal/parsers/androidgooglemessages"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwacontacts"
@@ -47,5 +48,6 @@ func All() []parse.Parser {
 		androidcalendar.Parser{},
 		ioscalendar.Parser{},
 		androidtelegram.Parser{},
+		androidgooglemessages.Parser{},
 	}
 }
