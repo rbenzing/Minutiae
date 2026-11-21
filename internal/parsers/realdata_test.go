@@ -312,18 +312,20 @@ func TestRealDataParsers(t *testing.T) {
 			for _, tb := range claimed {
 				k := strings.ToLower(tb)
 				got := perTableRecords[k] + perTableWarnings[k]
+				var folded int64
 				if noteKey, ok := noteRows[p.Meta().Name][tb]; ok { // a row folded into another record is counted by its note (B6)
 					n, err := strconv.ParseInt(res.Notes[noteKey], 10, 64)
 					if err != nil {
 						t.Errorf("table %s: note %s = %q is missing or not an integer: %v", tb, noteKey, res.Notes[noteKey], err)
 						continue
 					}
+					folded = n
 					got += n
 				}
 				if want, ok := counts[tb]; ok && got != want {
-					t.Errorf("table %s: %d records + %d row warnings != %d rows counted by the independent engine", tb, perTableRecords[k], perTableWarnings[k], want)
+					t.Errorf("table %s: %d records + %d row warnings + %d folded into another record != %d rows counted by the independent engine", tb, perTableRecords[k], perTableWarnings[k], folded, want)
 				} else if ok {
-					t.Logf("table %s: %d rows = %d records + %d row warnings", tb, want, perTableRecords[k], perTableWarnings[k])
+					t.Logf("table %s: %d rows = %d records + %d row warnings + %d folded into another record", tb, want, perTableRecords[k], perTableWarnings[k], folded)
 				}
 			}
 
