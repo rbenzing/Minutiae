@@ -129,39 +129,77 @@ func headOf(path string) string {
 	return path
 }
 
-// undecided lists the mapped fields of the top constructor that start after the top-level field holding the stop
-// and are present by their flags: gated by a bit that is set, by a flags word that was not read, or ungated
-// (spec 8.4; the Task 5 oracle's rule). A stop at the top object itself lists nothing.
+// topHeads are the top-level field names of c's fields that carry bytes (a flag-only true carries none: never a
+// field that starts anywhere), in order, with the fields themselves.
+func topHeads(c tl.Constructor) ([]string, []tl.Field) {
+	var names []string
+	var fields []tl.Field
+	for _, f := range c.Fields {
+		if f.Kind == tl.KTrue {
+			continue
+		}
+		names = append(names, headOf(f.Name))
+		fields = append(fields, f)
+	}
+	return names, fields
+}
+
+// lastIndex is the index of the last name equal to s, -1 when none (a head may span several fields, such as an old
+// layer's fwd_from.from_id and fwd_from.date: the head ends with its last field; review M3).
+func lastIndex(names []string, s string) int {
+	for i := len(names) - 1; i >= 0; i-- {
+		if names[i] == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// stopAfter says the decode stopped at a top-level field after field name of the top constructor c: the fields up to
+// and including name were all read (or gated off by a flags word that was read).
+func stopAfter(v view, c tl.Constructor, name string) bool {
+	s := v.r.Stop
+	if s == nil {
+		return false
+	}
+	names, _ := topHeads(c)
+	at, target := lastIndex(names, headOf(s.Path)), lastIndex(names, name)
+	return at >= 0 && target >= 0 && at > target
+}
+
+// ownReadFailed says the stop is the failed read of a top-level field itself (a truncated, malformed, capped or
+// refused int, string, bool, flags word or object ID), not of something nested in it: the field's value was not read.
+func ownReadFailed(s *tl.Stop) bool {
+	switch s.Kind {
+	case tl.StopTruncated, tl.StopMalformed, tl.StopCap, tl.StopBudget:
+		return s.Path != "" && s.Path == headOf(s.Path)
+	}
+	return false
+}
+
+// undecided lists the mapped fields of the top constructor that are not read because of the stop (spec 8.4, 8.5):
+// the stopped field itself when the stop is its own read (review M2), then the fields that start after the last
+// field of the stop's head (review M3) and are present by their flags: gated by a bit that is set, by a flags word
+// that was not read, or ungated. A stop at the top object itself lists nothing.
 func undecided(v view, tab tl.Table, typ, state string) []string {
 	mapped := mappedOf(typ)
 	c, ok := topOf(v, tab, typ, state)
 	if !ok || mapped == nil || v.r.Stop == nil {
 		return nil
 	}
-	var names []string
-	var fields []tl.Field
-	for _, f := range c.Fields {
-		if f.Kind == tl.KTrue { // a flag-only true carries no bytes: never a field that starts anywhere
-			continue
-		}
-		names = append(names, headOf(f.Name))
-		fields = append(fields, f)
-	}
+	names, fields := topHeads(c)
 	head := headOf(v.r.Stop.Path)
-	after := -1
-	for i, n := range names {
-		if n == head {
-			after = i
-			break
-		}
-	}
+	after := lastIndex(names, head)
 	if after < 0 {
 		return nil
 	}
 	var out []string
+	if ownReadFailed(v.r.Stop) && slices.Contains(mapped, head) {
+		out = append(out, head)
+	}
 	for i := after + 1; i < len(fields); i++ {
 		name := names[i]
-		if !slices.Contains(mapped, name) || slices.Contains(out, name) {
+		if name == head || !slices.Contains(mapped, name) || slices.Contains(out, name) {
 			continue
 		}
 		if f := fields[i]; f.Flags != "" {

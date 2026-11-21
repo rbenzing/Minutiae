@@ -20,9 +20,12 @@ Choices this oracle states where the spec leaves the detail to the plan (the Go 
   - a blob's stop: raw.<col>_stop_kind, _stop_offset (where the item that stopped the decode starts: a vector's bad
     count included, Task 8), _stop_path (when
     not the top), _stop_id (hex, when the stop names an id); none for a `prefix` stop (decoded-prefix).
-  - raw.<col>_undecided lists the record fields (MESSAGE_MAPPED, USER_MAPPED) of the top row that start after the
-    top-level field holding the stop and are present by their flags (or whose flags word was not read, or ungated).
-  - kind: a truncated, malformed or capped message blob is `unknown`; a partial one takes the media rule.
+  - raw.<col>_undecided lists the record fields (MESSAGE_MAPPED, USER_MAPPED) of the top row not read because of the
+    stop: the stopped field itself when the stop is its own read, then those that start after the last item of the
+    stop's top-level name and are present by their flags (or whose flags word was not read, or ungated) (Task 8
+    review M2, M3).
+  - kind: a partial message blob takes the media rule, and so does a truncated, malformed or capped one whose stop
+    lies after media (or the action); one stopped at or before it is `unknown` (spec 8.4; Task 8 review I1).
   - replydata gets the blob keys (replydata_state, _len, _sha256, _constructor, ...) and, when its top is a Message
     row, raw.reply_copy {copy, constructor, id, date, text}.
   - the dialog address of an outgoing message is the dialog's own (4I4-P11); a negative dialog left unresolved, a
@@ -259,21 +262,47 @@ class Blob:
     def flag(self, name):
         return self.val(name) is True
 
+    def heads(self):
+        """The top-level names of the top row's items that carry bytes, in order."""
+        return [it.name.split(".")[0] for it in self.row.items if it.kind is not None]
+
+    def stop_head_at(self):
+        """The index of the last item sharing the stop's top-level name (a name may span several items, such as an
+        old layer's fwd_from.from_id and fwd_from.date), or -1."""
+        s = self.res["stop"]
+        if s is None or self.row is None:
+            return -1
+        head = re.split(r"[.\[]", s["path"])[0]
+        names = self.heads()
+        return max((i for i, n in enumerate(names) if n == head), default=-1)
+
+    def stop_after(self, name):
+        """The stop lies at a top-level item after the last item named name."""
+        if self.row is None:
+            return False
+        names = self.heads()
+        at = self.stop_head_at()
+        target = max((i for i, n in enumerate(names) if n == name), default=-1)
+        return at >= 0 and target >= 0 and at > target
+
     def undecided(self, mapped):
-        """The mapped fields of the top row that start after the top-level field holding the stop and are present
-        by their flags (or whose flags word was not read, or ungated)."""
+        """The mapped fields of the top row not read because of the stop: the stopped field itself when the stop is
+        its own read (a truncated, malformed, capped or refused value at the top level), then those that start after
+        the last item of the stop's top-level name and are present by their flags (or whose flags word was not read,
+        or ungated)."""
         s = self.res["stop"]
         if s is None or s["kind"] == "prefix" or self.row is None:
             return []
         head = re.split(r"[.\[]", s["path"])[0]
-        names = [it.name.split(".")[0] for it in self.row.items if it.kind is not None]
-        if head not in names:  # the stop is at the top object itself
+        after = self.stop_head_at()
+        if after < 0:  # the stop is at the top object itself
             return []
-        after = names.index(head)
         out = []
+        if s["kind"] in ("truncated", "malformed", "cap", "budget") and s["path"] == head and head in mapped:
+            out.append(head)
         for i, it in enumerate([it for it in self.row.items if it.kind is not None]):
             name = it.name.split(".")[0]
-            if i <= after or name not in mapped or name in out:
+            if i <= after or name == head or name not in mapped or name in out:
                 continue
             if it.word is not None:
                 word = self.val(it.word)
@@ -461,7 +490,9 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
         blob_raw(raw, "data", b, MESSAGE_MAPPED)
     else:
         unknown[table + ".data"] = "type-mismatch"
-    readable = b is not None and b.state in ("decoded", "partial")
+    # a stop after media (or the action) keeps the fields before it, as partial (spec 8.4; plan 4I4 Task 8 review I1)
+    readable = b is not None and (b.state in ("decoded", "partial") or (b.cls is not None and b.stop_after(
+        "action" if b.cls.startswith("TL_messageService") else "media")))
     cls = b.cls if b is not None else None
 
     # blob raw (spec 8.5 raw list)

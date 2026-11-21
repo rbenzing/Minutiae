@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -17,8 +18,9 @@ func hostileStopRows() []int64 {
 }
 
 // Call 4, F7 (spec 8.4): a blob that stops still yields its record from the plain columns, with its stated state:
-// kind unknown (every stop here is at or before media), a Body exactly when the stop lies after message (the rows
-// stopped in entities), and guid, thread.id, Time and direction from their readable cells. Over all telegram-hostile
+// kind unknown when the stop is at or before media, and the media rule when it lies after media (the rows stopped in
+// entities: media gated off, so text; Task 8 review I1), a Body exactly when the stop lies after message (the same
+// rows), and guid, thread.id, Time and direction from their readable cells. Over all telegram-hostile
 // rows there is one record per row the engine counts.
 func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 	res := parseFixture(t, "telegram-hostile")
@@ -27,7 +29,7 @@ func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 		t.Errorf("%d records, the engine counts %s rows (oracle %d)", len(res.Records), res.Notes["rows.messages_v2"], len(exp.Records))
 	}
 	rows := byRow(res.Records)
-	bodyRows := []int64{2010, 2012, 2013} // stopped in entities, after message
+	bodyRows := []int64{2010, 2012, 2013} // stopped in entities, after message and media
 	for _, id := range hostileStopRows() {
 		key := "messages_v2/" + itoa(id)
 		r, ok := rows[key]
@@ -39,8 +41,12 @@ func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 		if st, _ := raw["data_state"].(string); st == "" || st == "decoded" {
 			t.Errorf("%s: data_state %v", key, raw["data_state"])
 		}
-		if p["kind"] != "unknown" {
-			t.Errorf("%s: kind %v, want unknown", key, p["kind"])
+		wantKind := "unknown"
+		if slices.Contains(bodyRows, id) {
+			wantKind = "text" // stopped in entities, after media (gated off by the flags read)
+		}
+		if p["kind"] != wantKind {
+			t.Errorf("%s: kind %v, want %s", key, p["kind"], wantKind)
 		}
 		if want := slices.Contains(bodyRows, id); (r.Body != "") != want {
 			t.Errorf("%s: Body %q, want present = %v", key, r.Body, want)
@@ -83,7 +89,8 @@ func topFields() []struct {
 
 // Spec 8.4: after a stop no field at or past it is filled. For every truncated telegram-hostile row the raw keys and
 // payload fields derived from a field at or after data_stop_path are absent, and data_undecided lists exactly the
-// mapped fields after it that are present by their flags (or whose flags word was not read).
+// mapped fields after it that are present by their flags (or whose flags word was not read), and the stopped field
+// itself when the stop is its own read (Task 8 review M2: 2009 and 2014 list message).
 func TestTelegramNoFieldAfterStop(t *testing.T) {
 	derived := map[string][]string{ // field -> the raw keys it gives
 		"flags": {"blob_flags"}, "flags2": {"blob_flags2"}, "id": {"id", "id_conflict"}, "via_bot_id": {"via_bot_id"},
@@ -123,7 +130,8 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 			if f.name == "media" && r.Payload["kind"] == "media" {
 				t.Errorf("%s: kind media, at or after the stop %q", key, stop)
 			}
-			if i > at && slices.Contains(mapped, f.name) && (f.bit < 0 || !flagsRead || flags>>f.bit&1 == 1) {
+			// the stopped field itself is undecided when the stop is its own read (path == head; review M2)
+			if (i > at || stop == head) && slices.Contains(mapped, f.name) && (f.bit < 0 || !flagsRead || flags>>f.bit&1 == 1) {
 				want = append(want, f.name)
 			}
 		}
@@ -137,6 +145,13 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 	}
 	if n != 10 {
 		t.Errorf("%d truncated rows, want 10 (H2: nine cuts and the string past the end)", n)
+	}
+	// review M3: a head spread over several fields (TL_messageForwarded_old's fwd_from.from_id, fwd_from.date) ends
+	// with its last field, and the stop's own head is never listed as after it
+	fwdOld := append(append(le32(0x05f46804), le32(5)...), le32(1000002)...) // id, fwd_from.from_id; cut in fwd_from.date
+	raw, _ := androidtelegram.DecodeBlob(fwdOld, androidtelegram.TypeMessage, parse.NewBudget(1<<20).View())
+	if raw["data_stop_path"] != "fwd_from.date" || raw["data_undecided"] != "from_id,peer_id,out,date,message,media" {
+		t.Errorf("TL_messageForwarded_old cut in fwd_from.date: stop %v, data_undecided %v", raw["data_stop_path"], raw["data_undecided"])
 	}
 }
 
@@ -265,35 +280,50 @@ func TestTelegramSameMidInTwoDialogsIsNotMerged(t *testing.T) {
 
 // Review Focus 4, 4I4-P7, F17: one store at the account-0 and the account-1 path in two jobs states each job's account
 // in its note and in every record's raw.account; the records are otherwise the same (equal locators), never merged.
+// An account<x> whose tail is not digits states "undecided"; away from the app path raw.account is absent (review M4).
 func TestTelegramTwoAccountsAreKeptApart(t *testing.T) {
 	files := fixtureFiles(t, "telegram-v159")
-	a0 := parseAt(t, remoteApp, files)
-	a1 := parseAt(t, remoteAccount1, files)
-	if a0.Err != nil || a1.Err != nil {
-		t.Fatalf("Parse errs %v, %v", a0.Err, a1.Err)
+	jobs := []struct {
+		remote, note, account string // account "": raw.account absent (placeOther, 4I4-P7)
+	}{
+		{remoteApp, "0", "0"},
+		{remoteAccount1, "1", "1"},
+		{"/data/data/org.telegram.messenger/files/accountX/cache4.db", "undecided", "undecided"}, // review M4
+		{remoteOther, "unknown", ""},
 	}
-	if a0.Notes["account"] != "0" || a1.Notes["account"] != "1" {
-		t.Errorf("notes account %q, %q", a0.Notes["account"], a1.Notes["account"])
-	}
-	strip := func(rs []records.Record, account string) []records.Record {
-		var out []records.Record
-		for _, r := range rs {
+	var first []string
+	for i, j := range jobs {
+		res := parseAt(t, j.remote, files)
+		if res.Err != nil {
+			t.Fatalf("%s: Parse err %v", j.remote, res.Err)
+		}
+		if res.Notes["account"] != j.note {
+			t.Errorf("%s: note account %q, want %q", j.remote, res.Notes["account"], j.note)
+		}
+		var msgs []records.Record
+		for _, r := range res.Records {
 			if r.Type != "message" {
 				continue
 			}
-			if got := rawOf(r)["account"]; got != account {
-				t.Errorf("%s: raw.account %v, want %q", r.Locator, got, account)
+			got, has := rawOf(r)["account"]
+			if (j.account == "" && has) || (j.account != "" && got != j.account) {
+				t.Errorf("%s %s: raw.account %v (present %v), want %q", j.remote, r.Locator, got, has, j.account)
 			}
 			delete(rawOf(r), "account")
 			r.ArtifactID, r.SourcePath = "", ""
-			out = append(out, r)
+			msgs = append(msgs, r)
 		}
-		return out
-	}
-	c0 := parsertest.CanonicalRecords(strip(a0.Records, "0"))
-	c1 := parsertest.CanonicalRecords(strip(a1.Records, "1"))
-	if len(c0) == 0 || !slices.Equal(c0, c1) {
-		t.Errorf("the two accounts' records differ beyond raw.account, artifact_id and source_path:\n%v\n%v", c0, c1)
+		c := parsertest.CanonicalRecords(msgs)
+		if i == 0 {
+			first = c
+			if len(c) == 0 {
+				t.Fatal("no message record")
+			}
+			continue
+		}
+		if !slices.Equal(c, first) {
+			t.Errorf("%s: the records differ beyond raw.account, artifact_id and source_path: %v vs %v", j.remote, c, first)
+		}
 	}
 }
 

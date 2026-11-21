@@ -1,10 +1,23 @@
 package androidtelegram_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/records"
 )
+
+// unk is the raw of a key cell that holds no usable value: listed under unknown_columns and absent as a raw key
+// (raw.date is the blob's own date: an unreadable date column gives no date_conflict instead).
+func unk(col, kind string) map[string]any {
+	raw := map[string]any{"unknown_columns": map[string]any{"messages_v2." + col: kind}}
+	if col == "date" {
+		raw["date_conflict"], raw["date_status"] = nil, nil
+	} else {
+		raw[col] = nil
+	}
+	return raw
+}
 
 // stateRow is one Go-built row and the values it must state: raw keys (nil: absent) and payload fields (nil: absent).
 type stateRow struct {
@@ -112,6 +125,21 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 			map[string]any{"guid_state": "undecided", "mid": nil, "unknown_columns": map[string]any{"messages_v2.mid": "null"}},
 			map[string]any{"guid": nil},
 		},
+		// review M5: a REAL, NaN or TEXT key cell is listed in unknown_columns, never kept and never read as a value
+		{"uid REAL", msgCells{mid: 22, uidCell: 1.5, data: in(22)}, unk("uid", "type-mismatch"), map[string]any{"thread": nil}},
+		{"uid NaN", msgCells{mid: 23, uidCell: math.NaN(), data: in(23)}, unk("uid", "type-mismatch"), map[string]any{"thread": nil}},
+		{"uid TEXT", msgCells{mid: 24, uidCell: "1000002", data: in(24)}, unk("uid", "type-mismatch"), map[string]any{"thread": nil}},
+		{"mid REAL", msgCells{midCell: 25.5, uid: ann, data: in(25)}, unk("mid", "type-mismatch"), map[string]any{"guid": nil}},
+		{"mid NaN", msgCells{midCell: math.NaN(), uid: ann, data: in(26)}, unk("mid", "type-mismatch"), map[string]any{"guid": nil}},
+		{"mid TEXT", msgCells{midCell: "27", uid: ann, data: in(27)}, unk("mid", "type-mismatch"), map[string]any{"guid": nil}},
+		{"date REAL", msgCells{mid: 28, uid: ann, date: float64(baseDate) + 0.5, data: in(28)}, unk("date", "type-mismatch"), nil},
+		{"date NaN", msgCells{mid: 29, uid: ann, date: math.NaN(), data: in(29)}, unk("date", "type-mismatch"), nil},
+		{"date TEXT", msgCells{mid: 30, uid: ann, date: "1700000000", data: in(30)}, unk("date", "type-mismatch"), nil},
+		{"date NULL", msgCells{mid: 31, uid: ann, date: nullCell{}, data: in(31)}, unk("date", "null"), nil},
+		{"out REAL", msgCells{mid: 32, uid: ann, out: 1.0, data: in(32)}, unk("out", "type-mismatch"), map[string]any{"direction": "unknown"}},
+		{"out NaN", msgCells{mid: 33, uid: ann, out: math.NaN(), data: in(33)}, unk("out", "type-mismatch"), map[string]any{"direction": "unknown"}},
+		{"out TEXT", msgCells{mid: 34, uid: ann, out: "0", data: in(34)}, unk("out", "type-mismatch"), map[string]any{"direction": "unknown"}},
+		{"out NULL", msgCells{mid: 35, uid: ann, out: nullCell{}, data: in(35)}, unk("out", "null"), map[string]any{"direction": "unknown"}},
 		{"secret", msgCells{mid: 15, uid: 1<<62 | 5, data: in(15)}, map[string]any{"dialog_class": "secret", "dialog_basis": nil}, nil},
 		{"folder", msgCells{mid: 16, uid: 1<<61 | 1, data: in(16)}, map[string]any{"dialog_class": "folder"}, nil},
 		{"negative", msgCells{mid: 17, uid: -2000001, data: in(17)}, map[string]any{"dialog_class": "negative"}, nil},

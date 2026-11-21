@@ -413,11 +413,22 @@ func mediaOf(v view, c tl.Constructor) string {
 
 // kindOf is the kind of spec 8.5 from the top constructor: TL_messageEmpty* unknown (raw.label_constructor);
 // TL_messageService* system when its action was reached (a phone-call action is Task 11's call; until then a system
-// message); another message text without media or with messageMediaEmpty, media with another media; a blob that did
-// not decode or stopped (truncated, malformed, cap, budget), or whose media is undecided, unknown.
+// message); another message text without media or with messageMediaEmpty, media with another media; a blob with no
+// known top, or whose media is undecided, unknown. A truncated, malformed, capped or refused blob takes the same rule
+// when its stop lies after media (or the action), and is unknown when the stop is at or before it (spec 8.4: the
+// fields before a stop are as partial; review I1).
 func kindOf(v view, c tl.Constructor, top bool, state string) string {
-	if !top || (state != stateDecoded && state != statePartial) {
+	if !top {
 		return message.KindUnknown
+	}
+	if state != stateDecoded && state != statePartial {
+		decided := "media"
+		if strings.HasPrefix(c.Name, "TL_messageService") {
+			decided = "action"
+		}
+		if !stopAfter(v, c, decided) {
+			return message.KindUnknown
+		}
 	}
 	switch {
 	case strings.HasPrefix(c.Name, "TL_messageEmpty"):

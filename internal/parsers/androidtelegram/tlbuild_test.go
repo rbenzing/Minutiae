@@ -90,6 +90,7 @@ const (
 type msgCells struct {
 	mid, uid                   int64
 	nullMid, nullUID           bool // store NULL in mid or uid
+	midCell, uidCell           any  // when set, the stored mid or uid cell (a REAL, a NaN, a TEXT)
 	read, send, date, out, ttl any
 	data                       any
 }
@@ -102,6 +103,12 @@ func (c msgCells) key() (mid, uid any) {
 	}
 	if c.nullUID {
 		uid = nil
+	}
+	if c.midCell != nil {
+		mid = c.midCell
+	}
+	if c.uidCell != nil {
+		uid = c.uidCell
 	}
 	return mid, uid
 }
@@ -125,9 +132,15 @@ func (c msgCells) v1Values() []any {
 	}
 }
 
+// nullCell asks orDefault for a stored NULL where a nil means the default.
+type nullCell struct{}
+
 func orDefault(v, def any) any {
-	if v == nil {
+	switch v.(type) {
+	case nil:
 		return def
+	case nullCell:
+		return nil
 	}
 	return v
 }
