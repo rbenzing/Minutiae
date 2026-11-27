@@ -27,6 +27,27 @@ nothing; `0x85849473` was a `full` row in 4I4, corrected here), `0x48a30254` (th
 widening, ruling T1c; its `settings:ThemeSettings` element `0x9c14984a` is read by hand at A-HEAD and not compared). The
 hand-read rows of plan 4I4b are in their own section at the end of this file.
 
+Plan 4I4c (Task 2, fetched again 2026-11-27 the same way, every file with the SHA-256 the per-pin tables below give):
+a row is identified by (type, ID) (design D4). `0x77608b83` is the one ID that is a row of two types,
+`TL_keyboard.KeyboardButtonRow` (`TL_keyboard.java:749`) and `TL_keyboard.KeyboardInlineButtonRow` (`:645`), and every
+check (the completeness, the membership, the pin conflicts) is per (type, ID). The table adds reply markup, polls,
+InputUser and their closure (629 rows). The types of `tgnet/tl/TL_keyboard.java` are spelled `TL_keyboard.<Name>`, inside
+that file too (design D2), and its `ButtonType` and `InlineButtonType` extend the class `ButtonTypeProto`
+(`TL_keyboard.java:18`, ruling T2b). An ID a type tests ahead of its switch is read as a case label is (`0x11c1a322`
+`TL_keyboardInlineButton`, `TL_keyboard.java:671`, ruling T2a). Each A-HEAD button reader tries the other button family
+first (`TL_keyboard.java:561-575`, `:735-742`, `:815-822`), so `0x77608b83` under both types and `0x19420af6` read a union
+`vec<A|B>` in the app's order; the reduction leaves them to the builder, like the classed id vectors (`vec<id32@user>`,
+`vec<id64@user>`, `VectorLegacy.java:28`, `:49`) of three PollResults rows, and the six are read by hand in their own
+section at the end of this file. The client-to-server forms stay opaque (design §10). At an older pin an inline button
+its single `KeyboardButton` switch reads is `in-table through the union`: A-HEAD reads it as
+`TL_keyboard.KeyboardInlineButton` wherever it reads a button, so no older ID is narrowed. `0x48a30254`
+TL_replyInlineMarkup_layer228 is no longer a pin conflict (the 4I4b statement above holds for 4I4b only): each older
+pin's report ends with the union check (every ID of that switch is a row of one of the two button types that reads the
+same bytes there and at A-HEAD; a client-to-server row stops the decode, it never misreads), so its older reading and
+that of `0x77608b83` are a compatible widening (union) (Q5, ruling T1c applied to a union). Two adjacent gates of one
+flag bit compare as the one gate that holds both (ruling T1a), and a classed id vector compares as the bare vector it
+is on the wire.
+
 ## Pins
 
 The three tags were peeled with `git ls-remote <repository> refs/tags/<tag> refs/tags/<tag>^{}` on 2026-11-20 (each
@@ -145,8 +166,8 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | 02994ffdf09a5701c40e0bdd868bb51a1b75216dc6d2fd60873e2d77f344fbd5 |
-| `facts.tsv` | 340699c1879411676d5f7acee05f88cf2feb64054cbbcc320622d774a67cbdd0 |
+| `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
+| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -625,9 +646,9 @@ Rows of `constructors.tsv` pinned here, against the source of this pin (the ID r
 | PollResults | 0x5755785a | TL_pollResults_layer108 | verified | TLRPC.java:4235 |  |
 | PollResults | 0x7adf2420 | TL_pollResults_layer223 | verified | TLRPC.java:4392 |  |
 | PollResults | 0xba7bb15e | TL_pollResults | verified | TLRPC.java:4336 |  |
-| PollResults | 0xbadcc1a3 | TL_pollResults_layer131 | verified | TLRPC.java:4295 |  |
-| PollResults | 0xc87024a2 | TL_pollResults_layer111 | verified | TLRPC.java:4262 |  |
-| PollResults | 0xdcb82ea3 | TL_pollResults_layer158 | verified | TLRPC.java:4437 |  |
+| PollResults | 0xbadcc1a3 | TL_pollResults_layer131 | MANUAL, read by hand at TLRPC.java:4308 | TLRPC.java:4295 | a statement on the stream of an unknown form |
+| PollResults | 0xc87024a2 | TL_pollResults_layer111 | MANUAL, read by hand at TLRPC.java:4275 | TLRPC.java:4262 | a statement on the stream of an unknown form |
+| PollResults | 0xdcb82ea3 | TL_pollResults_layer158 | MANUAL, read by hand at TLRPC.java:4450 | TLRPC.java:4437 | a statement on the stream of an unknown form |
 | ReplyMarkup | 0x3502758c | TL_replyKeyboardMarkup_layer129 | verified | TLRPC.java:10279 |  |
 | ReplyMarkup | 0x48a30254 | TL_replyInlineMarkup_layer228 | verified | TLRPC.java:10353 |  |
 | ReplyMarkup | 0x58f7fcb6 | TL_replyInlineMarkup_layer228_old | verified | TLRPC.java:10336 |  |
@@ -682,6 +703,100 @@ Rows of `constructors.tsv` pinned here, against the source of this pin (the ID r
 | TL_iv.Page | 0xd7a19d69 | TL_pageFull_layer67 | verified | TL_iv.java:178 |  |
 | TL_iv.Page | 0xf199a0a8 | TL_page_layer88 | verified | TL_iv.java:104 |  |
 | TL_iv.RichMessage | 0xbaf39d8b | RichMessage | verified | TL_iv.java:195 |  |
+| TL_keyboard.KeyboardButtonRow | 0x77608b83 | KeyboardButtonRow | MANUAL, read by hand at TL_keyboard.java:760 | TL_keyboard.java:749 | the deserializer of TL_keyboard.KeyboardButton tries KeyboardInlineButton first (TL_keyboard.java:815): a union in the app's order, read by hand (ruling T2a) |
+| TL_keyboard.KeyboardInlineButtonRow | 0x19420af6 | TL_keyboardInlineButtonRow | MANUAL, read by hand at TL_keyboard.java:636 | TL_keyboard.java:632 | the deserializer of TL_keyboard.KeyboardInlineButton tries KeyboardButton first (TL_keyboard.java:735): a union in the app's order, read by hand (ruling T2a) |
+| TL_keyboard.KeyboardInlineButtonRow | 0x77608b83 | TL_keyboardInlineButtonRow_layer228 | MANUAL, read by hand at TL_keyboard.java:649 | TL_keyboard.java:645 | a statement on the stream of an unknown form |
+| TL_keyboard.KeyboardButton | 0x02b78156 | TL_inputKeyboardButtonRequestPeer_layer228 | verified | TL_keyboard.java:1803 |  |
+| TL_keyboard.KeyboardButton | 0x0d0b468c | TL_keyboardButtonRequestPeer_layer168 | verified | TL_keyboard.java:1631 |  |
+| TL_keyboard.KeyboardButton | 0x2f67a72f | TL_keyboardButton | verified | TL_keyboard.java:831 |  |
+| TL_keyboard.KeyboardButton | 0x417efd8f | TL_keyboardButtonRequestPhone_layer228 | verified | TL_keyboard.java:964 |  |
+| TL_keyboard.KeyboardButton | 0x53d7bfd8 | TL_keyboardButtonRequestPeer_layer223 | verified | TL_keyboard.java:1612 |  |
+| TL_keyboard.KeyboardButton | 0x5b0f15f5 | TL_keyboardButtonRequestPeer_layer228 | verified | TL_keyboard.java:1578 |  |
+| TL_keyboard.KeyboardButton | 0x7a11d782 | TL_keyboardButtonRequestPoll_layer228 | verified | TL_keyboard.java:1259 |  |
+| TL_keyboard.KeyboardButton | 0x7d170cff | TL_keyboardButton_layer228 | verified | TL_keyboard.java:927 |  |
+| TL_keyboard.KeyboardButton | 0xa0c0505c | TL_keyboardButtonSimpleWebView_layer223 | verified | TL_keyboard.java:1563 |  |
+| TL_keyboard.KeyboardButton | 0xa2fa4880 | TL_keyboardButton_layer223 | verified | TL_keyboard.java:950 |  |
+| TL_keyboard.KeyboardButton | 0xaa40f94d | TL_keyboardButtonRequestGeoLocation_layer228 | verified | TL_keyboard.java:1083 |  |
+| TL_keyboard.KeyboardButton | 0xb16a6c29 | TL_keyboardButtonRequestPhone_layer223 | verified | TL_keyboard.java:987 |  |
+| TL_keyboard.KeyboardButton | 0xbbc7515d | TL_keyboardButtonRequestPoll_layer223 | verified | TL_keyboard.java:1294 |  |
+| TL_keyboard.KeyboardButton | 0xc9662d05 | TL_inputKeyboardButtonRequestPeer_layer221 | verified | TL_keyboard.java:1846 |  |
+| TL_keyboard.KeyboardButton | 0xe15c4370 | TL_keyboardButtonSimpleWebView_layer228 | verified | TL_keyboard.java:1533 |  |
+| TL_keyboard.KeyboardButton | 0xfc796b3f | TL_keyboardButtonRequestGeoLocation_layer223 | verified | TL_keyboard.java:1106 |  |
+| TL_keyboard.KeyboardInlineButton | 0x0568a748 | TL_keyboardButtonSwitchInline_layer157 | verified | TL_keyboard.java:1783 |  |
+| TL_keyboard.KeyboardInlineButton | 0x10b78d29 | TL_keyboardButtonUrlAuth_layer223 | verified | TL_keyboard.java:1160 |  |
+| TL_keyboard.KeyboardInlineButton | 0x11c1a322 | TL_keyboardInlineButton | verified | TL_keyboard.java:865 |  |
+| TL_keyboard.KeyboardInlineButton | 0x13767230 | TL_keyboardButtonWebView_layer223 | verified | TL_keyboard.java:1518 |  |
+| TL_keyboard.KeyboardInlineButton | 0x258aff05 | TL_keyboardButtonUrl_layer223 | verified | TL_keyboard.java:1068 |  |
+| TL_keyboard.KeyboardInlineButton | 0x308660c1 | TL_keyboardButtonUserProfile_layer223 | verified | TL_keyboard.java:1473 |  |
+| TL_keyboard.KeyboardInlineButton | 0x35bbdb6b | TL_keyboardButtonCallback_layer223 | verified | TL_keyboard.java:1681 |  |
+| TL_keyboard.KeyboardInlineButton | 0x3fa53905 | TL_keyboardButtonBuy_layer228 | verified | TL_keyboard.java:1316 |  |
+| TL_keyboard.KeyboardInlineButton | 0x50f41ccf | TL_keyboardButtonGame_layer223 | verified | TL_keyboard.java:1024 |  |
+| TL_keyboard.KeyboardInlineButton | 0x68013e72 | TL_inputKeyboardButtonUrlAuth_layer228 | verified | TL_keyboard.java:1186 |  |
+| TL_keyboard.KeyboardInlineButton | 0x683a5e46 | TL_keyboardButtonCallback_layer117 | verified | TL_keyboard.java:1701 |  |
+| TL_keyboard.KeyboardInlineButton | 0x75d2698e | TL_keyboardButtonCopy_layer223 | verified | TL_keyboard.java:1383 |  |
+| TL_keyboard.KeyboardInlineButton | 0x7d5e07c7 | TL_inputKeyboardButtonUserProfile_layer228 | verified | TL_keyboard.java:1398 |  |
+| TL_keyboard.KeyboardInlineButton | 0x89c590f9 | TL_keyboardButtonGame_layer228 | verified | TL_keyboard.java:1001 |  |
+| TL_keyboard.KeyboardInlineButton | 0x93b9fbb5 | TL_keyboardButtonSwitchInline_layer223 | verified | TL_keyboard.java:1756 |  |
+| TL_keyboard.KeyboardInlineButton | 0x991399fc | TL_keyboardButtonSwitchInline_layer228 | verified | TL_keyboard.java:1716 |  |
+| TL_keyboard.KeyboardInlineButton | 0x9c1c0c55 | TL_keyboardInlineButton_legacy | verified | TL_keyboard.java:899 |  |
+| TL_keyboard.KeyboardInlineButton | 0xafd93fbb | TL_keyboardButtonBuy_layer223 | verified | TL_keyboard.java:1339 |  |
+| TL_keyboard.KeyboardInlineButton | 0xbcc4af10 | TL_keyboardButtonCopy_layer228 | verified | TL_keyboard.java:1353 |  |
+| TL_keyboard.KeyboardInlineButton | 0xc0fd5d09 | TL_keyboardButtonUserProfile_layer228 | verified | TL_keyboard.java:1443 |  |
+| TL_keyboard.KeyboardInlineButton | 0xd02e7fd4 | TL_inputKeyboardButtonUrlAuth_layer223 | verified | TL_keyboard.java:1229 |  |
+| TL_keyboard.KeyboardInlineButton | 0xd80c25ec | TL_keyboardButtonUrl_layer228 | verified | TL_keyboard.java:1038 |  |
+| TL_keyboard.KeyboardInlineButton | 0xe62bc960 | TL_keyboardButtonCallback_layer228 | verified | TL_keyboard.java:1648 |  |
+| TL_keyboard.KeyboardInlineButton | 0xe846b1a0 | TL_keyboardButtonWebView_layer228 | verified | TL_keyboard.java:1488 |  |
+| TL_keyboard.KeyboardInlineButton | 0xe988037b | TL_inputKeyboardButtonUserProfile_layer223 | verified | TL_keyboard.java:1428 |  |
+| TL_keyboard.KeyboardInlineButton | 0xf51006f9 | TL_keyboardButtonUrlAuth_layer228 | verified | TL_keyboard.java:1120 |  |
+| TL_keyboard.KeyboardButtonStyle | 0x4fdd3430 | KeyboardButtonStyle | verified | TL_keyboard.java:520 |  |
+| TL_keyboard.ButtonType | 0x3fe268fe | TL_inputButtonTypeRequestPeer | verified | TL_keyboard.java:142 |  |
+| TL_keyboard.ButtonType | 0x4f58a237 | TL_buttonTypeRequestPeer | verified | TL_keyboard.java:103 |  |
+| TL_keyboard.ButtonType | 0x9beee140 | TL_buttonTypeRequestGeoLocation | verified | TL_keyboard.java:70 |  |
+| TL_keyboard.ButtonType | 0xaacfff84 | TL_buttonTypeRequestPoll | verified | TL_keyboard.java:81 |  |
+| TL_keyboard.ButtonType | 0xc01a597a | TL_buttonTypeSimpleWebView | verified | TL_keyboard.java:127 |  |
+| TL_keyboard.ButtonType | 0xc9dd90e9 | TL_buttonTypeDefault | verified | TL_keyboard.java:48 |  |
+| TL_keyboard.ButtonType | 0xdf3d36f9 | TL_buttonTypeRequestPhone | verified | TL_keyboard.java:59 |  |
+| TL_keyboard.InlineButtonType | 0x2955bc38 | TL_inlineButtonTypeCallback | verified | TL_keyboard.java:274 |  |
+| TL_keyboard.InlineButtonType | 0x3bcab5b4 | TL_inlineButtonTypeWebView | verified | TL_keyboard.java:259 |  |
+| TL_keyboard.InlineButtonType | 0x3fa33fcf | TL_inlineButtonTypeUserProfile | verified | TL_keyboard.java:346 |  |
+| TL_keyboard.InlineButtonType | 0x48bad7a5 | TL_inlineButtonTypeBuy | verified | TL_keyboard.java:306 |  |
+| TL_keyboard.InlineButtonType | 0x53f3ce5a | TL_inputInlineButtonTypeUserProfile | verified | TL_keyboard.java:424 |  |
+| TL_keyboard.InlineButtonType | 0x5cd3709d | TL_inlineButtonTypeGame | verified | TL_keyboard.java:295 |  |
+| TL_keyboard.InlineButtonType | 0x93773ff5 | TL_inlineButtonTypeSwitchInline | verified | TL_keyboard.java:317 |  |
+| TL_keyboard.InlineButtonType | 0x9961bcb4 | TL_inputInlineButtonTypeUrlAuth | verified | TL_keyboard.java:387 |  |
+| TL_keyboard.InlineButtonType | 0xa438619d | TL_inlineButtonTypeDisabled | verified | TL_keyboard.java:376 |  |
+| TL_keyboard.InlineButtonType | 0xb41d3272 | TL_inlineButtonTypeCopy | verified | TL_keyboard.java:361 |  |
+| TL_keyboard.InlineButtonType | 0xbfd02da2 | TL_inlineButtonTypeUrlAuth | verified | TL_keyboard.java:230 |  |
+| TL_keyboard.InlineButtonType | 0xeca4f8d4 | TL_inlineButtonTypeUrl | verified | TL_keyboard.java:215 |  |
+| RequestPeerType | 0x339bef6c | TL_requestPeerTypeBroadcast | verified | TLRPC.java:62646 |  |
+| RequestPeerType | 0x3e81e078 | TL_requestPeerTypeCreateBot | verified | TLRPC.java:62682 |  |
+| RequestPeerType | 0x5f3b8a00 | TL_requestPeerTypeUser | verified | TLRPC.java:62571 |  |
+| RequestPeerType | 0xc9f06e1b | TL_requestPeerTypeChat | verified | TLRPC.java:62601 |  |
+| TL_chatAdminRights | 0x5fb224d5 | TL_chatAdminRights | verified | TLRPC.java:4104 |  |
+| InputPeer | 0x179be863 | TL_inputPeerChat_layer131 | verified | TLRPC.java:51022 |  |
+| InputPeer | 0x17bae2e6 | TL_inputPeerUserFromMessage_layer131 | verified | TLRPC.java:51135 |  |
+| InputPeer | 0x20adaef8 | TL_inputPeerChannel_layer131 | verified | TLRPC.java:51103 |  |
+| InputPeer | 0x27bcbbfc | TL_inputPeerChannel | verified | TLRPC.java:51035 |  |
+| InputPeer | 0x35a95cb9 | TL_inputPeerChat | verified | TLRPC.java:51090 |  |
+| InputPeer | 0x7b8e7de6 | TL_inputPeerUser_layer131 | verified | TLRPC.java:51050 |  |
+| InputPeer | 0x7da07ec9 | TL_inputPeerSelf | verified | TLRPC.java:50982 |  |
+| InputPeer | 0x7f3b18ea | TL_inputPeerEmpty | verified | TLRPC.java:51065 |  |
+| InputPeer | 0x9c95f7bb | TL_inputPeerChannelFromMessage_layer131 | verified | TLRPC.java:51118 |  |
+| InputPeer | 0xa87b0a1c | TL_inputPeerUserFromMessage | verified | TLRPC.java:50990 |  |
+| InputPeer | 0xbd2a0840 | TL_inputPeerChannelFromMessage | verified | TLRPC.java:51073 |  |
+| InputPeer | 0xdde8a54c | TL_inputPeerUser | verified | TLRPC.java:51007 |  |
+| InlineQueryPeerType | 0x0e3b2d0c | TL_inlineQueryPeerTypeBotPM | verified | TLRPC.java:27274 |  |
+| InlineQueryPeerType | 0x3081ed9d | TL_inlineQueryPeerTypeSameBotPM | verified | TLRPC.java:27290 |  |
+| InlineQueryPeerType | 0x5ec4be43 | TL_inlineQueryPeerTypeMegagroup | verified | TLRPC.java:27282 |  |
+| InlineQueryPeerType | 0x6334ee9a | TL_inlineQueryPeerTypeBroadcast | verified | TLRPC.java:27250 |  |
+| InlineQueryPeerType | 0x833c0fac | TL_inlineQueryPeerTypePM | verified | TLRPC.java:27266 |  |
+| InlineQueryPeerType | 0xd766c50a | TL_inlineQueryPeerTypeChat | verified | TLRPC.java:27258 |  |
+| PollAnswer | 0x199fed96 | TL_inputPollAnswer | verified | TLRPC.java:2929 |  |
+| PollAnswer | 0x4b7d786a | TL_pollAnswer | verified | TLRPC.java:2951 |  |
+| PollAnswer | 0x6ca9c2e9 | TL_pollAnswer_layer178 | verified | TLRPC.java:2999 |  |
+| PollAnswer | 0xff16e2ca | TL_pollAnswer_layer223 | verified | TLRPC.java:2984 |  |
+| PollAnswerVoters | 0x3645230a | TL_pollAnswerVoters | verified | TLRPC.java:4636 |  |
+| PollAnswerVoters | 0x3b6ddad2 | TL_pollAnswerVoters_layer223 | verified | TLRPC.java:4663 |  |
 
 Completeness: every ID the switch of each type reads at this pin is a row.
 
@@ -729,10 +844,23 @@ Completeness: every ID the switch of each type reads at this pin is a row.
 | TL_iv.RichText | 32 | 32 | complete |
 | TL_iv.Page | 7 | 7 | complete |
 | TL_iv.RichMessage | 1 | 1 | complete |
+| TL_keyboard.KeyboardButtonRow | 1 | 1 | complete |
+| TL_keyboard.KeyboardInlineButtonRow | 2 | 2 | complete |
+| TL_keyboard.KeyboardButton | 16 | 16 | complete |
+| TL_keyboard.KeyboardInlineButton | 26 | 26 | complete |
+| TL_keyboard.KeyboardButtonStyle | 1 | 1 | complete |
+| TL_keyboard.ButtonType | 7 | 7 | complete |
+| TL_keyboard.InlineButtonType | 12 | 12 | complete |
+| RequestPeerType | 4 | 4 | complete |
+| TL_chatAdminRights | 1 | 1 | complete |
+| InputPeer | 12 | 12 | complete |
+| InlineQueryPeerType | 6 | 6 | complete |
+| PollAnswer | 4 | 4 | complete |
+| PollAnswerVoters | 2 | 2 | complete |
 
 Closure: every object type a `full` or `prefix` row names is a type of the table (design D3).
 
-Closed: 42 types, none named outside them.
+Closed: 55 types, none named outside them.
 
 
 ## A-11.4.2 (fb2e545101f41303f1e2712de2e7611a9335f1c3)
@@ -767,8 +895,8 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | 02994ffdf09a5701c40e0bdd868bb51a1b75216dc6d2fd60873e2d77f344fbd5 |
-| `facts.tsv` | 340699c1879411676d5f7acee05f88cf2feb64054cbbcc320622d774a67cbdd0 |
+| `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
+| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -1201,8 +1329,59 @@ Membership: every ID the pinned types' switches read at this pin is a row of `co
 | A-11.4.2 | TL_iv.Page | 0xae891bec | in-table | TL_page_layer110 (TLRPC.java:20788) |
 | A-11.4.2 | TL_iv.Page | 0xd7a19d69 | in-table | TL_pageFull_layer67 (TLRPC.java:20638) |
 | A-11.4.2 | TL_iv.RichMessage | - | type not defined at this pin | - |
+| A-11.4.2 | TL_keyboard.KeyboardButtonRow | 0x77608b83 | in-table | TL_keyboardButtonRow (TLRPC.java:22176) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButtonRow | - | type not defined at this pin | - |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x0568a748 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonSwitchInline_layer157 (TLRPC.java:21235) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x0d0b468c | in-table | TL_keyboardButtonRequestPeer_layer168 (TLRPC.java:75213) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x10b78d29 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUrlAuth (TLRPC.java:21312) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x13767230 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonWebView (TLRPC.java:75053) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x258aff05 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUrl (TLRPC.java:21219) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x308660c1 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUserProfile (TLRPC.java:21417) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x35bbdb6b | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonCallback (TLRPC.java:21432) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x50f41ccf | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonGame (TLRPC.java:21205) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x53d7bfd8 | in-table | TL_keyboardButtonRequestPeer (TLRPC.java:75230) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x683a5e46 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonCallback_layer117 (TLRPC.java:21452) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x75d2698e | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonCopy (TLRPC.java:75252) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x93b9fbb5 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonSwitchInline (TLRPC.java:21254) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xa0c0505c | in-table | TL_keyboardButtonSimpleWebView (TLRPC.java:75730) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xa2fa4880 | in-table | TL_keyboardButton (TLRPC.java:21468) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xafd93fbb | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonBuy (TLRPC.java:21388) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xb16a6c29 | in-table | TL_keyboardButtonRequestPhone (TLRPC.java:21191) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xbbc7515d | in-table | TL_keyboardButtonRequestPoll (TLRPC.java:21366) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xd02e7fd4 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_inputKeyboardButtonUrlAuth (TLRPC.java:21338) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xe988037b | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_inputKeyboardButtonUserProfile (TLRPC.java:21402) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xfc796b3f | in-table | TL_keyboardButtonRequestGeoLocation (TLRPC.java:21298) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | - | type not defined at this pin | - |
+| A-11.4.2 | TL_keyboard.KeyboardButtonStyle | - | type not defined at this pin | - |
+| A-11.4.2 | TL_keyboard.ButtonType | - | type not defined at this pin | - |
+| A-11.4.2 | TL_keyboard.InlineButtonType | - | type not defined at this pin | - |
+| A-11.4.2 | RequestPeerType | 0x339bef6c | in-table | TL_requestPeerTypeBroadcast (TLRPC.java:75177) |
+| A-11.4.2 | RequestPeerType | 0x5f3b8a00 | in-table | TL_requestPeerTypeUser (TLRPC.java:75102) |
+| A-11.4.2 | RequestPeerType | 0xc9f06e1b | in-table | TL_requestPeerTypeChat (TLRPC.java:75132) |
+| A-11.4.2 | TL_chatAdminRights | 0x5fb224d5 | in-table | TL_chatAdminRights (TLRPC.java:4574) |
+| A-11.4.2 | InputPeer | 0x179be863 | in-table | TL_inputPeerChat_layer131 (TLRPC.java:58257) |
+| A-11.4.2 | InputPeer | 0x17bae2e6 | in-table | TL_inputPeerUserFromMessage_layer131 (TLRPC.java:58378) |
+| A-11.4.2 | InputPeer | 0x20adaef8 | in-table | TL_inputPeerChannel_layer131 (TLRPC.java:58344) |
+| A-11.4.2 | InputPeer | 0x27bcbbfc | in-table | TL_inputPeerChannel (TLRPC.java:58271) |
+| A-11.4.2 | InputPeer | 0x35a95cb9 | in-table | TL_inputPeerChat (TLRPC.java:58330) |
+| A-11.4.2 | InputPeer | 0x7b8e7de6 | in-table | TL_inputPeerUser_layer131 (TLRPC.java:58287) |
+| A-11.4.2 | InputPeer | 0x7da07ec9 | in-table | TL_inputPeerSelf (TLRPC.java:58214) |
+| A-11.4.2 | InputPeer | 0x7f3b18ea | in-table | TL_inputPeerEmpty (TLRPC.java:58303) |
+| A-11.4.2 | InputPeer | 0x9c95f7bb | in-table | TL_inputPeerChannelFromMessage_layer131 (TLRPC.java:58360) |
+| A-11.4.2 | InputPeer | 0xa87b0a1c | in-table | TL_inputPeerUserFromMessage (TLRPC.java:58223) |
+| A-11.4.2 | InputPeer | 0xbd2a0840 | in-table | TL_inputPeerChannelFromMessage (TLRPC.java:58312) |
+| A-11.4.2 | InputPeer | 0xdde8a54c | in-table | TL_inputPeerUser (TLRPC.java:58241) |
+| A-11.4.2 | InlineQueryPeerType | 0x0e3b2d0c | in-table | TL_inlineQueryPeerTypeBotPM (TLRPC.java:30473) |
+| A-11.4.2 | InlineQueryPeerType | 0x3081ed9d | in-table | TL_inlineQueryPeerTypeSameBotPM (TLRPC.java:30489) |
+| A-11.4.2 | InlineQueryPeerType | 0x5ec4be43 | in-table | TL_inlineQueryPeerTypeMegagroup (TLRPC.java:30481) |
+| A-11.4.2 | InlineQueryPeerType | 0x6334ee9a | in-table | TL_inlineQueryPeerTypeBroadcast (TLRPC.java:30449) |
+| A-11.4.2 | InlineQueryPeerType | 0x833c0fac | in-table | TL_inlineQueryPeerTypePM (TLRPC.java:30465) |
+| A-11.4.2 | InlineQueryPeerType | 0xd766c50a | in-table | TL_inlineQueryPeerTypeChat (TLRPC.java:30457) |
+| A-11.4.2 | PollAnswer | 0x6ca9c2e9 | in-table | TL_pollAnswer_layer178 (TLRPC.java:3067) |
+| A-11.4.2 | PollAnswer | 0xff16e2ca | in-table | TL_pollAnswer (TLRPC.java:3052) |
+| A-11.4.2 | PollAnswerVoters | 0x3b6ddad2 | in-table | TL_pollAnswerVoters (TLRPC.java:5299) |
 
-Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read.
+Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
 
 | Pin | Type | ID | Verdict | Class at this pin |
 |---|---|---|---|---|
@@ -1589,7 +1768,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | A-11.4.2 | PollResults | 0xc87024a2 | membership-only (MANUAL at TLRPC.java:4771) | TL_pollResults_layer111 (TLRPC.java:4733) |
 | A-11.4.2 | PollResults | 0xdcb82ea3 | membership-only (MANUAL at TLRPC.java:5044) | TL_pollResults_layer158 (TLRPC.java:5006) |
 | A-11.4.2 | ReplyMarkup | 0x3502758c | equal | TL_replyKeyboardMarkup_layer129 (TLRPC.java:12018) |
-| A-11.4.2 | ReplyMarkup | 0x48a30254 | CONFLICT (opaque; pin conflict: rows:vec<KeyboardButtonRow> at TLRPC.java:12077, rows:vec<KeyboardInlineButtonRow> at TLRPC.java:10353) | TL_replyInlineMarkup (TLRPC.java:12077) |
+| A-11.4.2 | ReplyMarkup | 0x48a30254 | compatible widening (union) (vec<TL_keyboard.KeyboardButtonRow> read as vec<TL_keyboard.KeyboardInlineButtonRow>: the union check below holds at this pin) | TL_replyInlineMarkup (TLRPC.java:12077) |
 | A-11.4.2 | ReplyMarkup | 0x85dd99d1 | equal | TL_replyKeyboardMarkup (TLRPC.java:11929) |
 | A-11.4.2 | ReplyMarkup | 0x86b40b08 | equal | TL_replyKeyboardForceReply (TLRPC.java:11994) |
 | A-11.4.2 | ReplyMarkup | 0xa03e5b85 | equal | TL_replyKeyboardHide (TLRPC.java:11978) |
@@ -1620,8 +1799,68 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | A-11.4.2 | TL_iv.Page | 0x98657f0d | membership-only (MANUAL at TLRPC.java:20905) | TL_page (TLRPC.java:20871) |
 | A-11.4.2 | TL_iv.Page | 0xae891bec | membership-only (MANUAL at TLRPC.java:20821) | TL_page_layer110 (TLRPC.java:20788) |
 | A-11.4.2 | TL_iv.Page | 0xd7a19d69 | membership-only (MANUAL at TLRPC.java:20667) | TL_pageFull_layer67 (TLRPC.java:20638) |
+| A-11.4.2 | TL_keyboard.KeyboardButtonRow | 0x77608b83 | compatible widening (union) (vec<TL_keyboard.KeyboardButton> read as vec<TL_keyboard.KeyboardInlineButton\|TL_keyboard.KeyboardButton>: the union check below holds at this pin) | TL_keyboardButtonRow (TLRPC.java:22176) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x0d0b468c | equal | TL_keyboardButtonRequestPeer_layer168 (TLRPC.java:75213) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x53d7bfd8 | equal | TL_keyboardButtonRequestPeer (TLRPC.java:75230) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xa0c0505c | equal | TL_keyboardButtonSimpleWebView (TLRPC.java:75730) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xa2fa4880 | equal | TL_keyboardButton (TLRPC.java:21468) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xb16a6c29 | equal | TL_keyboardButtonRequestPhone (TLRPC.java:21191) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xbbc7515d | equal | TL_keyboardButtonRequestPoll (TLRPC.java:21366) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xfc796b3f | equal | TL_keyboardButtonRequestGeoLocation (TLRPC.java:21298) |
+| A-11.4.2 | RequestPeerType | 0x339bef6c | equal | TL_requestPeerTypeBroadcast (TLRPC.java:75177) |
+| A-11.4.2 | RequestPeerType | 0x5f3b8a00 | equal | TL_requestPeerTypeUser (TLRPC.java:75102) |
+| A-11.4.2 | RequestPeerType | 0xc9f06e1b | equal | TL_requestPeerTypeChat (TLRPC.java:75132) |
+| A-11.4.2 | TL_chatAdminRights | 0x5fb224d5 | equal | TL_chatAdminRights (TLRPC.java:4574) |
+| A-11.4.2 | InputPeer | 0x179be863 | equal | TL_inputPeerChat_layer131 (TLRPC.java:58257) |
+| A-11.4.2 | InputPeer | 0x17bae2e6 | equal | TL_inputPeerUserFromMessage_layer131 (TLRPC.java:58378) |
+| A-11.4.2 | InputPeer | 0x20adaef8 | equal | TL_inputPeerChannel_layer131 (TLRPC.java:58344) |
+| A-11.4.2 | InputPeer | 0x27bcbbfc | equal | TL_inputPeerChannel (TLRPC.java:58271) |
+| A-11.4.2 | InputPeer | 0x35a95cb9 | equal | TL_inputPeerChat (TLRPC.java:58330) |
+| A-11.4.2 | InputPeer | 0x7b8e7de6 | equal | TL_inputPeerUser_layer131 (TLRPC.java:58287) |
+| A-11.4.2 | InputPeer | 0x7da07ec9 | equal | TL_inputPeerSelf (TLRPC.java:58214) |
+| A-11.4.2 | InputPeer | 0x7f3b18ea | equal | TL_inputPeerEmpty (TLRPC.java:58303) |
+| A-11.4.2 | InputPeer | 0x9c95f7bb | equal | TL_inputPeerChannelFromMessage_layer131 (TLRPC.java:58360) |
+| A-11.4.2 | InputPeer | 0xa87b0a1c | equal | TL_inputPeerUserFromMessage (TLRPC.java:58223) |
+| A-11.4.2 | InputPeer | 0xbd2a0840 | equal | TL_inputPeerChannelFromMessage (TLRPC.java:58312) |
+| A-11.4.2 | InputPeer | 0xdde8a54c | equal | TL_inputPeerUser (TLRPC.java:58241) |
+| A-11.4.2 | InlineQueryPeerType | 0x0e3b2d0c | equal | TL_inlineQueryPeerTypeBotPM (TLRPC.java:30473) |
+| A-11.4.2 | InlineQueryPeerType | 0x3081ed9d | equal | TL_inlineQueryPeerTypeSameBotPM (TLRPC.java:30489) |
+| A-11.4.2 | InlineQueryPeerType | 0x5ec4be43 | equal | TL_inlineQueryPeerTypeMegagroup (TLRPC.java:30481) |
+| A-11.4.2 | InlineQueryPeerType | 0x6334ee9a | equal | TL_inlineQueryPeerTypeBroadcast (TLRPC.java:30449) |
+| A-11.4.2 | InlineQueryPeerType | 0x833c0fac | equal | TL_inlineQueryPeerTypePM (TLRPC.java:30465) |
+| A-11.4.2 | InlineQueryPeerType | 0xd766c50a | equal | TL_inlineQueryPeerTypeChat (TLRPC.java:30457) |
+| A-11.4.2 | PollAnswer | 0x6ca9c2e9 | equal | TL_pollAnswer_layer178 (TLRPC.java:3067) |
+| A-11.4.2 | PollAnswer | 0xff16e2ca | equal | TL_pollAnswer (TLRPC.java:3052) |
+| A-11.4.2 | PollAnswerVoters | 0x3b6ddad2 | equal | TL_pollAnswerVoters (TLRPC.java:5299) |
 
-Compared 370 rows; membership-only 44
+Compared 403 rows; membership-only 44
+
+Union check (Q5, ruling T2a): every button ID of this pin's single `KeyboardButton` switch, read by the A-HEAD union `TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton` (the first type holding the ID): `equal` (same bytes at both pins), `opaque at A-HEAD` (a stop, not a misread) or `CONFLICT`.
+
+| Pin | Union element | ID | Verdict | Class at this pin |
+|---|---|---|---|---|
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x0568a748 | equal (TL_keyboardButtonSwitchInline_layer157) | TL_keyboardButtonSwitchInline_layer157 (TLRPC.java:21235) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x0d0b468c | equal (TL_keyboardButtonRequestPeer_layer168) | TL_keyboardButtonRequestPeer_layer168 (TLRPC.java:75213) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x10b78d29 | equal (TL_keyboardButtonUrlAuth_layer223) | TL_keyboardButtonUrlAuth (TLRPC.java:21312) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x13767230 | equal (TL_keyboardButtonWebView_layer223) | TL_keyboardButtonWebView (TLRPC.java:75053) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x258aff05 | equal (TL_keyboardButtonUrl_layer223) | TL_keyboardButtonUrl (TLRPC.java:21219) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x308660c1 | equal (TL_keyboardButtonUserProfile_layer223) | TL_keyboardButtonUserProfile (TLRPC.java:21417) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x35bbdb6b | equal (TL_keyboardButtonCallback_layer223) | TL_keyboardButtonCallback (TLRPC.java:21432) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x50f41ccf | equal (TL_keyboardButtonGame_layer223) | TL_keyboardButtonGame (TLRPC.java:21205) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0x53d7bfd8 | equal (TL_keyboardButtonRequestPeer_layer223) | TL_keyboardButtonRequestPeer (TLRPC.java:75230) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x683a5e46 | equal (TL_keyboardButtonCallback_layer117) | TL_keyboardButtonCallback_layer117 (TLRPC.java:21452) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x75d2698e | equal (TL_keyboardButtonCopy_layer223) | TL_keyboardButtonCopy (TLRPC.java:75252) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0x93b9fbb5 | equal (TL_keyboardButtonSwitchInline_layer223) | TL_keyboardButtonSwitchInline (TLRPC.java:21254) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xa0c0505c | equal (TL_keyboardButtonSimpleWebView_layer223) | TL_keyboardButtonSimpleWebView (TLRPC.java:75730) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xa2fa4880 | equal (TL_keyboardButton_layer223) | TL_keyboardButton (TLRPC.java:21468) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0xafd93fbb | equal (TL_keyboardButtonBuy_layer223) | TL_keyboardButtonBuy (TLRPC.java:21388) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xb16a6c29 | equal (TL_keyboardButtonRequestPhone_layer223) | TL_keyboardButtonRequestPhone (TLRPC.java:21191) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xbbc7515d | equal (TL_keyboardButtonRequestPoll_layer223) | TL_keyboardButtonRequestPoll (TLRPC.java:21366) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0xd02e7fd4 | opaque at A-HEAD (TL_inputKeyboardButtonUrlAuth_layer223): a stop, not a misread | TL_inputKeyboardButtonUrlAuth (TLRPC.java:21338) |
+| A-11.4.2 | TL_keyboard.KeyboardInlineButton | 0xe988037b | opaque at A-HEAD (TL_inputKeyboardButtonUserProfile_layer223): a stop, not a misread | TL_inputKeyboardButtonUserProfile (TLRPC.java:21402) |
+| A-11.4.2 | TL_keyboard.KeyboardButton | 0xfc796b3f | equal (TL_keyboardButtonRequestGeoLocation_layer223) | TL_keyboardButtonRequestGeoLocation (TLRPC.java:21298) |
+
+Union check at A-11.4.2: holds, every older inline keyboard is readable by the A-HEAD reading (a compatible widening).
 
 
 ## release-8.1.1_2431 (58aded63e9713ef796d76f3e29a60a5254f803b4)
@@ -1646,8 +1885,8 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | 02994ffdf09a5701c40e0bdd868bb51a1b75216dc6d2fd60873e2d77f344fbd5 |
-| `facts.tsv` | 340699c1879411676d5f7acee05f88cf2feb64054cbbcc320622d774a67cbdd0 |
+| `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
+| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -1969,8 +2208,43 @@ Membership: every ID the pinned types' switches read at this pin is a row of `co
 | release-8.1.1_2431 | TL_iv.Page | 0xae891bec | in-table | TL_page_layer110 (TLRPC.java:14828) |
 | release-8.1.1_2431 | TL_iv.Page | 0xd7a19d69 | in-table | TL_pageFull_layer67 (TLRPC.java:14678) |
 | release-8.1.1_2431 | TL_iv.RichMessage | - | type not defined at this pin | - |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButtonRow | 0x77608b83 | in-table | TL_keyboardButtonRow (TLRPC.java:15978) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButtonRow | - | type not defined at this pin | - |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0x0568a748 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonSwitchInline (TLRPC.java:15248) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0x10b78d29 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUrlAuth (TLRPC.java:15282) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0x258aff05 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUrl (TLRPC.java:15232) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0x35bbdb6b | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonCallback (TLRPC.java:15372) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0x50f41ccf | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonGame (TLRPC.java:15218) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0x683a5e46 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonCallback_layer117 (TLRPC.java:15392) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xa2fa4880 | in-table | TL_keyboardButton (TLRPC.java:15408) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xafd93fbb | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonBuy (TLRPC.java:15358) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xb16a6c29 | in-table | TL_keyboardButtonRequestPhone (TLRPC.java:15204) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xbbc7515d | in-table | TL_keyboardButtonRequestPoll (TLRPC.java:15336) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xd02e7fd4 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_inputKeyboardButtonUrlAuth (TLRPC.java:15308) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xfc796b3f | in-table | TL_keyboardButtonRequestGeoLocation (TLRPC.java:15268) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | - | type not defined at this pin | - |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButtonStyle | - | type not defined at this pin | - |
+| release-8.1.1_2431 | TL_keyboard.ButtonType | - | type not defined at this pin | - |
+| release-8.1.1_2431 | TL_keyboard.InlineButtonType | - | type not defined at this pin | - |
+| release-8.1.1_2431 | RequestPeerType | - | type not defined at this pin | - |
+| release-8.1.1_2431 | TL_chatAdminRights | 0x5fb224d5 | in-table | TL_chatAdminRights (TLRPC.java:3671) |
+| release-8.1.1_2431 | InputPeer | 0x179be863 | in-table | TL_inputPeerChat_layer131 (TLRPC.java:41456) |
+| release-8.1.1_2431 | InputPeer | 0x17bae2e6 | in-table | TL_inputPeerUserFromMessage_layer131 (TLRPC.java:41577) |
+| release-8.1.1_2431 | InputPeer | 0x20adaef8 | in-table | TL_inputPeerChannel_layer131 (TLRPC.java:41543) |
+| release-8.1.1_2431 | InputPeer | 0x27bcbbfc | in-table | TL_inputPeerChannel (TLRPC.java:41470) |
+| release-8.1.1_2431 | InputPeer | 0x35a95cb9 | in-table | TL_inputPeerChat (TLRPC.java:41529) |
+| release-8.1.1_2431 | InputPeer | 0x7b8e7de6 | in-table | TL_inputPeerUser_layer131 (TLRPC.java:41486) |
+| release-8.1.1_2431 | InputPeer | 0x7da07ec9 | in-table | TL_inputPeerSelf (TLRPC.java:41413) |
+| release-8.1.1_2431 | InputPeer | 0x7f3b18ea | in-table | TL_inputPeerEmpty (TLRPC.java:41502) |
+| release-8.1.1_2431 | InputPeer | 0x9c95f7bb | in-table | TL_inputPeerChannelFromMessage_layer131 (TLRPC.java:41559) |
+| release-8.1.1_2431 | InputPeer | 0xa87b0a1c | in-table | TL_inputPeerUserFromMessage (TLRPC.java:41422) |
+| release-8.1.1_2431 | InputPeer | 0xbd2a0840 | in-table | TL_inputPeerChannelFromMessage (TLRPC.java:41511) |
+| release-8.1.1_2431 | InputPeer | 0xdde8a54c | in-table | TL_inputPeerUser (TLRPC.java:41440) |
+| release-8.1.1_2431 | InlineQueryPeerType | - | type not defined at this pin | - |
+| release-8.1.1_2431 | PollAnswer | 0x6ca9c2e9 | in-table | TL_pollAnswer (TLRPC.java:2331) |
+| release-8.1.1_2431 | PollAnswerVoters | 0x3b6ddad2 | in-table | TL_pollAnswerVoters (TLRPC.java:4279) |
 
-Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read.
+Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
 
 | Pin | Type | ID | Verdict | Class at this pin |
 |---|---|---|---|---|
@@ -2241,9 +2515,9 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-8.1.1_2431 | PollResults | 0x5755785a | equal | TL_pollResults_layer108 (TLRPC.java:3799) |
 | release-8.1.1_2431 | PollResults | 0xbadcc1a3 | membership-only (MANUAL at TLRPC.java:3951) | TL_pollResults_layer131 (TLRPC.java:3914) |
 | release-8.1.1_2431 | PollResults | 0xc87024a2 | membership-only (MANUAL at TLRPC.java:3883) | TL_pollResults_layer111 (TLRPC.java:3846) |
-| release-8.1.1_2431 | PollResults | 0xdcb82ea3 | membership-only (MANUAL at TLRPC.java:4450) | TL_pollResults (TLRPC.java:4013) |
+| release-8.1.1_2431 | PollResults | 0xdcb82ea3 | equal on the wire (names differ: recent_voters:vec<i64> / recent_voters:vec<id64@user>) | TL_pollResults (TLRPC.java:4013) |
 | release-8.1.1_2431 | ReplyMarkup | 0x3502758c | equal | TL_replyKeyboardMarkup_layer129 (TLRPC.java:9693) |
-| release-8.1.1_2431 | ReplyMarkup | 0x48a30254 | CONFLICT (opaque; pin conflict: rows:vec<KeyboardButtonRow> at TLRPC.java:9752, rows:vec<KeyboardInlineButtonRow> at TLRPC.java:10353) | TL_replyInlineMarkup (TLRPC.java:9752) |
+| release-8.1.1_2431 | ReplyMarkup | 0x48a30254 | compatible widening (union) (vec<TL_keyboard.KeyboardButtonRow> read as vec<TL_keyboard.KeyboardInlineButtonRow>: the union check below holds at this pin) | TL_replyInlineMarkup (TLRPC.java:9752) |
 | release-8.1.1_2431 | ReplyMarkup | 0x85dd99d1 | equal | TL_replyKeyboardMarkup (TLRPC.java:9606) |
 | release-8.1.1_2431 | ReplyMarkup | 0x86b40b08 | equal | TL_replyKeyboardForceReply (TLRPC.java:9669) |
 | release-8.1.1_2431 | ReplyMarkup | 0xa03e5b85 | equal | TL_replyKeyboardHide (TLRPC.java:9653) |
@@ -2274,8 +2548,47 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-8.1.1_2431 | TL_iv.Page | 0x98657f0d | membership-only (MANUAL at TLRPC.java:14945) | TL_page (TLRPC.java:14911) |
 | release-8.1.1_2431 | TL_iv.Page | 0xae891bec | membership-only (MANUAL at TLRPC.java:14861) | TL_page_layer110 (TLRPC.java:14828) |
 | release-8.1.1_2431 | TL_iv.Page | 0xd7a19d69 | membership-only (MANUAL at TLRPC.java:14707) | TL_pageFull_layer67 (TLRPC.java:14678) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButtonRow | 0x77608b83 | compatible widening (union) (vec<TL_keyboard.KeyboardButton> read as vec<TL_keyboard.KeyboardInlineButton\|TL_keyboard.KeyboardButton>: the union check below holds at this pin) | TL_keyboardButtonRow (TLRPC.java:15978) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xa2fa4880 | equal | TL_keyboardButton (TLRPC.java:15408) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xb16a6c29 | equal | TL_keyboardButtonRequestPhone (TLRPC.java:15204) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xbbc7515d | equal | TL_keyboardButtonRequestPoll (TLRPC.java:15336) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xfc796b3f | equal | TL_keyboardButtonRequestGeoLocation (TLRPC.java:15268) |
+| release-8.1.1_2431 | TL_chatAdminRights | 0x5fb224d5 | equal | TL_chatAdminRights (TLRPC.java:3671) |
+| release-8.1.1_2431 | InputPeer | 0x179be863 | equal | TL_inputPeerChat_layer131 (TLRPC.java:41456) |
+| release-8.1.1_2431 | InputPeer | 0x17bae2e6 | equal | TL_inputPeerUserFromMessage_layer131 (TLRPC.java:41577) |
+| release-8.1.1_2431 | InputPeer | 0x20adaef8 | equal | TL_inputPeerChannel_layer131 (TLRPC.java:41543) |
+| release-8.1.1_2431 | InputPeer | 0x27bcbbfc | equal | TL_inputPeerChannel (TLRPC.java:41470) |
+| release-8.1.1_2431 | InputPeer | 0x35a95cb9 | equal | TL_inputPeerChat (TLRPC.java:41529) |
+| release-8.1.1_2431 | InputPeer | 0x7b8e7de6 | equal | TL_inputPeerUser_layer131 (TLRPC.java:41486) |
+| release-8.1.1_2431 | InputPeer | 0x7da07ec9 | equal | TL_inputPeerSelf (TLRPC.java:41413) |
+| release-8.1.1_2431 | InputPeer | 0x7f3b18ea | equal | TL_inputPeerEmpty (TLRPC.java:41502) |
+| release-8.1.1_2431 | InputPeer | 0x9c95f7bb | equal | TL_inputPeerChannelFromMessage_layer131 (TLRPC.java:41559) |
+| release-8.1.1_2431 | InputPeer | 0xa87b0a1c | equal | TL_inputPeerUserFromMessage (TLRPC.java:41422) |
+| release-8.1.1_2431 | InputPeer | 0xbd2a0840 | equal | TL_inputPeerChannelFromMessage (TLRPC.java:41511) |
+| release-8.1.1_2431 | InputPeer | 0xdde8a54c | equal | TL_inputPeerUser (TLRPC.java:41440) |
+| release-8.1.1_2431 | PollAnswer | 0x6ca9c2e9 | equal on the wire (names differ: text:str / text.text:str) | TL_pollAnswer (TLRPC.java:2331) |
+| release-8.1.1_2431 | PollAnswerVoters | 0x3b6ddad2 | equal | TL_pollAnswerVoters (TLRPC.java:4279) |
 
-Compared 267 rows; membership-only 33
+Compared 288 rows; membership-only 32
+
+Union check (Q5, ruling T2a): every button ID of this pin's single `KeyboardButton` switch, read by the A-HEAD union `TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton` (the first type holding the ID): `equal` (same bytes at both pins), `opaque at A-HEAD` (a stop, not a misread) or `CONFLICT`.
+
+| Pin | Union element | ID | Verdict | Class at this pin |
+|---|---|---|---|---|
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0x0568a748 | equal (TL_keyboardButtonSwitchInline_layer157) | TL_keyboardButtonSwitchInline (TLRPC.java:15248) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0x10b78d29 | equal (TL_keyboardButtonUrlAuth_layer223) | TL_keyboardButtonUrlAuth (TLRPC.java:15282) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0x258aff05 | equal (TL_keyboardButtonUrl_layer223) | TL_keyboardButtonUrl (TLRPC.java:15232) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0x35bbdb6b | equal (TL_keyboardButtonCallback_layer223) | TL_keyboardButtonCallback (TLRPC.java:15372) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0x50f41ccf | equal (TL_keyboardButtonGame_layer223) | TL_keyboardButtonGame (TLRPC.java:15218) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0x683a5e46 | equal (TL_keyboardButtonCallback_layer117) | TL_keyboardButtonCallback_layer117 (TLRPC.java:15392) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xa2fa4880 | equal (TL_keyboardButton_layer223) | TL_keyboardButton (TLRPC.java:15408) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0xafd93fbb | equal (TL_keyboardButtonBuy_layer223) | TL_keyboardButtonBuy (TLRPC.java:15358) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xb16a6c29 | equal (TL_keyboardButtonRequestPhone_layer223) | TL_keyboardButtonRequestPhone (TLRPC.java:15204) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xbbc7515d | equal (TL_keyboardButtonRequestPoll_layer223) | TL_keyboardButtonRequestPoll (TLRPC.java:15336) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardInlineButton | 0xd02e7fd4 | opaque at A-HEAD (TL_inputKeyboardButtonUrlAuth_layer223): a stop, not a misread | TL_inputKeyboardButtonUrlAuth (TLRPC.java:15308) |
+| release-8.1.1_2431 | TL_keyboard.KeyboardButton | 0xfc796b3f | equal (TL_keyboardButtonRequestGeoLocation_layer223) | TL_keyboardButtonRequestGeoLocation (TLRPC.java:15268) |
+
+Union check at release-8.1.1_2431: holds, every older inline keyboard is readable by the A-HEAD reading (a compatible widening).
 
 
 ## release-5.14.0_1851 (7d6fa267c13bacd48f8d8f10d31a61f38b77bfe4)
@@ -2300,8 +2613,8 @@ Fact files checked (SHA-256 of the committed bytes):
 
 | File | SHA-256 |
 |---|---|
-| `constructors.tsv` | 02994ffdf09a5701c40e0bdd868bb51a1b75216dc6d2fd60873e2d77f344fbd5 |
-| `facts.tsv` | 340699c1879411676d5f7acee05f88cf2feb64054cbbcc320622d774a67cbdd0 |
+| `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
+| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -2567,8 +2880,37 @@ Membership: every ID the pinned types' switches read at this pin is a row of `co
 | release-5.14.0_1851 | TL_iv.Page | 0xae891bec | in-table | TL_page (TLRPC.java:10542) |
 | release-5.14.0_1851 | TL_iv.Page | 0xd7a19d69 | in-table | TL_pageFull_layer67 (TLRPC.java:10392) |
 | release-5.14.0_1851 | TL_iv.RichMessage | - | type not defined at this pin | - |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButtonRow | 0x77608b83 | in-table | TL_keyboardButtonRow (TLRPC.java:11358) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButtonRow | - | type not defined at this pin | - |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0x0568a748 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonSwitchInline (TLRPC.java:10867) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0x10b78d29 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUrlAuth (TLRPC.java:10901) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0x258aff05 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonUrl (TLRPC.java:10851) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0x50f41ccf | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonGame (TLRPC.java:10837) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0x683a5e46 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonCallback (TLRPC.java:10991) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xa2fa4880 | in-table | TL_keyboardButton (TLRPC.java:11007) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xafd93fbb | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_keyboardButtonBuy (TLRPC.java:10977) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xb16a6c29 | in-table | TL_keyboardButtonRequestPhone (TLRPC.java:10823) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xbbc7515d | in-table | TL_keyboardButtonRequestPoll (TLRPC.java:10955) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xd02e7fd4 | in-table through the union (A-HEAD reads it as TL_keyboard.KeyboardInlineButton; every field of type TL_keyboard.KeyboardButton is a union with it, ruling T2a) | TL_inputKeyboardButtonUrlAuth (TLRPC.java:10927) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xfc796b3f | in-table | TL_keyboardButtonRequestGeoLocation (TLRPC.java:10887) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | - | type not defined at this pin | - |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButtonStyle | - | type not defined at this pin | - |
+| release-5.14.0_1851 | TL_keyboard.ButtonType | - | type not defined at this pin | - |
+| release-5.14.0_1851 | TL_keyboard.InlineButtonType | - | type not defined at this pin | - |
+| release-5.14.0_1851 | RequestPeerType | - | type not defined at this pin | - |
+| release-5.14.0_1851 | TL_chatAdminRights | 0x5fb224d5 | in-table | TL_chatAdminRights (TLRPC.java:3013) |
+| release-5.14.0_1851 | InputPeer | 0x179be863 | in-table | TL_inputPeerChat (TLRPC.java:32069) |
+| release-5.14.0_1851 | InputPeer | 0x17bae2e6 | in-table | TL_inputPeerUserFromMessage (TLRPC.java:32083) |
+| release-5.14.0_1851 | InputPeer | 0x20adaef8 | in-table | TL_inputPeerChannel (TLRPC.java:32123) |
+| release-5.14.0_1851 | InputPeer | 0x7b8e7de6 | in-table | TL_inputPeerUser (TLRPC.java:32053) |
+| release-5.14.0_1851 | InputPeer | 0x7da07ec9 | in-table | TL_inputPeerSelf (TLRPC.java:32044) |
+| release-5.14.0_1851 | InputPeer | 0x7f3b18ea | in-table | TL_inputPeerEmpty (TLRPC.java:32139) |
+| release-5.14.0_1851 | InputPeer | 0x9c95f7bb | in-table | TL_inputPeerChannelFromMessage (TLRPC.java:32103) |
+| release-5.14.0_1851 | InlineQueryPeerType | - | type not defined at this pin | - |
+| release-5.14.0_1851 | PollAnswer | 0x6ca9c2e9 | in-table | TL_pollAnswer (TLRPC.java:1938) |
+| release-5.14.0_1851 | PollAnswerVoters | 0x3b6ddad2 | in-table | TL_pollAnswerVoters (TLRPC.java:3303) |
 
-Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read.
+Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
 
 | Pin | Type | ID | Verdict | Class at this pin |
 |---|---|---|---|---|
@@ -2783,9 +3125,9 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-5.14.0_1851 | ReactionCount | 0x6fb250d1 | CONFLICT (opaque; pin conflict: flags:# reaction:str count:i32 at TLRPC.java:30615, flags:# reaction:Reaction count:i32 at TLRPC.java:45165) | TL_reactionCount (TLRPC.java:30615) |
 | release-5.14.0_1851 | Poll | 0xd5529d06 | equal | TL_poll (TLRPC.java:24034) |
 | release-5.14.0_1851 | PollResults | 0x5755785a | equal | TL_pollResults_layer108 (TLRPC.java:3093) |
-| release-5.14.0_1851 | PollResults | 0xc87024a2 | membership-only (MANUAL at TLRPC.java:4275) | TL_pollResults (TLRPC.java:3140) |
+| release-5.14.0_1851 | PollResults | 0xc87024a2 | equal on the wire (names differ: recent_voters:vec<i32> / recent_voters:vec<id32@user>) | TL_pollResults (TLRPC.java:3140) |
 | release-5.14.0_1851 | ReplyMarkup | 0x3502758c | equal | TL_replyKeyboardMarkup (TLRPC.java:7586) |
-| release-5.14.0_1851 | ReplyMarkup | 0x48a30254 | CONFLICT (opaque; pin conflict: rows:vec<KeyboardButtonRow> at TLRPC.java:7519, rows:vec<KeyboardInlineButtonRow> at TLRPC.java:10353) | TL_replyInlineMarkup (TLRPC.java:7519) |
+| release-5.14.0_1851 | ReplyMarkup | 0x48a30254 | compatible widening (union) (vec<TL_keyboard.KeyboardButtonRow> read as vec<TL_keyboard.KeyboardInlineButtonRow>: the union check below holds at this pin) | TL_replyInlineMarkup (TLRPC.java:7519) |
 | release-5.14.0_1851 | ReplyMarkup | 0xa03e5b85 | equal | TL_replyKeyboardHide (TLRPC.java:7552) |
 | release-5.14.0_1851 | ReplyMarkup | 0xf4108aa0 | equal | TL_replyKeyboardForceReply (TLRPC.java:7568) |
 | release-5.14.0_1851 | InputUser | 0x2d117597 | equal | TL_inputUserFromMessage (TLRPC.java:10743) |
@@ -2813,8 +3155,41 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-5.14.0_1851 | TL_iv.Page | 0x8e3f9ebe | membership-only (MANUAL at TLRPC.java:10346) | TL_pagePart_layer82 (TLRPC.java:10317) |
 | release-5.14.0_1851 | TL_iv.Page | 0xae891bec | membership-only (MANUAL at TLRPC.java:10575) | TL_page (TLRPC.java:10542) |
 | release-5.14.0_1851 | TL_iv.Page | 0xd7a19d69 | membership-only (MANUAL at TLRPC.java:10421) | TL_pageFull_layer67 (TLRPC.java:10392) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButtonRow | 0x77608b83 | compatible widening (union) (vec<TL_keyboard.KeyboardButton> read as vec<TL_keyboard.KeyboardInlineButton\|TL_keyboard.KeyboardButton>: the union check below holds at this pin) | TL_keyboardButtonRow (TLRPC.java:11358) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xa2fa4880 | equal | TL_keyboardButton (TLRPC.java:11007) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xb16a6c29 | equal | TL_keyboardButtonRequestPhone (TLRPC.java:10823) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xbbc7515d | equal | TL_keyboardButtonRequestPoll (TLRPC.java:10955) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xfc796b3f | equal | TL_keyboardButtonRequestGeoLocation (TLRPC.java:10887) |
+| release-5.14.0_1851 | TL_chatAdminRights | 0x5fb224d5 | equal | TL_chatAdminRights (TLRPC.java:3013) |
+| release-5.14.0_1851 | InputPeer | 0x179be863 | equal | TL_inputPeerChat (TLRPC.java:32069) |
+| release-5.14.0_1851 | InputPeer | 0x17bae2e6 | equal | TL_inputPeerUserFromMessage (TLRPC.java:32083) |
+| release-5.14.0_1851 | InputPeer | 0x20adaef8 | equal | TL_inputPeerChannel (TLRPC.java:32123) |
+| release-5.14.0_1851 | InputPeer | 0x7b8e7de6 | equal | TL_inputPeerUser (TLRPC.java:32053) |
+| release-5.14.0_1851 | InputPeer | 0x7da07ec9 | equal | TL_inputPeerSelf (TLRPC.java:32044) |
+| release-5.14.0_1851 | InputPeer | 0x7f3b18ea | equal | TL_inputPeerEmpty (TLRPC.java:32139) |
+| release-5.14.0_1851 | InputPeer | 0x9c95f7bb | equal | TL_inputPeerChannelFromMessage (TLRPC.java:32103) |
+| release-5.14.0_1851 | PollAnswer | 0x6ca9c2e9 | equal on the wire (names differ: text:str / text.text:str) | TL_pollAnswer (TLRPC.java:1938) |
+| release-5.14.0_1851 | PollAnswerVoters | 0x3b6ddad2 | equal | TL_pollAnswerVoters (TLRPC.java:3303) |
 
-Compared 233 rows; membership-only 8
+Compared 249 rows; membership-only 7
+
+Union check (Q5, ruling T2a): every button ID of this pin's single `KeyboardButton` switch, read by the A-HEAD union `TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton` (the first type holding the ID): `equal` (same bytes at both pins), `opaque at A-HEAD` (a stop, not a misread) or `CONFLICT`.
+
+| Pin | Union element | ID | Verdict | Class at this pin |
+|---|---|---|---|---|
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0x0568a748 | equal (TL_keyboardButtonSwitchInline_layer157) | TL_keyboardButtonSwitchInline (TLRPC.java:10867) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0x10b78d29 | equal (TL_keyboardButtonUrlAuth_layer223) | TL_keyboardButtonUrlAuth (TLRPC.java:10901) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0x258aff05 | equal (TL_keyboardButtonUrl_layer223) | TL_keyboardButtonUrl (TLRPC.java:10851) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0x50f41ccf | equal (TL_keyboardButtonGame_layer223) | TL_keyboardButtonGame (TLRPC.java:10837) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0x683a5e46 | equal (TL_keyboardButtonCallback_layer117) | TL_keyboardButtonCallback (TLRPC.java:10991) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xa2fa4880 | equal (TL_keyboardButton_layer223) | TL_keyboardButton (TLRPC.java:11007) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0xafd93fbb | equal (TL_keyboardButtonBuy_layer223) | TL_keyboardButtonBuy (TLRPC.java:10977) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xb16a6c29 | equal (TL_keyboardButtonRequestPhone_layer223) | TL_keyboardButtonRequestPhone (TLRPC.java:10823) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xbbc7515d | equal (TL_keyboardButtonRequestPoll_layer223) | TL_keyboardButtonRequestPoll (TLRPC.java:10955) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardInlineButton | 0xd02e7fd4 | opaque at A-HEAD (TL_inputKeyboardButtonUrlAuth_layer223): a stop, not a misread | TL_inputKeyboardButtonUrlAuth (TLRPC.java:10927) |
+| release-5.14.0_1851 | TL_keyboard.KeyboardButton | 0xfc796b3f | equal (TL_keyboardButtonRequestGeoLocation_layer223) | TL_keyboardButtonRequestGeoLocation (TLRPC.java:10887) |
+
+Union check at release-5.14.0_1851: holds, every older inline keyboard is readable by the A-HEAD reading (a compatible widening).
 
 
 # Docs cross-check
@@ -2905,6 +3280,9 @@ Each fact was read by hand at the cited line of its pin (the note column of `fac
 | wrapper.TL_message_layer104_2.from_id | A-11.4.2 | TLRPC.java:72691 | user | read by hand |
 | wrapper.TL_message_layer104_3.from_id | A-11.4.2 | TLRPC.java:72527 | user | read by hand |
 | wrapper.TL_messagePeerReaction_layer137.peer_id | A-HEAD | TLRPC.java:2710 | user | read by hand |
+| wrapper.TL_pollResults_layer111.recent_voters | A-HEAD | VectorLegacy.java:28 | user | read by hand |
+| wrapper.TL_pollResults_layer131.recent_voters | A-HEAD | VectorLegacy.java:28 | user | read by hand |
+| wrapper.TL_pollResults_layer158.recent_voters | A-HEAD | VectorLegacy.java:49 | user | read by hand |
 
 # DDL cross-check (plan 4I4)
 
@@ -3093,3 +3471,35 @@ wraps in a `TL_webPageAttributeTheme`) is read before bit 10 (`cached_page`).
 | 0x51b67eff | TL_messagePeerReaction_layer144 | TLRPC.java:2679 | flags:# big=F.0 unread=F.1 peer_id:Peer reaction.emoticon:str | agrees |
 | 0x932844fa | TL_messagePeerReaction_layer137 | TLRPC.java:2704 | peer_id:id64@user reaction.emoticon:str | agrees |
 | 0xfa64e172 | TL_webPage_layer107 | TLRPC.java:20041 | flags:# id:i64 url:str display_url:str hash:i32 [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document] [F.11: documents:vec<Document>] [F.10: cached_page:TL_iv.Page] | agrees |
+
+## Hand-read rows, first read (plan 4I4c Task 2)
+
+The six Stage B rows the reduction cannot read at A-HEAD (`--check` reports each as "MANUAL, read by hand at"), read by
+hand at A-HEAD (21f7d109da6ab3506c9e9577f98c6a38771ab335) by the Task 2 builder from `tgnet/tl/TL_keyboard.java`
+(SHA-256 a026f2b766ea4ca29c9abee0a4010773d4c7f38b848939b17eeee1068388b6bc), `tgnet/TLRPC.java` (SHA-256
+37a1b1ee83d1f84352f90ac65e8d2176a863678f60c902010c3e1c0b1beea86b) and `tgnet/VectorLegacy.java` (SHA-256
+ddb561e3fd975d74306f718f94e00f11be984e1fe87d0252cf08edcfcaefac30); ruling B11 asks a second read by another task's
+agent, recorded in a section of its own. Reading notes: `0x77608b83` `TL_keyboardInlineButtonRow_layer228` reads its
+buttons at `TL_keyboard.java:649` through `TLdeserializeLegacy` (`:561-575`): `KeyboardButton.fromConstructor` first
+(`:562`), then `KeyboardInlineButton.fromConstructor`, else an error; it then keeps only the inline buttons (`:650-654`),
+so a `TL_keyboard.KeyboardButton` read there is on the wire but dropped by the A-HEAD app (design D5, ruling C3).
+`0x77608b83` `KeyboardButtonRow` reads its buttons at `:760` by `KeyboardButton.TLdeserialize`, which tries
+`KeyboardInlineButton.fromConstructor` first (`:815-822`, the inline button read whole and kept as a default button) and
+then its own switch (`:825`). `0x19420af6` `TL_keyboardInlineButtonRow` reads its buttons at `:636` by
+`KeyboardInlineButton.TLdeserialize`, which tries `KeyboardButton.fromConstructor` first (`:735-742`, kept as a disabled
+inline button) and then its own (`:745`). The two button switches share no ID, so the order of a union never changes
+what is read (ruling T2a). `0xc87024a2` and `0xbadcc1a3` read `recent_voters` (bit 3) through
+`VectorLegacy.deserialize_IntUserIdAsPeer` (`TLRPC.java:4275`, `:4308`): a boxed bare int vector (`VectorLegacy.java:28`)
+whose every id becomes the `user_id` of a `TL_peerUser` the app builds (`:31-32`); `0xdcb82ea3` through
+`deserialize_LongUserIdAsPeer` (`TLRPC.java:4450`; `VectorLegacy.java:49`, `:52-53`), a bare long vector. `0xbadcc1a3`
+(reads 4299-4313) and `0xdcb82ea3` (reads 4441-4455) read `solution` and `solution_entities` under one test of bit 4;
+`0xc87024a2` reads 4266-4276.
+
+| ID | Class | Source | Body read | Verdict |
+|---|---|---|---|---|
+| 0x77608b83 | TL_keyboardInlineButtonRow_layer228 | TL_keyboard.java:645 | buttons:vec<TL_keyboard.KeyboardButton\|TL_keyboard.KeyboardInlineButton> | read by hand |
+| 0x77608b83 | KeyboardButtonRow | TL_keyboard.java:749 | buttons:vec<TL_keyboard.KeyboardInlineButton\|TL_keyboard.KeyboardButton> | read by hand |
+| 0x19420af6 | TL_keyboardInlineButtonRow | TL_keyboard.java:632 | buttons:vec<TL_keyboard.KeyboardButton\|TL_keyboard.KeyboardInlineButton> | read by hand |
+| 0xc87024a2 | TL_pollResults_layer111 | TLRPC.java:4262 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] | read by hand |
+| 0xbadcc1a3 | TL_pollResults_layer131 | TLRPC.java:4295 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] [F.4: solution:str solution_entities:vec<MessageEntity>] | read by hand |
+| 0xdcb82ea3 | TL_pollResults_layer158 | TLRPC.java:4437 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id64@user>] [F.4: solution:str solution_entities:vec<MessageEntity>] | read by hand |

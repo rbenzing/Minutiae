@@ -3464,7 +3464,14 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   `edit_date` route, plan 4I4b ruling B3), every `tgnet/tl/*.java` and `tgnet/tl/legacy/*.java` of the pin (listed with
   the repository's contents API, directory listings only) and, at A-HEAD, `tgnet/VectorLegacy.java` (their SHA-256 are
   in `CROSSCHECK.md`; plan 4I4 fetched LocaleController at A-HEAD only and no other `tgnet/tl` file). The table holds
-  535 rows (plan 4I4b Task 1). The script
+  629 rows (plan 4I4c Task 2; 535 in plan 4I4b Task 1), each identified by (type, ID): `0x77608b83` is a row of
+  `TL_keyboard.KeyboardButtonRow` and of `TL_keyboard.KeyboardInlineButtonRow`, no other ID of two types. The selection
+  mode `all-full-except` reads every class of a switch whole except the listed client-to-server forms (`opaque`). A
+  button reader that tries the other button family first reads a union `vec<A|B>` in the app's order (`--check`
+  reports it `MANUAL`, read by hand); an older pin's button ID held by the other button type is `in-table through the
+  union` (`narrowing` when a field of its type is no union with that type: informational); each older report ends with
+  the union check, and where it holds the older readings of `0x48a30254` and `0x77608b83` are a `compatible widening
+  (union)`. The script
   `tools/fixtures/telegram_tl_facts.py` reads the sources as untrusted text with regular expressions (it never runs,
   imports or opens a path from them) and has these modes (`<scratch>` is `.claude/scratch/<plan>-<task>-<role>/`):
 

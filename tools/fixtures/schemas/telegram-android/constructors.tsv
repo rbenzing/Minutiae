@@ -228,7 +228,7 @@ MessageMedia	0x2fda2204	TL_messageMediaDocument_old	full	A-HEAD	TLRPC.java:7804	
 MessageMedia	0x3d8ce53d	TL_messageMediaPhoto_layer68	full	A-HEAD	TLRPC.java:8108	photo:Photo captionLegacy:str
 MessageMedia	0x3ded6320	TL_messageMediaEmpty	full	A-HEAD	TLRPC.java:7483	
 MessageMedia	0x3f7ee58b	TL_messageMediaDice_layer220	full	A-HEAD	TLRPC.java:8230	value:i32 emoticon:str
-MessageMedia	0x4bd6e798	TL_messageMediaPoll_layer223	opaque	A-HEAD	TLRPC.java:7926	
+MessageMedia	0x4bd6e798	TL_messageMediaPoll_layer223	full	A-HEAD	TLRPC.java:7926	poll:Poll results:PollResults
 MessageMedia	0x4cf4d72d	TL_messageMediaDocument_layer187	full	A-HEAD	TLRPC.java:7698	flags:# nopremium=F.3 spoiler=F.4 video=F.6 round=F.7 voice=F.8 [F.0: document:Document] [F.5: alt_documents:Document] [F.2: ttl_seconds:i32]
 MessageMedia	0x52d8ccd9	TL_messageMediaDocument	full	A-HEAD	TLRPC.java:7554	flags:# nopremium=F.3 spoiler=F.4 video=F.6 round=F.7 voice=F.8 live_photo=F.11 [F.0: document:Document] [F.5: alt_documents:vec<Document>] [F.9: video_cover:Photo] [F.10: video_timestamp:i32] [F.2: ttl_seconds:i32]
 MessageMedia	0x56e0d474	TL_messageMediaGeo	full	A-HEAD	TLRPC.java:8258	geo:GeoPoint
@@ -468,31 +468,31 @@ WebPageAttribute	0x54b56617	TL_webPageAttributeTheme	opaque	A-HEAD	TLRPC.java:10
 WebPageAttribute	0x7781fe18	TL_webPageAttributeAiComposeTone	full	A-HEAD	TLRPC.java:10424	emoji_id:i64
 WebPageAttribute	0x939a4671	TL_webPageAttributeStory_layer162	opaque	A-HEAD	TLRPC.java:10545	
 WebPageAttribute	0xcf6f6db8	TL_webPageAttributeUniqueStarGift	opaque	A-HEAD	TLRPC.java:10530	
-Poll	0x58747131	TL_poll_layer223	opaque	A-HEAD	TLRPC.java:34428	
-Poll	0x86e18161	TL_poll_layer178	opaque	A-HEAD	TLRPC.java:34475	
-Poll	0x966e2dbf	TL_poll	opaque	A-HEAD	TLRPC.java:34318	
-Poll	0xaf746786	TL_poll_toDelete	opaque	A-HEAD	TLRPC.java:34515	
-Poll	0xb8425be9	TL_poll_layer224	opaque	A-HEAD	TLRPC.java:34377	
-Poll	0xd5529d06	TL_poll_layer111	opaque	A-HEAD	TLRPC.java:34549	
-PollResults	0x5755785a	TL_pollResults_layer108	opaque	A-HEAD	TLRPC.java:4235	
-PollResults	0x7adf2420	TL_pollResults_layer223	opaque	A-HEAD	TLRPC.java:4392	
-PollResults	0xba7bb15e	TL_pollResults	opaque	A-HEAD	TLRPC.java:4336	
-PollResults	0xbadcc1a3	TL_pollResults_layer131	opaque	A-HEAD	TLRPC.java:4295	
-PollResults	0xc87024a2	TL_pollResults_layer111	opaque	A-HEAD	TLRPC.java:4262	
-PollResults	0xdcb82ea3	TL_pollResults_layer158	opaque	A-HEAD	TLRPC.java:4437	
-ReplyMarkup	0x3502758c	TL_replyKeyboardMarkup_layer129	opaque	A-HEAD	TLRPC.java:10279	
-ReplyMarkup	0x48a30254	TL_replyInlineMarkup_layer228	opaque	A-HEAD	TLRPC.java:10353	
-ReplyMarkup	0x58f7fcb6	TL_replyInlineMarkup_layer228_old	opaque	A-HEAD	TLRPC.java:10336	
-ReplyMarkup	0x85dd99d1	TL_replyKeyboardMarkup	opaque	A-HEAD	TLRPC.java:10208	
-ReplyMarkup	0x86b40b08	TL_replyKeyboardForceReply	opaque	A-HEAD	TLRPC.java:10256	
-ReplyMarkup	0xa03e5b85	TL_replyKeyboardHide	opaque	A-HEAD	TLRPC.java:10241	
-ReplyMarkup	0xb2b15770	TL_replyInlineMarkup	opaque	A-HEAD	TLRPC.java:10317	
-ReplyMarkup	0xf4108aa0	TL_replyKeyboardForceReply_layer129	opaque	A-HEAD	TLRPC.java:10300	
-InputUser	0x1da448e2	TL_inputUserFromMessage	opaque	A-HEAD	TLRPC.java:18959	
-InputUser	0x2d117597	TL_inputUserFromMessage_layer132	opaque	A-HEAD	TLRPC.java:18994	
+Poll	0x58747131	TL_poll_layer223	full	A-HEAD	TLRPC.java:34428	id:i64 flags:# closed=F.0 public_voters=F.1 multiple_choice=F.2 open_answers=F.6 revoting_disabled=F.7 shuffle_answers=F.8 hide_results_until_close=F.9 quiz=F.3 question:TL_textWithEntities answers:vec<PollAnswer> [F.4: close_period:i32] [F.5: close_date:i32]
+Poll	0x86e18161	TL_poll_layer178	full	A-HEAD	TLRPC.java:34475	id:i64 flags:# closed=F.0 public_voters=F.1 multiple_choice=F.2 quiz=F.3 question.text:str answers:vec<PollAnswer> [F.4: close_period:i32] [F.5: close_date:i32]
+Poll	0x966e2dbf	TL_poll	full	A-HEAD	TLRPC.java:34318	id:i64 flags:# closed=F.0 public_voters=F.1 multiple_choice=F.2 open_answers=F.6 revoting_disabled=F.7 shuffle_answers=F.8 hide_results_until_close=F.9 creator=F.10 subscribers_only=F.11 quiz=F.3 question:TL_textWithEntities answers:vec<PollAnswer> [F.4: close_period:i32] [F.5: close_date:i32] [F.12: countries_iso2:vec<str>] hash:i64
+Poll	0xaf746786	TL_poll_toDelete	full	A-HEAD	TLRPC.java:34515	id:i64 flags:# closed=F.0 public_voters=F.1 multiple_choice=F.2 quiz=F.3 question.text:str answers:vec<PollAnswer> [F.4: close_date:i32]
+Poll	0xb8425be9	TL_poll_layer224	full	A-HEAD	TLRPC.java:34377	id:i64 flags:# closed=F.0 public_voters=F.1 multiple_choice=F.2 open_answers=F.6 revoting_disabled=F.7 shuffle_answers=F.8 hide_results_until_close=F.9 creator=F.10 quiz=F.3 question:TL_textWithEntities answers:vec<PollAnswer> [F.4: close_period:i32] [F.5: close_date:i32] hash:i64
+Poll	0xd5529d06	TL_poll_layer111	full	A-HEAD	TLRPC.java:34549	id:i64 flags:# closed=F.0 public_voters=F.1 multiple_choice=F.2 quiz=F.3 question.text:str answers:vec<PollAnswer>
+PollResults	0x5755785a	TL_pollResults_layer108	full	A-HEAD	TLRPC.java:4235	flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32]
+PollResults	0x7adf2420	TL_pollResults_layer223	full	A-HEAD	TLRPC.java:4392	flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<Peer>] [F.4: solution:str] [F.4: solution_entities:vec<MessageEntity>]
+PollResults	0xba7bb15e	TL_pollResults	full	A-HEAD	TLRPC.java:4336	flags:# min=F.0 has_unread_votes=F.6 can_view_stats=F.7 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<Peer>] [F.4: solution:str] [F.4: solution_entities:vec<MessageEntity>] [F.5: solution_media:MessageMedia]
+PollResults	0xbadcc1a3	TL_pollResults_layer131	full	A-HEAD	TLRPC.java:4295	flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] [F.4: solution:str solution_entities:vec<MessageEntity>]
+PollResults	0xc87024a2	TL_pollResults_layer111	full	A-HEAD	TLRPC.java:4262	flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>]
+PollResults	0xdcb82ea3	TL_pollResults_layer158	full	A-HEAD	TLRPC.java:4437	flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id64@user>] [F.4: solution:str solution_entities:vec<MessageEntity>]
+ReplyMarkup	0x3502758c	TL_replyKeyboardMarkup_layer129	full	A-HEAD	TLRPC.java:10279	flags:# resize=F.0 single_use=F.1 selective=F.2 rows:vec<TL_keyboard.KeyboardButtonRow>
+ReplyMarkup	0x48a30254	TL_replyInlineMarkup_layer228	full	A-HEAD	TLRPC.java:10353	rows:vec<TL_keyboard.KeyboardInlineButtonRow>
+ReplyMarkup	0x58f7fcb6	TL_replyInlineMarkup_layer228_old	full	A-HEAD	TLRPC.java:10336	flags:# force_reply=F.5 rows:vec<TL_keyboard.KeyboardInlineButtonRow>
+ReplyMarkup	0x85dd99d1	TL_replyKeyboardMarkup	full	A-HEAD	TLRPC.java:10208	flags:# resize=F.0 single_use=F.1 selective=F.2 is_persistent=F.4 force_reply=F.5 rows:vec<TL_keyboard.KeyboardButtonRow> [F.3: placeholder:str]
+ReplyMarkup	0x86b40b08	TL_replyKeyboardForceReply	full	A-HEAD	TLRPC.java:10256	flags:# single_use=F.1 selective=F.2 [F.3: placeholder:str]
+ReplyMarkup	0xa03e5b85	TL_replyKeyboardHide	full	A-HEAD	TLRPC.java:10241	flags:# selective=F.2
+ReplyMarkup	0xb2b15770	TL_replyInlineMarkup	full	A-HEAD	TLRPC.java:10317	flags:# force_reply=F.5 rows:vec<TL_keyboard.KeyboardInlineButtonRow>
+ReplyMarkup	0xf4108aa0	TL_replyKeyboardForceReply_layer129	full	A-HEAD	TLRPC.java:10300	flags:# single_use=F.1 selective=F.2
+InputUser	0x1da448e2	TL_inputUserFromMessage	full	A-HEAD	TLRPC.java:18959	peer:InputPeer msg_id:i32 user_id:i64
+InputUser	0x2d117597	TL_inputUserFromMessage_layer132	full	A-HEAD	TLRPC.java:18994	peer:InputPeer msg_id:i32 user_id:i32
 InputUser	0xb98886cf	TL_inputUserEmpty	full	A-HEAD	TLRPC.java:18951	
-InputUser	0xd8292816	TL_inputUser_layer132	opaque	A-HEAD	TLRPC.java:18979	
-InputUser	0xf21158c6	TL_inputUser	opaque	A-HEAD	TLRPC.java:18936	
+InputUser	0xd8292816	TL_inputUser_layer132	full	A-HEAD	TLRPC.java:18979	user_id:i32 access_hash:i64
+InputUser	0xf21158c6	TL_inputUser	full	A-HEAD	TLRPC.java:18936	user_id:i64 access_hash:i64
 InputUser	0xf7c1b13f	TL_inputUserSelf	full	A-HEAD	TLRPC.java:18928	
 TL_iv.RichText	0x01a9fbfc	textMentionName	opaque	A-HEAD	TL_iv.java:718	
 TL_iv.RichText	0x02ff29d3	textBotCommand	opaque	A-HEAD	TL_iv.java:634	
@@ -534,3 +534,97 @@ TL_iv.Page	0xae891bec	TL_page_layer110	opaque	A-HEAD	TL_iv.java:80
 TL_iv.Page	0xd7a19d69	TL_pageFull_layer67	opaque	A-HEAD	TL_iv.java:178	
 TL_iv.Page	0xf199a0a8	TL_page_layer88	opaque	A-HEAD	TL_iv.java:104	
 TL_iv.RichMessage	0xbaf39d8b	RichMessage	opaque	A-HEAD	TL_iv.java:195	
+TL_keyboard.KeyboardButtonRow	0x77608b83	KeyboardButtonRow	full	A-HEAD	TL_keyboard.java:749	buttons:vec<TL_keyboard.KeyboardInlineButton|TL_keyboard.KeyboardButton>
+TL_keyboard.KeyboardInlineButtonRow	0x19420af6	TL_keyboardInlineButtonRow	full	A-HEAD	TL_keyboard.java:632	buttons:vec<TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton>
+TL_keyboard.KeyboardInlineButtonRow	0x77608b83	TL_keyboardInlineButtonRow_layer228	full	A-HEAD	TL_keyboard.java:645	buttons:vec<TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton>
+TL_keyboard.KeyboardButton	0x02b78156	TL_inputKeyboardButtonRequestPeer_layer228	opaque	A-HEAD	TL_keyboard.java:1803	
+TL_keyboard.KeyboardButton	0x0d0b468c	TL_keyboardButtonRequestPeer_layer168	full	A-HEAD	TL_keyboard.java:1631	text:str mType.button_id:i32 mType.peer_type:RequestPeerType
+TL_keyboard.KeyboardButton	0x2f67a72f	TL_keyboardButton	full	A-HEAD	TL_keyboard.java:831	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str type:TL_keyboard.ButtonType
+TL_keyboard.KeyboardButton	0x417efd8f	TL_keyboardButtonRequestPhone_layer228	full	A-HEAD	TL_keyboard.java:964	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str
+TL_keyboard.KeyboardButton	0x53d7bfd8	TL_keyboardButtonRequestPeer_layer223	full	A-HEAD	TL_keyboard.java:1612	text:str mType.button_id:i32 mType.peer_type:RequestPeerType mType.max_quantity:i32
+TL_keyboard.KeyboardButton	0x5b0f15f5	TL_keyboardButtonRequestPeer_layer228	full	A-HEAD	TL_keyboard.java:1578	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.button_id:i32 mType.peer_type:RequestPeerType mType.max_quantity:i32
+TL_keyboard.KeyboardButton	0x7a11d782	TL_keyboardButtonRequestPoll_layer228	full	A-HEAD	TL_keyboard.java:1259	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] [F.0: mType.quiz:bool] text:str
+TL_keyboard.KeyboardButton	0x7d170cff	TL_keyboardButton_layer228	full	A-HEAD	TL_keyboard.java:927	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str
+TL_keyboard.KeyboardButton	0xa0c0505c	TL_keyboardButtonSimpleWebView_layer223	full	A-HEAD	TL_keyboard.java:1563	text:str mType.url:str
+TL_keyboard.KeyboardButton	0xa2fa4880	TL_keyboardButton_layer223	full	A-HEAD	TL_keyboard.java:950	text:str
+TL_keyboard.KeyboardButton	0xaa40f94d	TL_keyboardButtonRequestGeoLocation_layer228	full	A-HEAD	TL_keyboard.java:1083	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str
+TL_keyboard.KeyboardButton	0xb16a6c29	TL_keyboardButtonRequestPhone_layer223	full	A-HEAD	TL_keyboard.java:987	text:str
+TL_keyboard.KeyboardButton	0xbbc7515d	TL_keyboardButtonRequestPoll_layer223	full	A-HEAD	TL_keyboard.java:1294	flags:# [F.0: mType.quiz:bool] text:str
+TL_keyboard.KeyboardButton	0xc9662d05	TL_inputKeyboardButtonRequestPeer_layer221	opaque	A-HEAD	TL_keyboard.java:1846	
+TL_keyboard.KeyboardButton	0xe15c4370	TL_keyboardButtonSimpleWebView_layer228	full	A-HEAD	TL_keyboard.java:1533	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.url:str
+TL_keyboard.KeyboardButton	0xfc796b3f	TL_keyboardButtonRequestGeoLocation_layer223	full	A-HEAD	TL_keyboard.java:1106	text:str
+TL_keyboard.KeyboardInlineButton	0x0568a748	TL_keyboardButtonSwitchInline_layer157	full	A-HEAD	TL_keyboard.java:1783	flags:# mType.same_peer=F.0 text:str mType.query:str
+TL_keyboard.KeyboardInlineButton	0x10b78d29	TL_keyboardButtonUrlAuth_layer223	full	A-HEAD	TL_keyboard.java:1160	flags:# text:str [F.0: mType.fwd_text:str] mType.url:str mType.button_id:i32
+TL_keyboard.KeyboardInlineButton	0x11c1a322	TL_keyboardInlineButton	full	A-HEAD	TL_keyboard.java:865	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str type:TL_keyboard.InlineButtonType
+TL_keyboard.KeyboardInlineButton	0x13767230	TL_keyboardButtonWebView_layer223	full	A-HEAD	TL_keyboard.java:1518	text:str mType.url:str
+TL_keyboard.KeyboardInlineButton	0x258aff05	TL_keyboardButtonUrl_layer223	full	A-HEAD	TL_keyboard.java:1068	text:str mType.url:str
+TL_keyboard.KeyboardInlineButton	0x308660c1	TL_keyboardButtonUserProfile_layer223	full	A-HEAD	TL_keyboard.java:1473	text:str mType.user_id:i64
+TL_keyboard.KeyboardInlineButton	0x35bbdb6b	TL_keyboardButtonCallback_layer223	full	A-HEAD	TL_keyboard.java:1681	flags:# mType.requires_password=F.0 text:str mType.data:bytes
+TL_keyboard.KeyboardInlineButton	0x3fa53905	TL_keyboardButtonBuy_layer228	full	A-HEAD	TL_keyboard.java:1316	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str
+TL_keyboard.KeyboardInlineButton	0x50f41ccf	TL_keyboardButtonGame_layer223	full	A-HEAD	TL_keyboard.java:1024	text:str
+TL_keyboard.KeyboardInlineButton	0x68013e72	TL_inputKeyboardButtonUrlAuth_layer228	opaque	A-HEAD	TL_keyboard.java:1186	
+TL_keyboard.KeyboardInlineButton	0x683a5e46	TL_keyboardButtonCallback_layer117	full	A-HEAD	TL_keyboard.java:1701	text:str mType.data:bytes
+TL_keyboard.KeyboardInlineButton	0x75d2698e	TL_keyboardButtonCopy_layer223	full	A-HEAD	TL_keyboard.java:1383	text:str mType.copy_text:str
+TL_keyboard.KeyboardInlineButton	0x7d5e07c7	TL_inputKeyboardButtonUserProfile_layer228	opaque	A-HEAD	TL_keyboard.java:1398	
+TL_keyboard.KeyboardInlineButton	0x89c590f9	TL_keyboardButtonGame_layer228	full	A-HEAD	TL_keyboard.java:1001	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str
+TL_keyboard.KeyboardInlineButton	0x93b9fbb5	TL_keyboardButtonSwitchInline_layer223	full	A-HEAD	TL_keyboard.java:1756	flags:# mType.same_peer=F.0 text:str mType.query:str [F.1: mType.peer_types:vec<InlineQueryPeerType>]
+TL_keyboard.KeyboardInlineButton	0x991399fc	TL_keyboardButtonSwitchInline_layer228	full	A-HEAD	TL_keyboard.java:1716	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] mType.same_peer=F.0 text:str mType.query:str [F.1: mType.peer_types:vec<InlineQueryPeerType>]
+TL_keyboard.KeyboardInlineButton	0x9c1c0c55	TL_keyboardInlineButton_legacy	full	A-HEAD	TL_keyboard.java:899	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str type:TL_keyboard.InlineButtonType
+TL_keyboard.KeyboardInlineButton	0xafd93fbb	TL_keyboardButtonBuy_layer223	full	A-HEAD	TL_keyboard.java:1339	text:str
+TL_keyboard.KeyboardInlineButton	0xbcc4af10	TL_keyboardButtonCopy_layer228	full	A-HEAD	TL_keyboard.java:1353	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.copy_text:str
+TL_keyboard.KeyboardInlineButton	0xc0fd5d09	TL_keyboardButtonUserProfile_layer228	full	A-HEAD	TL_keyboard.java:1443	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.user_id:i64
+TL_keyboard.KeyboardInlineButton	0xd02e7fd4	TL_inputKeyboardButtonUrlAuth_layer223	opaque	A-HEAD	TL_keyboard.java:1229	
+TL_keyboard.KeyboardInlineButton	0xd80c25ec	TL_keyboardButtonUrl_layer228	full	A-HEAD	TL_keyboard.java:1038	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.url:str
+TL_keyboard.KeyboardInlineButton	0xe62bc960	TL_keyboardButtonCallback_layer228	full	A-HEAD	TL_keyboard.java:1648	flags:# mType.requires_password=F.0 [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.data:bytes
+TL_keyboard.KeyboardInlineButton	0xe846b1a0	TL_keyboardButtonWebView_layer228	full	A-HEAD	TL_keyboard.java:1488	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str mType.url:str
+TL_keyboard.KeyboardInlineButton	0xe988037b	TL_inputKeyboardButtonUserProfile_layer223	opaque	A-HEAD	TL_keyboard.java:1428	
+TL_keyboard.KeyboardInlineButton	0xf51006f9	TL_keyboardButtonUrlAuth_layer228	full	A-HEAD	TL_keyboard.java:1120	flags:# [F.10: style:TL_keyboard.KeyboardButtonStyle] text:str [F.0: mType.fwd_text:str] mType.url:str mType.button_id:i32
+TL_keyboard.KeyboardButtonStyle	0x4fdd3430	KeyboardButtonStyle	full	A-HEAD	TL_keyboard.java:520	flags:# bg_primary=F.0 bg_danger=F.1 bg_success=F.2 [F.3: icon:i64]
+TL_keyboard.ButtonType	0x3fe268fe	TL_inputButtonTypeRequestPeer	opaque	A-HEAD	TL_keyboard.java:142	
+TL_keyboard.ButtonType	0x4f58a237	TL_buttonTypeRequestPeer	full	A-HEAD	TL_keyboard.java:103	flags:# button_id:i32 peer_type:RequestPeerType max_quantity:i32
+TL_keyboard.ButtonType	0x9beee140	TL_buttonTypeRequestGeoLocation	full	A-HEAD	TL_keyboard.java:70	
+TL_keyboard.ButtonType	0xaacfff84	TL_buttonTypeRequestPoll	full	A-HEAD	TL_keyboard.java:81	flags:# [F.0: quiz:bool]
+TL_keyboard.ButtonType	0xc01a597a	TL_buttonTypeSimpleWebView	full	A-HEAD	TL_keyboard.java:127	url:str
+TL_keyboard.ButtonType	0xc9dd90e9	TL_buttonTypeDefault	full	A-HEAD	TL_keyboard.java:48	
+TL_keyboard.ButtonType	0xdf3d36f9	TL_buttonTypeRequestPhone	full	A-HEAD	TL_keyboard.java:59	
+TL_keyboard.InlineButtonType	0x2955bc38	TL_inlineButtonTypeCallback	full	A-HEAD	TL_keyboard.java:274	flags:# requires_password=F.0 data:bytes
+TL_keyboard.InlineButtonType	0x3bcab5b4	TL_inlineButtonTypeWebView	full	A-HEAD	TL_keyboard.java:259	url:str
+TL_keyboard.InlineButtonType	0x3fa33fcf	TL_inlineButtonTypeUserProfile	full	A-HEAD	TL_keyboard.java:346	user_id:i64
+TL_keyboard.InlineButtonType	0x48bad7a5	TL_inlineButtonTypeBuy	full	A-HEAD	TL_keyboard.java:306	
+TL_keyboard.InlineButtonType	0x53f3ce5a	TL_inputInlineButtonTypeUserProfile	opaque	A-HEAD	TL_keyboard.java:424	
+TL_keyboard.InlineButtonType	0x5cd3709d	TL_inlineButtonTypeGame	full	A-HEAD	TL_keyboard.java:295	
+TL_keyboard.InlineButtonType	0x93773ff5	TL_inlineButtonTypeSwitchInline	full	A-HEAD	TL_keyboard.java:317	flags:# same_peer=F.0 query:str [F.1: peer_types:vec<InlineQueryPeerType>]
+TL_keyboard.InlineButtonType	0x9961bcb4	TL_inputInlineButtonTypeUrlAuth	opaque	A-HEAD	TL_keyboard.java:387	
+TL_keyboard.InlineButtonType	0xa438619d	TL_inlineButtonTypeDisabled	full	A-HEAD	TL_keyboard.java:376	
+TL_keyboard.InlineButtonType	0xb41d3272	TL_inlineButtonTypeCopy	full	A-HEAD	TL_keyboard.java:361	copy_text:str
+TL_keyboard.InlineButtonType	0xbfd02da2	TL_inlineButtonTypeUrlAuth	full	A-HEAD	TL_keyboard.java:230	flags:# [F.0: fwd_text:str] url:str button_id:i32
+TL_keyboard.InlineButtonType	0xeca4f8d4	TL_inlineButtonTypeUrl	full	A-HEAD	TL_keyboard.java:215	url:str
+RequestPeerType	0x339bef6c	TL_requestPeerTypeBroadcast	full	A-HEAD	TLRPC.java:62646	flags:# creator=F.0 [F.3: has_username:bool] [F.1: user_admin_rights:TL_chatAdminRights] [F.2: bot_admin_rights:TL_chatAdminRights]
+RequestPeerType	0x3e81e078	TL_requestPeerTypeCreateBot	full	A-HEAD	TLRPC.java:62682	flags:# bot_managed=F.0 [F.1: suggested_name:str] [F.2: suggested_username:str]
+RequestPeerType	0x5f3b8a00	TL_requestPeerTypeUser	full	A-HEAD	TLRPC.java:62571	flags:# [F.0: bot:bool] [F.1: premium:bool]
+RequestPeerType	0xc9f06e1b	TL_requestPeerTypeChat	full	A-HEAD	TLRPC.java:62601	flags:# bot_participant=F.5 creator=F.0 [F.3: has_username:bool] [F.4: forum:bool] [F.1: user_admin_rights:TL_chatAdminRights] [F.2: bot_admin_rights:TL_chatAdminRights]
+TL_chatAdminRights	0x5fb224d5	TL_chatAdminRights	full	A-HEAD	TLRPC.java:4104	flags:# change_info=F.0 post_messages=F.1 edit_messages=F.2 delete_messages=F.3 ban_users=F.4 invite_users=F.5 pin_messages=F.7 add_admins=F.9 anonymous=F.10 manage_call=F.11 other=F.12 manage_topics=F.13 post_stories=F.14 edit_stories=F.15 delete_stories=F.16 manage_direct_messages=F.17 manage_ranks=F.18 manage_linked_peers=F.19 manage_welcome_messages=F.20
+InputPeer	0x179be863	TL_inputPeerChat_layer131	full	A-HEAD	TLRPC.java:51022	chat_id:i32
+InputPeer	0x17bae2e6	TL_inputPeerUserFromMessage_layer131	full	A-HEAD	TLRPC.java:51135	peer:InputPeer msg_id:i32 user_id:i32
+InputPeer	0x20adaef8	TL_inputPeerChannel_layer131	full	A-HEAD	TLRPC.java:51103	channel_id:i32 access_hash:i64
+InputPeer	0x27bcbbfc	TL_inputPeerChannel	full	A-HEAD	TLRPC.java:51035	channel_id:i64 access_hash:i64
+InputPeer	0x35a95cb9	TL_inputPeerChat	full	A-HEAD	TLRPC.java:51090	chat_id:i64
+InputPeer	0x7b8e7de6	TL_inputPeerUser_layer131	full	A-HEAD	TLRPC.java:51050	user_id:i32 access_hash:i64
+InputPeer	0x7da07ec9	TL_inputPeerSelf	full	A-HEAD	TLRPC.java:50982	
+InputPeer	0x7f3b18ea	TL_inputPeerEmpty	full	A-HEAD	TLRPC.java:51065	
+InputPeer	0x9c95f7bb	TL_inputPeerChannelFromMessage_layer131	full	A-HEAD	TLRPC.java:51118	peer:InputPeer msg_id:i32 channel_id:i32
+InputPeer	0xa87b0a1c	TL_inputPeerUserFromMessage	full	A-HEAD	TLRPC.java:50990	peer:InputPeer msg_id:i32 user_id:i64
+InputPeer	0xbd2a0840	TL_inputPeerChannelFromMessage	full	A-HEAD	TLRPC.java:51073	peer:InputPeer msg_id:i32 channel_id:i64
+InputPeer	0xdde8a54c	TL_inputPeerUser	full	A-HEAD	TLRPC.java:51007	user_id:i64 access_hash:i64
+InlineQueryPeerType	0x0e3b2d0c	TL_inlineQueryPeerTypeBotPM	full	A-HEAD	TLRPC.java:27274	
+InlineQueryPeerType	0x3081ed9d	TL_inlineQueryPeerTypeSameBotPM	full	A-HEAD	TLRPC.java:27290	
+InlineQueryPeerType	0x5ec4be43	TL_inlineQueryPeerTypeMegagroup	full	A-HEAD	TLRPC.java:27282	
+InlineQueryPeerType	0x6334ee9a	TL_inlineQueryPeerTypeBroadcast	full	A-HEAD	TLRPC.java:27250	
+InlineQueryPeerType	0x833c0fac	TL_inlineQueryPeerTypePM	full	A-HEAD	TLRPC.java:27266	
+InlineQueryPeerType	0xd766c50a	TL_inlineQueryPeerTypeChat	full	A-HEAD	TLRPC.java:27258	
+PollAnswer	0x199fed96	TL_inputPollAnswer	opaque	A-HEAD	TLRPC.java:2929	
+PollAnswer	0x4b7d786a	TL_pollAnswer	full	A-HEAD	TLRPC.java:2951	flags:# text:TL_textWithEntities option:bytes [F.0: media:MessageMedia] [F.1: added_by:Peer date:i32]
+PollAnswer	0x6ca9c2e9	TL_pollAnswer_layer178	full	A-HEAD	TLRPC.java:2999	text.text:str option:bytes
+PollAnswer	0xff16e2ca	TL_pollAnswer_layer223	full	A-HEAD	TLRPC.java:2984	text:TL_textWithEntities option:bytes
+PollAnswerVoters	0x3645230a	TL_pollAnswerVoters	full	A-HEAD	TLRPC.java:4636	flags:# chosen=F.0 correct=F.1 option:bytes [F.2: voters:i32 recent_voters:vec<Peer>]
+PollAnswerVoters	0x3b6ddad2	TL_pollAnswerVoters_layer223	full	A-HEAD	TLRPC.java:4663	flags:# chosen=F.0 correct=F.1 option:bytes voters:i32

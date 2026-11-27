@@ -52,6 +52,12 @@ committed constructors.tsv alone (no sources): one tl.Constructor per row, in ID
 the 4I4-P4 grammar (a flags word is KFlags, `name=F.n` a KTrue gated by that flags word, a secret KSecret). A token
 outside the grammar stops the run; the output is aligned as gofmt aligns it (TestTelegramTablesGoIsGofmtClean checks
 it), so formatting leaves it unchanged.
+Plan 4I4c Task 2: every TSV read, the completeness, the membership, the pin conflicts and --absent-from are keyed by
+(type, ID) (W1, design D4); the mode all-full-except (P7); an ID tested ahead of a switch is read as a case (ruling T2a);
+a field whose type's deserializer tries the other button family first is MANUAL (a union, read by hand); the types of
+TL_keyboard.java are TL_keyboard.<Name> (D2, T2b); an older ID a union reaches is `in-table through the union` (else
+`narrowing`, informational); each older report ends with the union check of Q5 (union_check), and the older readings
+of 0x48a30254 and 0x77608b83 are a `compatible widening (union)` where it holds.
 """
 import hashlib
 import os
@@ -67,6 +73,8 @@ HEADER = "type\tid\tclass\tbody\tpin\tsource\tfields"
 #   some-full:   the listed classes full, every other constructor of the switch opaque, except one whose readParams
 #                reads nothing: it is read whole, so it is full with an empty field list (Task 5 review ruling M3).
 #   prefix:      every constructor up to its last needed field (spec Q2, T6), full when that is the body.
+#   all-full-except: every constructor of the switch full except the listed classes, opaque (plan 4I4c P7: the
+#                client-to-server forms, design D7, §10).
 #
 # Plan 4I4b Task 1 (design D1, D3, rulings R2, B2, B9): every type a full or prefix row names is in the selection (the
 # closure), so every ID its A-HEAD switch reads is a row; a closure type the parser does not read is `some-full` with
@@ -91,7 +99,9 @@ SELECTION = [
         "TL_messageMediaDocument_layer159", "TL_messageMediaVideo_old", "TL_messageMediaWebPage_layer165",
         "TL_messageMediaPhoto_layer74", "TL_messageMediaAudio_layer45", "TL_messageMediaPhoto_old",
         "TL_messageMediaContact_layer131", "TL_messageMediaDocument_layer197_2", "TL_messageMediaDocument_layer197",
-        "TL_messageMediaDocument_layer68"}),
+        "TL_messageMediaDocument_layer68",
+        # plan 4I4c (design D1): the poll container of layer 223
+        "TL_messageMediaPoll_layer223"}),
     ("Photo", "all-full", None),
     ("Document", "all-full", None),
     ("GeoPoint", "all-full", None),
@@ -122,27 +132,62 @@ SELECTION = [
     ("ReactionCount", "some-full", {"TL_reactionCount"}),
     ("WebPageAttribute", "some-full", {
         "TL_webPageAttributeStickerSet", "TL_webPageAttributeStarGiftCollection", "TL_webPageAttributeAiComposeTone"}),
-    # the closure types the parser does not read (design D3): opaque, except a class that reads nothing (M3)
-    ("Poll", "some-full", set()),
-    ("PollResults", "some-full", set()),
-    ("ReplyMarkup", "some-full", set()),
-    ("InputUser", "some-full", set()),
+    # the closure types the parser does not read (design D3): opaque, except a class that reads nothing (M3); plan
+    # 4I4c (design D1, D6, Q5) reads Poll, PollResults, ReplyMarkup and InputUser whole
+    ("Poll", "all-full", None),
+    ("PollResults", "all-full", None),
+    ("ReplyMarkup", "all-full", None),
+    ("InputUser", "all-full", None),
     ("TL_iv.RichText", "some-full", set()),
     ("TL_iv.Page", "some-full", set()),
     ("TL_iv.RichMessage", "some-full", set()),
+    # plan 4I4c (design D1, D2, D7, §10; P7): reply markup, polls and InputUser with their closure; the keyboard types
+    # of tgnet/tl/TL_keyboard.java spelled TL_keyboard.<Name>; the client-to-server forms opaque
+    ("TL_keyboard.KeyboardButtonRow", "all-full", None),
+    ("TL_keyboard.KeyboardInlineButtonRow", "all-full", None),
+    ("TL_keyboard.KeyboardButton", "all-full-except", {
+        "TL_inputKeyboardButtonRequestPeer_layer228", "TL_inputKeyboardButtonRequestPeer_layer221"}),
+    ("TL_keyboard.KeyboardInlineButton", "all-full-except", {
+        "TL_inputKeyboardButtonUrlAuth_layer228", "TL_inputKeyboardButtonUrlAuth_layer223",
+        "TL_inputKeyboardButtonUserProfile_layer228", "TL_inputKeyboardButtonUserProfile_layer223"}),
+    ("TL_keyboard.KeyboardButtonStyle", "all-full", None),
+    ("TL_keyboard.ButtonType", "all-full-except", {"TL_inputButtonTypeRequestPeer"}),
+    ("TL_keyboard.InlineButtonType", "all-full-except", {
+        "TL_inputInlineButtonTypeUserProfile", "TL_inputInlineButtonTypeUrlAuth"}),
+    ("RequestPeerType", "all-full", None),
+    ("TL_chatAdminRights", "all-full", None),
+    ("InputPeer", "all-full", None),
+    ("InlineQueryPeerType", "all-full", None),
+    ("PollAnswer", "all-full-except", {"TL_inputPollAnswer"}),
+    ("PollAnswerVoters", "all-full", None),
 ]
 # The IDs pinned app versions read two ways (recon §4.2, design D4, ruling R3; coordinator ruling T1b generalises it):
 # each row is opaque whatever the selection says, so the table never picks one reading; its older-pin body CONFLICT is
 # reported with both readings and passes, but only on an opaque row (4I4b-P7). 0x85849473 and 0x332ba9ed: the older
 # classes have no readParams of their own and inherit their parent's (flags and a flag-gated field), A-HEAD overrides
-# it with an empty one; 0x48a30254: the rows' element type differs (recon §4.3).
-PIN_CONFLICTS = {0x6FB250D1, 0x85849473, 0x332BA9ED, 0x48A30254}
+# it with an empty one. Plan 4I4c (W1, design D4): keyed by (type, ID). 0x48a30254 (the rows' element type differs,
+# recon §4.3) left the set: its older reading is a compatible widening through the button union (Q5, union_check).
+PIN_CONFLICTS = {("ReactionCount", 0x6FB250D1), ("WebPage", 0x85849473), ("MessageAction", 0x332BA9ED)}
 # Ruling T1c (compatible widening): an older pin reads a vector's elements by one self-checking class, A-HEAD by the
 # switch of a type that holds that class's ID. {older class: (A-HEAD type, ID)}: the older reading is the A-HEAD one
 # when the ID's body is the same at that pin and at A-HEAD (checked by body_check at every pin).
 WIDENINGS = {"TL_webPageAttributeTheme": ("WebPageAttribute", 0x54B56617)}
+# Plan 4I4c Q5, ruling T2a (T1c applied to a union): an older pin reads every button, inline or not, through one
+# KeyboardButton switch, in rows of the self-checking 0x77608b83; A-HEAD reads buttons by the union of its two button
+# types (TL_keyboard.java:561-575, :735-742, :815-822). Where union_check holds at a pin (every ID of that older switch
+# is a row of one of the two types and reads the same bytes there), the older reading of these rows is the A-HEAD one:
+# {(type, ID): (older field type, A-HEAD field type)}.
+UNION_WIDENINGS = {
+    ("ReplyMarkup", 0x48A30254): ("vec<TL_keyboard.KeyboardButtonRow>", "vec<TL_keyboard.KeyboardInlineButtonRow>"),
+    ("TL_keyboard.KeyboardButtonRow", 0x77608B83): (
+        "vec<TL_keyboard.KeyboardButton>", "vec<TL_keyboard.KeyboardInlineButton|TL_keyboard.KeyboardButton>"),
+}
+UNION_BUTTONS = ("TL_keyboard.KeyboardButton", "TL_keyboard.KeyboardInlineButton")
 SECRET_LEAVES = {"key", "iv", "file_reference", "encrypted_key"}
 PEER_CLASS = {"TL_peerUser": "user", "TL_peerChat": "chat", "TL_peerChannel": "channel"}
+# The bases a TL type's class extends: TLObject, or (plan 4I4c ruling T2b) the "false super class" ButtonTypeProto of
+# tgnet/tl/TL_keyboard.java that ButtonType and InlineButtonType extend (TL_keyboard.java:18-20, :177).
+TOP_BASES = ("TLObject", "TLRPC.TLObject", "ButtonTypeProto", "TL_keyboard.ButtonTypeProto")
 TARGET_CLASS = {"user_id": "user", "chat_id": "chat", "channel_id": "channel"}
 
 READ_KIND = {
@@ -217,6 +262,27 @@ nothing; `0x85849473` was a `full` row in 4I4, corrected here), `0x48a30254` (th
 `TL_webPageAttributeTheme`, that class's ID `0x54b56617` reads the same fields at that pin and at A-HEAD (a compatible
 widening, ruling T1c; its `settings:ThemeSettings` element `0x9c14984a` is read by hand at A-HEAD and not compared). The
 hand-read rows of plan 4I4b are in their own section at the end of this file.
+
+Plan 4I4c (Task 2, fetched again 2026-11-27 the same way, every file with the SHA-256 the per-pin tables below give):
+a row is identified by (type, ID) (design D4). `0x77608b83` is the one ID that is a row of two types,
+`TL_keyboard.KeyboardButtonRow` (`TL_keyboard.java:749`) and `TL_keyboard.KeyboardInlineButtonRow` (`:645`), and every
+check (the completeness, the membership, the pin conflicts) is per (type, ID). The table adds reply markup, polls,
+InputUser and their closure (629 rows). The types of `tgnet/tl/TL_keyboard.java` are spelled `TL_keyboard.<Name>`, inside
+that file too (design D2), and its `ButtonType` and `InlineButtonType` extend the class `ButtonTypeProto`
+(`TL_keyboard.java:18`, ruling T2b). An ID a type tests ahead of its switch is read as a case label is (`0x11c1a322`
+`TL_keyboardInlineButton`, `TL_keyboard.java:671`, ruling T2a). Each A-HEAD button reader tries the other button family
+first (`TL_keyboard.java:561-575`, `:735-742`, `:815-822`), so `0x77608b83` under both types and `0x19420af6` read a union
+`vec<A|B>` in the app's order; the reduction leaves them to the builder, like the classed id vectors (`vec<id32@user>`,
+`vec<id64@user>`, `VectorLegacy.java:28`, `:49`) of three PollResults rows, and the six are read by hand in their own
+section at the end of this file. The client-to-server forms stay opaque (design §10). At an older pin an inline button
+its single `KeyboardButton` switch reads is `in-table through the union`: A-HEAD reads it as
+`TL_keyboard.KeyboardInlineButton` wherever it reads a button, so no older ID is narrowed. `0x48a30254`
+TL_replyInlineMarkup_layer228 is no longer a pin conflict (the 4I4b statement above holds for 4I4b only): each older
+pin's report ends with the union check (every ID of that switch is a row of one of the two button types that reads the
+same bytes there and at A-HEAD; a client-to-server row stops the decode, it never misreads), so its older reading and
+that of `0x77608b83` are a compatible widening (union) (Q5, ruling T1c applied to a union). Two adjacent gates of one
+flag bit compare as the one gate that holds both (ruling T1a), and a classed id vector compares as the bare vector it
+is on the wire.
 
 ## Pins
 
@@ -437,8 +503,9 @@ class Source:
         return c.name if c.outer is None or c.outer.name == "TLRPC" else c.outer.name + "." + c.name
 
     def _top(self, name, outer=None):
-        """The class `name` (nested in `outer` when given) that extends TLObject, TLRPC.java first, or None."""
-        cands = [c for c in self.by_name.get(name, []) if c.extends in ("TLObject", "TLRPC.TLObject")]
+        """The class `name` (nested in `outer` when given) that extends TLObject (or a TOP_BASES class), TLRPC.java
+        first, or None."""
+        cands = [c for c in self.by_name.get(name, []) if c.extends in TOP_BASES]
         if outer is not None:
             cands = [c for c in cands if c.outer is not None and c.outer.name == outer]
         else:
@@ -499,7 +566,25 @@ class Source:
         if start is None:
             # a self-checking class (SuggestedPost, TL_factCheck): it reads its own constructor only
             return [(b.constructor, b.line, b)] if b.constructor is not None else None
+        # plan 4I4c ruling T2a: an ID tested ahead of the switch, `if (constructor == X.constructor) { return new Y(); }`
+        # (KeyboardInlineButton.fromConstructor, TL_keyboard.java:671), is read by the type as a case label is
         out, labels, depth = [], [], 0
+        for i in range(b.line - 1, start):
+            m = re.search(r"\bif\s*\(\s*constructor\s*==\s*([\w.]+)\.constructor\s*\)", lines[i])
+            if not m:
+                continue
+            c = self.resolve(m.group(1), b.fname)
+            if c is None or c.constructor is None:
+                raise SystemExit("unresolved constructor test at %s:%d" % (b.fname, i + 1))
+            made = None
+            for j in range(i, min(i + 3, start)):
+                n = re.search(r"\breturn\s+new\s+([\w.]+)\s*\(", lines[j])
+                if n:
+                    made = self.resolve(n.group(1), b.fname)
+                    break
+            if made is None:
+                raise SystemExit("a constructor test of an unknown shape at %s:%d" % (b.fname, i + 1))
+            out.append((c.constructor, i + 1, made))
         for i in range(start, b.end):
             line = lines[i].strip()
             depth += lines[i].count("{") - lines[i].count("}")
@@ -529,6 +614,41 @@ class Manual(Exception):
     def __init__(self, where, why):
         super().__init__(where, why)
         self.where, self.why = where, why
+
+
+def qualify(src, typ, fname):
+    """Plan 4I4c design D2, ruling T2b (B7): a bare type name read inside tgnet/tl/<Outer>.java that names a class nested
+    in <Outer> is spelled `Outer.Name` (KeyboardButton in TL_keyboard.java is TL_keyboard.KeyboardButton)."""
+    if "." in typ or fname == "TLRPC.java":
+        return typ
+    c = src.resolve(typ, fname)
+    if c is not None and c.fname == fname and c.outer is not None and c.outer.outer is None and \
+            c.outer.name + ".java" == fname:
+        return src.spell(c)
+    return typ
+
+
+def fallback(src, typ, fname):
+    """Plan 4I4c ruling T2a: (other class, line) when the static TLdeserialize of the type `typ` (as named in `fname`)
+    tries another class's fromConstructor before its own (KeyboardButton.TLdeserialize, TL_keyboard.java:815): a field
+    of that type then reads a union in the app's order, which the reduction leaves to the builder (MANUAL). None
+    otherwise."""
+    c = src.resolve(typ, fname)
+    if c is None or c.end is None:
+        return None
+    lines = src.files[c.fname]
+    depth, inside = 0, False
+    for i in range(c.line - 1, c.end):
+        if not inside and re.search(r"\bstatic\s+[\w.<>]+\s+TLdeserialize\s*\(", lines[i]):
+            inside, depth = True, 0
+        if inside:
+            m = re.search(r"\b(\w+)\.fromConstructor\(\s*constructor\s*\)", lines[i])
+            if m and m.group(1) != c.name:
+                return m.group(1), i + 1
+            depth += lines[i].count("{") - lines[i].count("}")
+            if depth <= 0 and "}" in lines[i]:
+                inside = False
+    return None
 
 
 def statements(lines, first, last):
@@ -597,6 +717,15 @@ def reduce_class(src, c):
     def where(ln):
         return "%s:%d" % (fname, ln)
 
+    def obj(typ, ln):
+        """An object type read at line ln: spelled by D2, MANUAL when its deserializer falls back (T2a)."""
+        typ = qualify(src, typ, fname)
+        fb = fallback(src, typ, fname)
+        if fb is not None:
+            raise Manual(where(ln), "the deserializer of %s tries %s first (%s:%d): a union in the app's order, read "
+                                    "by hand (ruling T2a)" % (typ, fb[0], src.resolve(typ, fname).fname, fb[1]))
+        return typ
+
     def emit(field, ln):
         for k, _, flds, _ in reversed(blocks):
             if k == "try":
@@ -663,7 +792,7 @@ def reduce_class(src, c):
         if vec is not None and vec.get("phase") == "loop":
             m = RE_ELEM.match(s)
             if m:
-                vec["elem"] = "vec<%s>" % m.group(3)
+                vec["elem"] = "vec<%s>" % obj(m.group(3), ln)
                 vec["local"] = m.group(2)
                 continue
             m = RE_ADD.match(s)
@@ -692,7 +821,7 @@ def reduce_class(src, c):
             continue
         m = RE_DESER.match(s)
         if m:
-            local_type, name, typ = m.group(1), m.group(2), m.group(3)
+            local_type, name, typ = m.group(1), m.group(2), obj(m.group(3), ln)
             if local_type:
                 container, idx = emit("%s:%s" % (name, typ), ln)
                 locals_[name] = (container, idx)
@@ -701,16 +830,16 @@ def reduce_class(src, c):
             continue
         m = RE_DESER1.match(s)
         if m:
-            emit("%s:%s" % (m.group(1), m.group(2)), ln)
+            emit("%s:%s" % (m.group(1), obj(m.group(2), ln)), ln)
             continue
         m = RE_ADDOBJ.match(s)
         if m:
             # one boxed object read straight into a list (TL_documentEncrypted's single thumb)
-            emit("%s:%s" % (m.group(1), m.group(2)), ln)
+            emit("%s:%s" % (m.group(1), obj(m.group(2), ln)), ln)
             continue
         m = RE_VECL.match(s)
         if m:
-            emit("%s:vec<%s>" % (m.group(1), m.group(2)), ln)
+            emit("%s:vec<%s>" % (m.group(1), obj(m.group(2), ln)), ln)
             continue
         m = RE_BARE.match(s)
         if m and m.group(1) in READ_KIND:
@@ -721,7 +850,7 @@ def reduce_class(src, c):
             continue
         m = RE_VEC.match(s)
         if m:
-            emit("%s:vec<%s>" % (m.group(1), m.group(2)), ln)
+            emit("%s:vec<%s>" % (m.group(1), obj(m.group(2), ln)), ln)
             continue
         m = RE_VECP.match(s)
         if m and m.group(2) in VEC_KIND:
@@ -873,8 +1002,9 @@ def map_token(tok, names):
     t = tok[:-1] if close else tok
     if ":" in t and not t.startswith("["):
         n, k = t.split(":", 1)
-        if k.startswith("vec<") and k.endswith(">") and k[4:-1] in names:
-            k = "vec<%s>" % names[k[4:-1]]
+        if k.startswith("vec<") and k.endswith(">"):
+            # plan 4I4c W2: each type of a union vec<A|B> is spelled on its own
+            k = "vec<%s>" % "|".join(names.get(e, e) for e in k[4:-1].split("|"))
         elif k in names:
             k = names[k]
         t = n + ":" + k
@@ -911,13 +1041,33 @@ def normalize(items, names):
         # a gate whose fields were all dropped: "[F.n:" followed by its closing bracket only
         joined = " ".join(toks)
         joined = re.sub(r"\[F2?\.\d+:\]", "", joined).strip()
-        if joined:
-            out.append(joined)
+        if not joined:
+            continue
+        # plan 4I4c Task 2 (ruling T1a, what is read): two adjacent gates of one flag bit read what one gate holding
+        # both reads (`[F.4: solution:str] [F.4: solution_entities:...]` and `[F.4: solution:str solution_entities:...]`)
+        gate = re.match(r"\[F2?\.\d+: ", joined)
+        if gate and out and out[-1].startswith(gate.group(0)) and out[-1].endswith("]") and joined.endswith("]"):
+            out[-1] = out[-1][:-1] + " " + joined[len(gate.group(0)):]
+            continue
+        out.append(joined)
     return out
 
 
+def selected_opaque(src, typ, mode, arg, cid, c):
+    """The selection's body for one constructor is opaque: a pin conflict (keyed by (type, ID), plan 4I4c W1), a class
+    a some-full type does not list (unless it reads nothing, M3) or a class an all-full-except type lists (P7)."""
+    if (typ, cid) in PIN_CONFLICTS:
+        return True
+    if mode == "some-full":
+        return c.name not in arg and not reads_nothing(src, c)
+    if mode == "all-full-except":
+        return c.name in arg
+    return False
+
+
 def build_rows(src, pin, skip=None):
-    """The table rows the selection asks for at this pin (IDs in `skip` left out), and the MANUAL notes."""
+    """The table rows the selection asks for at this pin (a (type, ID) for which `skip(type, ID)` is true left out),
+    and the MANUAL notes."""
     rows, manual = [], []
     names = pin_types(src)
     for typ, mode, arg in SELECTION:
@@ -926,10 +1076,10 @@ def build_rows(src, pin, skip=None):
             manual.append("%s: no switch at this pin" % typ)
             continue
         for cid, case_line, c in sorted(sw, key=lambda e: e[0]):
-            if skip is not None and cid in skip:
+            if skip is not None and skip(typ, cid):
                 continue
             body, fields = "full", ""
-            if cid in PIN_CONFLICTS or (mode == "some-full" and c.name not in arg and not reads_nothing(src, c)):
+            if selected_opaque(src, typ, mode, arg, cid, c):
                 body = "opaque"
             else:
                 try:
@@ -997,8 +1147,7 @@ def verify_row(src, r, ids, names):
         return "MISMATCH (source %s)" % source
     mode = {t: m for t, m, _ in SELECTION}[r[0]]
     arg = {t: a for t, _, a in SELECTION}[r[0]]
-    if (cid in PIN_CONFLICTS or (mode == "some-full" and c.name not in arg and not reads_nothing(src, c))) != (
-            r[3] == "opaque"):
+    if selected_opaque(src, r[0], mode, arg, cid, c) != (r[3] == "opaque"):
         return "MISMATCH (body %s against the selection)" % r[3]
     if r[3] == "opaque":
         return "verified"
@@ -1024,16 +1173,17 @@ SCALAR_KINDS = {"#", "i32", "i64", "dbl", "bool", "bytes", "str", "secret", "vec
 
 
 def named_types(fields):
-    """The object types a fields column names (a field `name:Type` or `name:vec<Type>`)."""
+    """The object types a fields column names (a field `name:Type` or `name:vec<Type>`; plan 4I4c W2, W3, design D3:
+    both types of a union `vec<A|B>`, none of a classed id vector `vec<id32@C>`/`vec<id64@C>` or of `vec<str>`)."""
     out = []
     for tok in fields.split():
         t = tok.rstrip("]")
         if t.startswith("[") or ":" not in t:
             continue
         k = t.split(":", 1)[1]
-        if k in SCALAR_KINDS or re.fullmatch(r"id(32|64)@\w+", k):
+        if k in SCALAR_KINDS or re.fullmatch(r"(vec<)?id(32|64)@\w+>?", k):
             continue
-        out.append(k[4:-1] if k.startswith("vec<") and k.endswith(">") else k)
+        out += k[4:-1].split("|") if k.startswith("vec<") and k.endswith(">") else [k]
     return out
 
 
@@ -1046,7 +1196,7 @@ def closure(table):
 
 def wire_shape(items):
     """Ruling T1a: what a body reads, field names set aside: the gates, the flags words and each field's wire type (an
-    inline id as its width)."""
+    inline id as its width, a classed id vector as the bare vector of that width, plan 4I4c W3)."""
     out = []
     for it in items:
         toks = []
@@ -1056,6 +1206,7 @@ def wire_shape(items):
             if ":" in b and not b.startswith("["):
                 k = b.split(":", 1)[1]
                 b = re.sub(r"^id(32|64)@.*$", lambda m: "i" + m.group(1), k)
+                b = re.sub(r"^vec<id(32|64)@\w+>$", lambda m: "vec<i%s>" % m.group(1), b)
             toks.append(b + ("]" if close else ""))
         out.append(" ".join(toks))
     return out
@@ -1096,6 +1247,89 @@ def widen(src, head, raw, names, hnames):
     return out, notes
 
 
+def field_kinds(items):
+    """The field types of reduced or row items (flags words and flag-only trues left out)."""
+    out = []
+    for it in items:
+        for t in it.split():
+            t = t.rstrip("]")
+            if ":" in t and not t.startswith("[") and t.split(":", 1)[1] != "#":
+                out.append(t.split(":", 1)[1])
+    return out
+
+
+def union_check(table, src, head, pin):
+    """Plan 4I4c Q5 (design §8.3, ruling T1c applied to a union, T2a): whether every inline keyboard this older pin
+    writes is readable by the A-HEAD reading. The older 0x48a30254 reads rows of the self-checking 0x77608b83, whose
+    buttons come from one KeyboardButton switch; A-HEAD reads 0x77608b83 in an inline markup as
+    TL_keyboardInlineButtonRow_layer228, its buttons by the union of TL_keyboard.KeyboardButton and
+    TL_keyboard.KeyboardInlineButton. It holds iff those older readings are as stated and every ID of that switch is a
+    row of one of the two types (the first in that order) that, where it is full, reads the same bytes at both pins
+    (rulings T1a, B4: normalised wire shapes); an opaque row there stops the decode, it never misreads. Returns (report
+    lines, holds)."""
+    names, hnames = compare_names(src), compare_names(head)
+    keys = {(r[0], r[1]): r for r in table}
+    lines = ["Union check (Q5, ruling T2a): every button ID of this pin's single `KeyboardButton` switch, read by the "
+             "A-HEAD union `TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton` (the first type holding the "
+             "ID): `equal` (same bytes at both pins), `opaque at A-HEAD` (a stop, not a misread) or `CONFLICT`.", "",
+             "| Pin | Union element | ID | Verdict | Class at this pin |", "|---|---|---|---|---|"]
+    holds, why = True, []
+    inline_row = keys.get(("TL_keyboard.KeyboardInlineButtonRow", "0x77608b83"))
+    want = "buttons:vec<%s>" % "|".join(UNION_BUTTONS)
+    if inline_row is None or inline_row[6] != want:
+        holds = False
+        why.append("the A-HEAD 0x77608b83 inline row does not read %s" % want)
+    sw = src.switch("ReplyMarkup") or []
+    old = [c for cid, _, c in sw if cid == 0x48A30254]
+    row = src.switch("TL_keyboard.KeyboardButtonRow") or []
+    olds = []
+    try:
+        olds = [field_kinds(normalize(reduce_class(src, old[0]), names)) if old else None,
+                field_kinds(normalize(reduce_class(src, row[0][2]), names)) if row and row[0][0] == 0x77608B83 else None]
+    except Manual as e:
+        holds = False
+        why.append("the older reader is MANUAL at %s" % e.where)
+    if olds and olds != [["vec<TL_keyboard.KeyboardButtonRow>"], ["vec<TL_keyboard.KeyboardButton>"]]:
+        holds = False
+        why.append("the older rows read %s" % olds)
+    buttons = src.switch("TL_keyboard.KeyboardButton")
+    if buttons is None:
+        holds = False
+        why.append("no KeyboardButton switch at this pin")
+        buttons = []
+    hsw = {typ: {cid: c for cid, _, c in (head.switch(typ) or [])} for typ in UNION_BUTTONS}
+    for cid, _, c in sorted(buttons, key=lambda e: e[0]):
+        at = "%s (%s:%d)" % (c.name, c.fname, c.line)
+        typ = next((t for t in UNION_BUTTONS if (t, "0x%08x" % cid) in keys), None)
+        if typ is None:
+            holds = False
+            lines.append("| %s | %s | 0x%08x | no row of either type | %s |" % (pin, " or ".join(UNION_BUTTONS), cid, at))
+            continue
+        r = keys[(typ, "0x%08x" % cid)]
+        if r[3] == "opaque":
+            lines.append("| %s | %s | 0x%08x | opaque at A-HEAD (%s): a stop, not a misread | %s |" % (
+                pin, typ, cid, r[2], at))
+            continue
+        try:
+            older = wire_shape(normalize(reduce_class(src, c), names))
+            hc = hsw[typ].get(cid)
+            ref = wire_shape(normalize(reduce_class(head, hc) if hc is not None else split_items(r[6]), hnames))
+        except Manual as e:
+            holds = False
+            lines.append("| %s | %s | 0x%08x | not compared (MANUAL at %s) | %s |" % (pin, typ, cid, e.where, at))
+            continue
+        if older == ref:
+            lines.append("| %s | %s | 0x%08x | equal (%s) | %s |" % (pin, typ, cid, r[2], at))
+        else:
+            holds = False
+            lines.append("| %s | %s | 0x%08x | CONFLICT (%s at this pin, %s at A-HEAD) | %s |" % (
+                pin, typ, cid, " ".join(older) or "nothing", " ".join(ref) or "nothing", at))
+    lines += ["", "Union check at %s: %s." % (pin, "holds, every older inline keyboard is readable by the A-HEAD "
+                                              "reading (a compatible widening)" if holds else
+                                              "does not hold (%s)" % ("; ".join(why) or "see the rows above"))]
+    return lines, holds
+
+
 def body_check(table, src, head, pin):
     """Design D6, ruling B4, 4I4b-P7, rulings T1a-T1c: the body of every row whose ID this pin's switch reads, compared
     with its A-HEAD reading by what is read (normalised at each pin by `normalize`, then `wire_shape`): (report lines,
@@ -1104,11 +1338,13 @@ def body_check(table, src, head, pin):
     widening`. The A-HEAD reading is the reduced body at A-HEAD, or the row's own fields when A-HEAD does not read the
     ID or the row is read by hand there. A row the reduction cannot read at this pin is membership-only."""
     names, hnames = compare_names(src), compare_names(head)
+    union_lines, union_holds = union_check(table, src, head, pin)
     lines = ["Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at "
              "this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire "
              "types; flag-only trues, `mType.` holders and field names set aside, object types named by the "
              "deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ "
-             "(informational); `membership-only` names the line the reduction cannot read.", "",
+             "(informational); `membership-only` names the line the reduction cannot read; `compatible widening "
+             "(union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).", "",
              "| Pin | Type | ID | Verdict | Class at this pin |", "|---|---|---|---|---|"]
     bad = compared = membership = 0
     for typ, _, _ in SELECTION:
@@ -1153,7 +1389,13 @@ def body_check(table, src, head, pin):
                 verdict = "equal" if not diff else "equal on the wire (names differ: %s)" % "; ".join(diff)
             elif notes and wire_shape(wider) == wire_shape(ref):
                 verdict = "compatible widening (%s)" % "; ".join(notes)
-            elif cid in PIN_CONFLICTS and r[3] == "opaque":
+            elif union_holds and (typ, cid) in UNION_WIDENINGS and wire_shape(
+                    [it.replace(*UNION_WIDENINGS[(typ, cid)]) for it in older]) == wire_shape(ref):
+                # a union's "|" is escaped in the Markdown table cell
+                old_t, new_t = (t.replace("|", "\\|") for t in UNION_WIDENINGS[(typ, cid)])
+                verdict = "compatible widening (union) (%s read as %s: the union check below holds at this pin)" % (
+                    old_t, new_t)
+            elif (typ, cid) in PIN_CONFLICTS and r[3] == "opaque":
                 verdict = "CONFLICT (opaque; pin conflict: %s at %s:%d, %s at %s)" % (
                     " ".join(older) or "nothing", c.fname, c.line, " ".join(ref) or "nothing", ref_at)
             else:
@@ -1161,8 +1403,27 @@ def body_check(table, src, head, pin):
                     " ".join(older) or "nothing", c.fname, c.line, " ".join(ref) or "nothing", ref_at)
                 bad += 1
             lines.append("| %s | %s | %s | %s | %s |" % (pin, typ, r[1], verdict, at))
-    lines += ["", "Compared %d rows; membership-only %d" % (compared, membership)]
+    lines += ["", "Compared %d rows; membership-only %d" % (compared, membership), ""] + union_lines
     return lines, bad
+
+
+def membership(table, keys, typ, cid):
+    """The membership verdict of an ID an older pin's switch of `typ` reads (plan 4I4c W1, design §8.3, Q10, ruling
+    T2a): `in-table` (a row of its type); else, when a row of another type holds it, `in-table through the union` if
+    every field of the table typed `typ` is a union with that type (A-HEAD reads the ID wherever the type is read), or
+    `narrowing` (informational: a field reading `typ` alone stops there); else `missing`."""
+    if (typ, cid) in keys:
+        return "in-table"
+    others = sorted(t for t, i in keys if i == cid and t != typ)
+    if not others:
+        return "missing"
+    other = others[0]
+    kinds = [k for r in table if r[3] != "opaque" for k in field_kinds(split_items(r[6]))
+             if typ in k.replace("vec<", "").replace(">", "").split("|")]
+    union = "vec<%s|%s>" % (typ, other), "vec<%s|%s>" % (other, typ)
+    if kinds and all(k in union for k in kinds):
+        return "in-table through the union (A-HEAD reads it as %s; every field of type %s is a union with it, "                "ruling T2a)" % (other, typ)
+    return "narrowing (A-HEAD reads it as %s; a field of type %s that is no union with it stops there)" % (other, typ)
 
 
 def check(tsv, pin, srcdir, commit, head=None):
@@ -1171,7 +1432,8 @@ def check(tsv, pin, srcdir, commit, head=None):
     src = Source(srcdir)
     names = pin_types(src)
     table = load_tsv(tsv)
-    by_id = {int(r[1], 16): r for r in table}
+    # plan 4I4c W1, design D4: a row is identified by (type, ID)
+    keys = {(r[0], int(r[1], 16)) for r in table}
     switches = {typ: (src.switch(typ) or []) for typ, _, _ in SELECTION}
     out, bad = [], 0
     out += ["## %s (%s)" % (pin, commit or "commit not given"), "",
@@ -1203,7 +1465,7 @@ def check(tsv, pin, srcdir, commit, head=None):
                 "| Type | IDs the switch reads | Rows pinned here | Verdict |", "|---|---|---|---|"]
         for typ, _, _ in SELECTION:
             ids = {cid: (ln, c) for cid, ln, c in switches[typ]}
-            absent = sorted(cid for cid in ids if cid not in by_id or by_id[cid][0] != typ)
+            absent = sorted(cid for cid in ids if (typ, cid) not in keys)
             for cid in absent:
                 bad += 1
                 out.append("| %s | 0x%08x | %s | missing |" % (typ, cid, ids[cid][1].name))
@@ -1225,11 +1487,10 @@ def check(tsv, pin, srcdir, commit, head=None):
                 out.append("| %s | %s | - | type not defined at this pin | - |" % (pin, typ))
                 continue
             for cid, ln, c in sorted(switches[typ], key=lambda e: e[0]):
-                ok = cid in by_id and by_id[cid][0] == typ
-                if not ok:
+                verdict = membership(table, keys, typ, cid)
+                if verdict == "missing":
                     bad += 1
-                out.append("| %s | %s | 0x%08x | %s | %s (%s:%d) |" % (
-                    pin, typ, cid, "in-table" if ok else "missing", c.name, c.fname, c.line))
+                out.append("| %s | %s | 0x%08x | %s | %s (%s:%d) |" % (pin, typ, cid, verdict, c.name, c.fname, c.line))
         if head is not None:
             lines, nbad = body_check(table, src, Source(head), pin)
             out += [""] + lines
@@ -1426,7 +1687,12 @@ def main(argv):
         if len(args) != 1 or pin not in PINS:
             raise SystemExit(__doc__)
         src = Source(args[0])
-        skip = {int(r[1], 16) for r in load_tsv(absent)} if absent else None
+        skip = None
+        if absent:
+            # plan 4I4c (W1, ruling T2a): an ID the table holds under the type, or reads through a union, is not absent
+            table = load_tsv(absent)
+            keys = {(r[0], int(r[1], 16)) for r in table}
+            skip = lambda typ, cid: membership(table, keys, typ, cid) != "missing"  # noqa: E731
         rows, manual = build_rows(src, pin, skip)
         sys.stdout.write(HEADER + "\n")
         for r in rows:

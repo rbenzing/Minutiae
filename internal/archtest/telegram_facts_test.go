@@ -36,6 +36,9 @@ var telegramPins = map[string]string{
 // Plan 4I4b Task 1 (design D1, D3, rulings R2, B2, B7, B9): every ID the A-HEAD switch of a type a full or prefix
 // row names is a row (the closure), MessageAction included (116); the media sub-objects, the tail objects and the
 // closure types; 535 rows in all (ruling T1d: the emitted counts).
+// Plan 4I4c Task 2 (design D1-D4, §7; rulings Q5, T1d, T2a): reply markup, polls, InputUser and their closure; the
+// keyboard types spelled TL_keyboard.<Name> (D2, B7); 0x11c1a322 TL_keyboardInlineButton, read ahead of the legacy
+// switch, makes KeyboardInlineButton 26 (T2a); 629 rows in all.
 var telegramTypeCounts = map[string]int{
 	"Message": 49, "Peer": 6, "MessageFwdHeader": 7, "MessageAction": 116, "PhoneCallDiscardReason": 6,
 	"MessageMedia": 52, "User": 29, "Chat": 39, "GeoPoint": 4, "MessageReplyHeader": 9, "MessageEntity": 28,
@@ -46,56 +49,79 @@ var telegramTypeCounts = map[string]int{
 	"TL_textWithEntities": 1, "SuggestedPost": 1, "TL_stars.StarsAmount": 2, "TL_messages_emojiGameOutcome": 1,
 	"WebPageAttribute": 9, "Poll": 6, "PollResults": 6, "ReplyMarkup": 8, "InputUser": 6, "TL_iv.RichText": 32,
 	"TL_iv.Page": 7, "TL_iv.RichMessage": 1,
+	"TL_keyboard.KeyboardButtonRow": 1, "TL_keyboard.KeyboardInlineButtonRow": 2, "TL_keyboard.KeyboardButton": 16,
+	"TL_keyboard.KeyboardInlineButton": 26, "TL_keyboard.KeyboardButtonStyle": 1, "TL_keyboard.ButtonType": 7,
+	"TL_keyboard.InlineButtonType": 12, "RequestPeerType": 4, "TL_chatAdminRights": 1, "InputPeer": 12,
+	"InlineQueryPeerType": 6, "PollAnswer": 4, "PollAnswerVoters": 2,
 }
 
 // telegramOpaqueCounts are the opaque rows per type (plan 4I4b Task 1; D1, R3, B2, B9); a type not listed has none.
 // The closure types are opaque except a class that reads nothing (rule M3); an ID the pins read two ways is opaque
-// (R3, T1b: 0x6fb250d1, 0x85849473, 0x332ba9ed, 0x48a30254).
+// (R3, T1b: 0x6fb250d1, 0x85849473, 0x332ba9ed). Plan 4I4c Task 2 (D1, D7, §10, P7, Q5): Poll, PollResults,
+// InputUser and ReplyMarkup are read whole (0x48a30254 too: its older reading is a compatible widening, Q5); the ten
+// client-to-server classes stay opaque (all-full-except).
 var telegramOpaqueCounts = map[string]int{
-	"MessageMedia": 20, "MessageAction": 103, "WebPage": 1, "WebPageAttribute": 6, "ReactionCount": 1, "InputUser": 4,
-	"TL_iv.RichText": 31, "Poll": 6, "PollResults": 6, "ReplyMarkup": 8, "TL_iv.Page": 7, "TL_iv.RichMessage": 1,
+	"MessageMedia": 19, "MessageAction": 103, "WebPage": 1, "WebPageAttribute": 6, "ReactionCount": 1,
+	"TL_iv.RichText": 31, "TL_iv.Page": 7, "TL_iv.RichMessage": 1, "TL_keyboard.KeyboardButton": 2,
+	"TL_keyboard.KeyboardInlineButton": 4, "TL_keyboard.ButtonType": 1, "TL_keyboard.InlineButtonType": 2, "PollAnswer": 1,
 }
 
 // telegramPrefixCounts are the prefix rows per type (spec Q2, T6); a type not listed has none.
 var telegramPrefixCounts = map[string]int{"User": 25, "Chat": 32}
 
-// telegramRequiredIDs are IDs every later task relies on, with the class the recon names (recon §3.2-§3.6).
-var telegramRequiredIDs = map[string]string{
-	"0x80e11a7f": "TL_messageActionPhoneCall",
-	"0x85e42301": "TL_phoneCallDiscardReasonMissed",
-	"0xfaf7e8c9": "TL_phoneCallDiscardReasonBusy",
-	"0x57adc690": "TL_phoneCallDiscardReasonHangup",
-	"0xe095c1a0": "TL_phoneCallDiscardReasonDisconnect",
-	"0x9fbbf1f7": "TL_phoneCallDiscardReasonMigrateConferenceCall",
-	"0x555555fa": "TL_message_secret",
-	"0x555555f9": "TL_message_secret_layer72",
-	"0x555555f8": "TL_message_secret_old",
-	"0x7600b9d3": "TL_message",
-	"0x7a800e0a": "TL_messageService",
-	"0x90a6ca84": "TL_messageEmpty",
-	"0xa4e97f37": "TL_message_layer179",
-	"0x59511722": "TL_peerUser",
-	"0x36c6019a": "TL_peerChat",
-	"0xa2a5371e": "TL_peerChannel",
-	"0x9db1bc6d": "TL_peerUser_layer131",
-	"0xbad0e5bb": "TL_peerChat_layer131",
-	"0xbddde532": "TL_peerChannel_layer131",
-	"0x55555558": "TL_documentEncrypted",
+// tgKey is a row's identity: (type, ID) (plan 4I4c W1, design D4).
+type tgKey struct{ typ, id string }
+
+// telegramRequiredIDs are (type, ID) pairs every later task relies on, with the class the recon names (recon
+// §3.2-§3.6); plan 4I4c Task 2 (design §8.1, D4, ruling T2a) adds the Stage B pairs, 0x77608b83 under both its types.
+var telegramRequiredIDs = map[tgKey]string{
+	{"MessageAction", "0x80e11a7f"}:          "TL_messageActionPhoneCall",
+	{"PhoneCallDiscardReason", "0x85e42301"}: "TL_phoneCallDiscardReasonMissed",
+	{"PhoneCallDiscardReason", "0xfaf7e8c9"}: "TL_phoneCallDiscardReasonBusy",
+	{"PhoneCallDiscardReason", "0x57adc690"}: "TL_phoneCallDiscardReasonHangup",
+	{"PhoneCallDiscardReason", "0xe095c1a0"}: "TL_phoneCallDiscardReasonDisconnect",
+	{"PhoneCallDiscardReason", "0x9fbbf1f7"}: "TL_phoneCallDiscardReasonMigrateConferenceCall",
+	{"Message", "0x555555fa"}:                "TL_message_secret",
+	{"Message", "0x555555f9"}:                "TL_message_secret_layer72",
+	{"Message", "0x555555f8"}:                "TL_message_secret_old",
+	{"Message", "0x7600b9d3"}:                "TL_message",
+	{"Message", "0x7a800e0a"}:                "TL_messageService",
+	{"Message", "0x90a6ca84"}:                "TL_messageEmpty",
+	{"Message", "0xa4e97f37"}:                "TL_message_layer179",
+	{"Peer", "0x59511722"}:                   "TL_peerUser",
+	{"Peer", "0x36c6019a"}:                   "TL_peerChat",
+	{"Peer", "0xa2a5371e"}:                   "TL_peerChannel",
+	{"Peer", "0x9db1bc6d"}:                   "TL_peerUser_layer131",
+	{"Peer", "0xbad0e5bb"}:                   "TL_peerChat_layer131",
+	{"Peer", "0xbddde532"}:                   "TL_peerChannel_layer131",
+	{"Document", "0x55555558"}:               "TL_documentEncrypted",
 	// plan 4I4b Task 1 (design §7, recon §2): the file name attribute, the 5.14.0-era media path, the tail objects
-	"0x15590068": "TL_documentAttributeFilename",
-	"0x695150d7": "TL_messageMediaPhoto_layer223",
-	"0x9cb070d7": "TL_messageMediaDocument_layer159",
-	"0xd07504a5": "TL_photo_layer115",
-	"0x9ba29cc1": "TL_document_layer113",
-	"0x77bfb61b": "TL_photoSize_layer127",
-	"0x091d11eb": "TL_fileLocation_layer97",
-	"0x55555554": "TL_fileEncryptedLocation",
-	"0x55555556": "TL_documentEncrypted_old",
-	"0x6fb250d1": "TL_reactionCount_layer144",
-	"0xa3d1cb80": "TL_reactionCount",
-	"0x0a339f0b": "TL_messageReactions",
-	"0x83d60fc2": "TL_messageReplies",
-	"0x0e8e37e5": "SuggestedPost",
+	{"DocumentAttribute", "0x15590068"}: "TL_documentAttributeFilename",
+	{"MessageMedia", "0x695150d7"}:      "TL_messageMediaPhoto_layer223",
+	{"MessageMedia", "0x9cb070d7"}:      "TL_messageMediaDocument_layer159",
+	{"Photo", "0xd07504a5"}:             "TL_photo_layer115",
+	{"Document", "0x9ba29cc1"}:          "TL_document_layer113",
+	{"PhotoSize", "0x77bfb61b"}:         "TL_photoSize_layer127",
+	{"FileLocation", "0x091d11eb"}:      "TL_fileLocation_layer97",
+	{"FileLocation", "0x55555554"}:      "TL_fileEncryptedLocation",
+	{"Document", "0x55555556"}:          "TL_documentEncrypted_old",
+	{"ReactionCount", "0x6fb250d1"}:     "TL_reactionCount_layer144",
+	{"ReactionCount", "0xa3d1cb80"}:     "TL_reactionCount",
+	{"MessageReactions", "0x0a339f0b"}:  "TL_messageReactions",
+	{"MessageReplies", "0x83d60fc2"}:    "TL_messageReplies",
+	{"SuggestedPost", "0x0e8e37e5"}:     "SuggestedPost",
+	// plan 4I4c Task 2 (design §8.1, D4; ruling T2a)
+	{"TL_keyboard.KeyboardButtonRow", "0x77608b83"}:       "KeyboardButtonRow",
+	{"TL_keyboard.KeyboardInlineButtonRow", "0x77608b83"}: "TL_keyboardInlineButtonRow_layer228",
+	{"TL_keyboard.KeyboardInlineButtonRow", "0x19420af6"}: "TL_keyboardInlineButtonRow",
+	{"TL_keyboard.KeyboardInlineButton", "0x11c1a322"}:    "TL_keyboardInlineButton",
+	{"InputUser", "0xf21158c6"}:                           "TL_inputUser",
+	{"Poll", "0x966e2dbf"}:                                "TL_poll",
+	{"PollResults", "0xba7bb15e"}:                         "TL_pollResults",
+	{"ReplyMarkup", "0xb2b15770"}:                         "TL_replyInlineMarkup",
+	{"ReplyMarkup", "0x85dd99d1"}:                         "TL_replyKeyboardMarkup",
+	{"TL_keyboard.InlineButtonType", "0x2955bc38"}:        "TL_inlineButtonTypeCallback",
+	{"TL_keyboard.KeyboardInlineButton", "0xe62bc960"}:    "TL_keyboardButtonCallback_layer228",
 }
 
 // telegramFactKeys are the fixed facts.tsv keys (Task 1), each with the pins it must be stated at.
@@ -122,13 +148,18 @@ var (
 	// A facts source may cite a line range (a predicate spans lines).
 	tgFactSourceRE = regexp.MustCompile(`^[A-Za-z_]+\.java:[0-9]+(-[0-9]+)?$`)
 	// The 4I4-P4 grammar, one token at a time: a gate opens with "[F.n:" (or "[F2.n:"), holds one or more
-	// fields and closes on the "]" that ends its last field; gates do not nest.
+	// fields and closes on the "]" that ends its last field; gates do not nest. Plan 4I4c (design W2, W3, P6, P8):
+	// a classed id vector vec<id32@C>/vec<id64@C> (its class captured like an inline id's, so F25 asks for its
+	// wrapper fact), a string vector vec<str> and a two-type union vector vec<A|B>.
 	tgGateOpenRE = regexp.MustCompile(`^\[F2?\.[0-9]+:$`)
 	tgName       = `[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*`
 	tgType       = `[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*`
 	tgFieldRE    = regexp.MustCompile(`^(` + tgName + `)(?:=F2?\.[0-9]+|:(#|i32|i64|dbl|bool|bytes|str|secret|` +
-		`(id32|id64)@(user|chat|channel|unknown)|vec<i32>|vec<i64>|vec<` + tgType + `>|` + tgType + `))(\]?)$`)
-	tgWrapperValues = []string{"user", "chat", "channel", "unknown"}
+		`(?:id32|id64)@(user|chat|channel|unknown)|vec<(?:id32|id64)@(user|chat|channel|unknown)>|vec<i32>|vec<i64>|` +
+		`vec<str>|vec<` + tgType + `\|` + tgType + `>|vec<` + tgType + `>|` + tgType + `))(\]?)$`)
+	// Kinds no row may hold (ruling C6: the generator cannot emit them; a union is two types inside vec<...> only).
+	tgForbiddenKindRE = regexp.MustCompile(`^vec<(bytes|dbl|bool|secret|#)>$`)
+	tgWrapperValues   = []string{"user", "chat", "channel", "unknown"}
 	// A field type StarsAmount not qualified by its outer class (ruling B7).
 	tgBareStarsRE = regexp.MustCompile(`(^|[^.\w])StarsAmount\b`)
 )
@@ -161,7 +192,14 @@ func tgParseFields(t *testing.T, row string, s string) []tgField {
 			t.Errorf("%s: token %q is outside the 4I4-P4 grammar", row, tok)
 			continue
 		}
-		out = append(out, tgField{name: m[1], kind: m[2], class: m[4]})
+		class := m[3]
+		if m[4] != "" {
+			class = m[4]
+		}
+		if tgForbiddenKindRE.MatchString(m[2]) {
+			t.Errorf("%s: %q holds a kind outside the grammar (ruling C6)", row, tok)
+		}
+		out = append(out, tgField{name: m[1], kind: m[2], class: class})
 		if m[5] == "]" {
 			if !inGate {
 				t.Errorf("%s: %q closes a gate that is not open", row, tok)
@@ -208,6 +246,9 @@ func tgTSV(t *testing.T, name, src, header string) [][]string {
 // type and body, the pin conflicts as opaque rows and the only CONFLICT verdicts, the D5 field type, the B7 spelling,
 // unit.edit_date seconds at all four pins, the compatible widening of 0xe89c45b2 and the hand-read section; plan 4I4b
 // Task 2 (ruling B11): the second, independent hand-read agrees with each of the four rows token for token.
+// Plan 4I4c Task 2 (design D1-D4, W2, W3, §7, §8; Q5, Q10; rulings C6, T1d, T2a, T2b; P8): rows keyed by (type, ID)
+// with 0x77608b83 the one shared ID, the union, classed id and string vectors of the grammar, the 629-row counts,
+// 0x48a30254 full as a compatible widening (union), membership through the button unions and the hand-read section.
 func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	dir := calendarSchemaDir(t, "telegram-android")
 	consSrc := calendarReadFile(t, filepath.Join(dir, "constructors.tsv"))
@@ -217,7 +258,9 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	cons := tgTSV(t, "constructors.tsv", consSrc, telegramConstructorsHeader)
 	facts := tgTSV(t, "facts.tsv", factsSrc, telegramFactsHeader)
 
-	seen := map[string]bool{}
+	// plan 4I4c W1, design D4: a row is identified by (type, ID); one ID may be a row of two types.
+	seen := map[tgKey]bool{}
+	typesOfID := map[string][]string{}
 	counts, opaque, prefix := map[string]int{}, map[string]int{}, map[string]int{}
 	// inline[class] lists "<field>=<class>" for every inline id token of that constructor class.
 	inline := map[string][]string{}
@@ -227,10 +270,11 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		if !tgIDRE.MatchString(id) {
 			t.Errorf("%s: the id is not 0x and 8 lowercase hex digits", row)
 		}
-		if seen[id] {
-			t.Errorf("%s: the id is not unique", row)
+		if seen[tgKey{typ, id}] {
+			t.Errorf("%s: the (type, id) pair is not unique (design D4)", row)
 		}
-		seen[id] = true
+		seen[tgKey{typ, id}] = true
+		typesOfID[id] = append(typesOfID[id], typ)
 		counts[typ]++
 		switch body {
 		case "opaque":
@@ -289,15 +333,33 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 			t.Errorf("type %s: %d prefix rows, want %d (spec Q2, T6)", typ, prefix[typ], telegramPrefixCounts[typ])
 		}
 	}
-	byID := map[string][]string{}
-	for _, r := range cons {
-		byID[r[1]] = r
+	// design D4: exactly one ID is a row of two types, 0x77608b83 (TL_keyboard.java:749 and :645); no other is shared.
+	for id, typs := range typesOfID {
+		if id == "0x77608b83" {
+			slices.Sort(typs)
+			if want := []string{"TL_keyboard.KeyboardButtonRow", "TL_keyboard.KeyboardInlineButtonRow"}; !slices.Equal(typs, want) {
+				t.Errorf("id 0x77608b83 is a row of %v, want %v (design D4)", typs, want)
+			}
+		} else if len(typs) != 1 {
+			t.Errorf("id %s is a row of %v; only 0x77608b83 is shared (design D4)", id, typs)
+		}
 	}
-	for id, class := range telegramRequiredIDs {
-		if r, ok := byID[id]; !ok {
-			t.Errorf("required id %s (%s) is not in constructors.tsv", id, class)
+	byKey := map[tgKey][]string{}
+	for _, r := range cons {
+		byKey[tgKey{r[0], r[1]}] = r
+	}
+	// byID is the row of an ID that is a row of one type only (every ID but 0x77608b83).
+	byID := func(id string) ([]string, bool) {
+		if typs := typesOfID[id]; len(typs) == 1 {
+			return byKey[tgKey{typs[0], id}], true
+		}
+		return nil, false
+	}
+	for k, class := range telegramRequiredIDs {
+		if r, ok := byKey[k]; !ok {
+			t.Errorf("required (type, id) %s %s (%s) is not in constructors.tsv", k.typ, k.id, class)
 		} else if r[2] != class {
-			t.Errorf("required id %s: class %q, want %q", id, r[2], class)
+			t.Errorf("required (type, id) %s %s: class %q, want %q", k.typ, k.id, r[2], class)
 		}
 	}
 	// coordinator ruling M3 (Task 5 review): a constructor that reads no field is read whole, so it is full with an
@@ -307,24 +369,42 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		"0x3ded6320", "0x9f84f49e", "0xb98886cf", "0xf7c1b13f", "0xdc3d824f",
 		"0x01baa035", "0x4792929b", "0x55555550", "0x55555557", "0x94bd38ed", "0x95e3fbef",
 		"0x9fbab604", "0xb6aef7b0", "0xc1d2f1c6", "0xe7e75f97", "0xebbca3cb", "0xf3f25f76",
+		// plan 4I4c Task 2 (design §7): the InlineQueryPeerType, InputPeer, ButtonType and InlineButtonType classes
+		// that read nothing
+		"0x0e3b2d0c", "0x3081ed9d", "0x5ec4be43", "0x6334ee9a", "0x833c0fac", "0xd766c50a", "0x9beee140",
+		"0xc9dd90e9", "0xdf3d36f9", "0x48bad7a5", "0x5cd3709d", "0xa438619d", "0x7da07ec9", "0x7f3b18ea",
 	}
 	for _, id := range m3 {
-		if r, ok := byID[id]; !ok || r[3] != "full" || r[6] != "" {
+		if r, ok := byID(id); !ok || r[3] != "full" || r[6] != "" {
 			t.Errorf("constructor %s: %v, want a full row with an empty field list (ruling M3)", id, r)
 		}
 	}
 
 	// rulings R3 and T1b: an ID the pinned app versions read two ways is opaque; the table never picks one reading.
 	// 0x85849473 was a full row in 4I4 (the older pins read flags and cached_page_views for it, A-HEAD nothing).
-	for _, id := range []string{"0x6fb250d1", "0x85849473", "0x332ba9ed", "0x48a30254"} {
-		if r, ok := byID[id]; !ok || r[3] != "opaque" {
+	for _, id := range []string{"0x6fb250d1", "0x85849473", "0x332ba9ed"} {
+		if r, ok := byID(id); !ok || r[3] != "opaque" {
 			t.Errorf("constructor %s: %v, want an opaque row (rulings R3, T1b; design D4)", id, r)
+		}
+	}
+	// plan 4I4c Task 2 (Q5, design §8.3): every older inline keyboard is readable by the A-HEAD reading of
+	// 0x48a30254 (each older button ID is a row of one of the two button types and reads the same bytes), so it is
+	// full, a compatible widening; ruling T2a: every button reader of A-HEAD reads both button families, in the app's
+	// order (TL_keyboard.java:561-575, :735-742, :815-822).
+	for k, want := range map[tgKey]string{
+		{"ReplyMarkup", "0x48a30254"}:                         "rows:vec<TL_keyboard.KeyboardInlineButtonRow>",
+		{"TL_keyboard.KeyboardButtonRow", "0x77608b83"}:       "buttons:vec<TL_keyboard.KeyboardInlineButton|TL_keyboard.KeyboardButton>",
+		{"TL_keyboard.KeyboardInlineButtonRow", "0x77608b83"}: "buttons:vec<TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton>",
+		{"TL_keyboard.KeyboardInlineButtonRow", "0x19420af6"}: "buttons:vec<TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton>",
+	} {
+		if r, ok := byKey[k]; !ok || r[3] != "full" || r[6] != want {
+			t.Errorf("constructor %s %s: %v, want a full row %q (Q5, ruling T2a)", k.typ, k.id, r, want)
 		}
 	}
 	// design D5, ruling R4: a field typed by a class with no deserializer of its own names the switch's type.
 	unbracket := strings.NewReplacer("[", " ", "]", " ")
 	for _, id := range []string{"0x7a800e0a", "0xd3d28540"} {
-		if r, ok := byID[id]; !ok || !slices.Contains(strings.Fields(unbracket.Replace(r[6])), "reactions:MessageReactions") {
+		if r, ok := byID(id); !ok || !slices.Contains(strings.Fields(unbracket.Replace(r[6])), "reactions:MessageReactions") {
 			t.Errorf("constructor %s: %v, want the field reactions:MessageReactions (design D5)", id, r)
 		}
 	}
@@ -433,13 +513,37 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 			t.Errorf("CROSSCHECK.md has no verified or read-by-hand row for %s %s %s at %s", r[0], r[1], r[2], r[5])
 		}
 	}
-	memberRE := regexp.MustCompile(`(?m)^\| (A-11\.4\.2|release-8\.1\.1_2431|release-5\.14\.0_1851) \| (\w+) \| (0x[0-9a-f]{8}) \| in-table \|`)
+	// plan 4I4c (design D4, §8.3; ruling T2a): membership is per (type, ID).
+	const olderPins = `(A-11\.4\.2|release-8\.1\.1_2431|release-5\.14\.0_1851)`
+	memberRE := regexp.MustCompile(`(?m)^\| ` + olderPins + ` \| ([\w.]+) \| (0x[0-9a-f]{8}) \| in-table \|`)
 	perPin := map[string]int{}
 	for _, m := range memberRE.FindAllStringSubmatch(report, -1) {
 		perPin[m[1]]++
-		if r, ok := byID[m[3]]; !ok || r[0] != m[2] {
+		if _, ok := byKey[tgKey{m[2], m[3]}]; !ok {
 			t.Errorf("CROSSCHECK.md says %s %s %s is in the table; constructors.tsv disagrees", m[1], m[2], m[3])
 		}
+	}
+	// ruling T2a: an older ID of one type that A-HEAD reads as the other type of every union field naming its type
+	// is in the table through that union; a narrowing (a field no union reaches) would name an ID with no row of its
+	// own type and a row of another. Neither may claim a row the table lacks, and the facts produce no narrowing.
+	unionRE := regexp.MustCompile(`(?m)^\| ` + olderPins + ` \| ([\w.]+) \| (0x[0-9a-f]{8}) \| ` +
+		`(in-table through the union|narrowing) \(A-HEAD reads it as ([\w.]+)[;,)]`)
+	unionAt := map[string]int{}
+	for _, m := range unionRE.FindAllStringSubmatch(report, -1) {
+		unionAt[m[1]+" "+m[4]]++
+		if _, own := byKey[tgKey{m[2], m[3]}]; own {
+			t.Errorf("CROSSCHECK.md %s %s %s %s: the ID is a row of its own type", m[1], m[2], m[3], m[4])
+		}
+		if _, other := byKey[tgKey{m[5], m[3]}]; !other || m[5] == m[2] {
+			t.Errorf("CROSSCHECK.md %s %s %s %s: no row of type %s holds it", m[1], m[2], m[3], m[4], m[5])
+		}
+	}
+	if unionAt["release-5.14.0_1851 in-table through the union"] == 0 {
+		t.Errorf("CROSSCHECK.md has no union membership line at release-5.14.0_1851 (ruling T2a)")
+	}
+	if n := strings.Count(report, "| narrowing ("); n != 0 {
+		t.Errorf("CROSSCHECK.md holds %d narrowing verdicts, want 0: every A-HEAD button reader reads both button "+
+			"families (ruling T2a)", n)
 	}
 	for _, pin := range []string{"A-11.4.2", "release-8.1.1_2431", "release-5.14.0_1851"} {
 		if perPin[pin] == 0 {
@@ -455,21 +559,30 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 
 	// Plan 4I4b Task 1 (design D6, rulings B4, T1a, T1b, 4I4b-P7): every body CONFLICT of the older-pin comparison is
 	// a pin conflict on an opaque row, exactly the IDs each pin reads another way; field names never make one (T1a).
+	// Plan 4I4c Task 2 (Q5): 0x48a30254 left the pin conflicts as a compatible widening (union); 5 CONFLICTs remain.
 	wantConflicts := map[string][]string{
-		"A-11.4.2":            {"0x332ba9ed", "0x48a30254", "0x85849473"},
-		"release-8.1.1_2431":  {"0x48a30254", "0x6fb250d1", "0x85849473"},
-		"release-5.14.0_1851": {"0x48a30254", "0x6fb250d1"},
+		"A-11.4.2":            {"0x332ba9ed", "0x85849473"},
+		"release-8.1.1_2431":  {"0x6fb250d1", "0x85849473"},
+		"release-5.14.0_1851": {"0x6fb250d1"},
 	}
 	gotConflicts := map[string][]string{}
-	for _, m := range regexp.MustCompile(`(?m)^\| ([^|]+) \| [^|]+ \| (0x[0-9a-f]{8}) \| CONFLICT[^|]*\|.*$`).
+	for _, m := range regexp.MustCompile(`(?m)^\| ([^|]+) \| ([^|]+) \| (0x[0-9a-f]{8}) \| CONFLICT[^|]*\|.*$`).
 		FindAllStringSubmatch(report, -1) {
-		gotConflicts[m[1]] = append(gotConflicts[m[1]], m[2])
-		if !strings.Contains(m[0], "| CONFLICT (opaque; pin conflict: ") || byID[m[2]] == nil || byID[m[2]][3] != "opaque" {
+		gotConflicts[m[1]] = append(gotConflicts[m[1]], m[3])
+		r, ok := byKey[tgKey{m[2], m[3]}]
+		if !strings.Contains(m[0], "| CONFLICT (opaque; pin conflict: ") || !ok || r[3] != "opaque" {
 			t.Errorf("CROSSCHECK.md holds a CONFLICT that is not a pin conflict on an opaque row (ruling T1b): %q", m[0])
 		}
 	}
-	if n := strings.Count(report, "| CONFLICT"); n != 8 {
-		t.Errorf("CROSSCHECK.md holds %d CONFLICT verdicts, want 8 (ruling T1b)", n)
+	if n := strings.Count(report, "| CONFLICT"); n != 5 {
+		t.Errorf("CROSSCHECK.md holds %d CONFLICT verdicts, want 5 (rulings T1b, Q5)", n)
+	}
+	// Q5 (design §8.3): at each older pin the older reading of 0x48a30254 is a compatible widening through the union.
+	for _, pin := range []string{"A-11.4.2", "release-8.1.1_2431", "release-5.14.0_1851"} {
+		re := regexp.MustCompile(`(?m)^\| ` + regexp.QuoteMeta(pin) + ` \| ReplyMarkup \| 0x48a30254 \| compatible widening \(union\) `)
+		if !re.MatchString(report) {
+			t.Errorf("CROSSCHECK.md has no compatible widening (union) of 0x48a30254 at %s (Q5)", pin)
+		}
 	}
 	for pin, ids := range wantConflicts {
 		slices.Sort(gotConflicts[pin])
@@ -510,12 +623,8 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		if j := strings.Index(section, "\n#"); j >= 0 {
 			section = section[:j]
 		}
-		byID := map[string][]string{}
-		for _, r := range cons {
-			byID[r[1]] = r
-		}
 		for _, id := range []string{"0xa3d1cb80", "0x51b67eff", "0x932844fa", "0xfa64e172"} {
-			r, ok := byID[id]
+			r, ok := byID(id)
 			if !ok {
 				t.Errorf("constructors.tsv has no row %s (ruling B11)", id)
 				continue
@@ -525,6 +634,40 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 			if n := len(regexp.MustCompile(line).FindAllString(section, -1)); n != 1 {
 				t.Errorf("CROSSCHECK.md second hand-read section: %d agreeing rows for %s %s %s, want 1 (ruling B11)",
 					n, id, r[2], r[5])
+			}
+		}
+	}
+
+	// Plan 4I4c Task 2 (design §7, rulings B11, T2a): the Stage B rows the reduction cannot read (the union rows and
+	// the classed id vectors), one row each, read by hand at their pinned line with the committed body; Task 3 reads
+	// them a second time.
+	const hand3Head = "## Hand-read rows, first read (plan 4I4c Task 2)\n"
+	if i := strings.Index(report, hand3Head); i < 0 {
+		t.Errorf("CROSSCHECK.md has no section %q", strings.TrimSpace(hand3Head))
+	} else {
+		section := report[i+len(hand3Head):]
+		if j := strings.Index(section, "\n#"); j >= 0 {
+			section = section[:j]
+		}
+		for _, k := range []tgKey{
+			{"TL_keyboard.KeyboardInlineButtonRow", "0x77608b83"},
+			{"TL_keyboard.KeyboardButtonRow", "0x77608b83"},
+			{"TL_keyboard.KeyboardInlineButtonRow", "0x19420af6"},
+			{"PollResults", "0xc87024a2"},
+			{"PollResults", "0xbadcc1a3"},
+			{"PollResults", "0xdcb82ea3"},
+		} {
+			r, ok := byKey[k]
+			if !ok {
+				t.Errorf("constructors.tsv has no row %s %s (ruling B11)", k.typ, k.id)
+				continue
+			}
+			// a union's "|" is escaped in the Markdown table cell
+			body := strings.ReplaceAll(r[6], "|", `\|`)
+			line := `(?m)^\| ` + k.id + ` \| ` + regexp.QuoteMeta(r[2]) + ` \| ` + regexp.QuoteMeta(r[5]) + ` \| ` +
+				regexp.QuoteMeta(body) + ` \| read by hand \|$`
+			if n := len(regexp.MustCompile(line).FindAllString(section, -1)); n != 1 {
+				t.Errorf("CROSSCHECK.md 4I4c hand-read section: %d rows for %s %s, want 1 (ruling B11)", n, k.id, r[2])
 			}
 		}
 	}
