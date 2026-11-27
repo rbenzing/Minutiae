@@ -120,6 +120,7 @@ func TestTelegramCapsAreCountedNeverSilent(t *testing.T) {
 	if one != 1000 || summary != "users row has no name, phone or username: 1500 records, 500 not warned one by one" || len(contactsOf(big)) != 1500 {
 		t.Errorf("%d warnings, summary %q, %d contacts; want 1000, the 1500/500 summary and every record", one, summary, len(contactsOf(big)))
 	}
+	mediaCaps4I4b(t)
 }
 
 // imsOf is a contact's ims entries.
@@ -132,4 +133,24 @@ func imsOf(r records.Record) []map[string]any {
 		}
 	}
 	return out
+}
+
+// mediaCaps4I4b is plan 4I4b Task 5's part of TestTelegramCapsAreCountedNeverSilent (design D5/P3 and the plan's Raw shapes caps): the media lists and names are cut at their caps and the
+// cut is counted, never silent. H2801 has 17 sizes (16 kept, total 17, truncated), H2813 33 attributes (32 kept), H2814
+// nine distinct filenames (8 kept, 9 counted).
+func mediaCaps4I4b(t *testing.T) {
+	t.Helper()
+	hostile := byRow(parseFixture(t, "telegram-hostile").Records)
+	raw := rawOf(hostile["messages_v2/2801"])
+	if l, _ := raw["media_sizes"].([]any); len(l) != 16 || jsonText(raw["media_sizes_total"]) != "17" || raw["media_sizes_truncated"] != true {
+		t.Errorf("H2801: %d sizes kept, total %v, truncated %v; want 16 of 17 stated", len(l), raw["media_sizes_total"], raw["media_sizes_truncated"])
+	}
+	m, _ := rawOf(hostile["messages_v2/2813"])["media"].(map[string]any)
+	if l, _ := m["attributes"].([]any); len(l) != 32 || jsonText(m["attributes_total"]) != "33" || m["attributes_truncated"] != true {
+		t.Errorf("H2813: %d attributes kept, total %v, truncated %v; want 32 of 33 stated", len(l), m["attributes_total"], m["attributes_truncated"])
+	}
+	m, _ = rawOf(hostile["messages_v2/2814"])["media"].(map[string]any)
+	if l, _ := m["file_names"].([]any); len(l) != 8 || jsonText(m["file_names_total"]) != "9" {
+		t.Errorf("H2814: %d file names kept, total %v; want 8 of 9 stated", len(l), m["file_names_total"])
+	}
 }

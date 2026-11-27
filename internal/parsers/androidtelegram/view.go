@@ -1,6 +1,10 @@
 package androidtelegram
 
-import "github.com/rbenzing/minutiae/internal/decode/tl"
+import (
+	"strings"
+
+	"github.com/rbenzing/minutiae/internal/decode/tl"
+)
 
 // view reads a decode result through the field paths of the table (`id`, `fwd_from.from_id`, `entities[0].offset`):
 // at maps a path to the index of its first field in r.Fields. A path absent from the result was not read: the field
@@ -89,3 +93,35 @@ func (v view) stopAt(path string) *tl.Stop {
 	}
 	return nil
 }
+
+// Len is the element count of a vector read at path.
+func (v view) Len(path string) (int, bool) {
+	n, ok := v.Named(path)
+	if !ok {
+		return 0, false
+	}
+	switch n.Kind {
+	case tl.KVector, tl.KVecInt32, tl.KVecInt64:
+		return n.Len, true
+	}
+	return 0, false
+}
+
+// within says the stop s lies at path or inside what starts there (a nested field or a vector element).
+func within(s *tl.Stop, path string) bool {
+	if s == nil {
+		return false
+	}
+	p := s.Path
+	return p == path || strings.HasPrefix(p, path+".") || strings.HasPrefix(p, path+"[")
+}
+
+// inside says the decode stopped at or inside path for a reason of its own (a prefix body's end is no stop in it).
+func (v view) inside(path string) bool {
+	s := v.r.Stop
+	return s != nil && s.Kind != tl.StopPrefix && within(s, path)
+}
+
+// Whole says the value at path was read and the stop lies neither at nor inside it (P3: read whole; a list or an object
+// a stop cut is not what the wire holds).
+func (v view) Whole(path string) bool { return v.Has(path) && !v.inside(path) }

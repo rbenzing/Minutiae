@@ -297,6 +297,7 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 	dialogStates(t)
 	callStates(t)
 	contactStates(t)
+	mediaStates(t)
 }
 
 // callStates are Task 11's keys (spec 8.7, Q5; the plan's "Calls" vocabulary): the outcome per reason and direction,
@@ -736,4 +737,59 @@ func contactStates(t *testing.T) {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// attrFilename is a TL_documentAttributeFilename.
+func attrFilename(name string) []byte { return append(le32(0x15590068), tlStr(name)...) }
+
+// mediaStates are plan 4I4b Task 5's keys (D10, R6, B6, P3, P5; the plan's "Raw shapes"): the four file_name_state
+// words, media_sizes_state, the duration state, the conflict state of a value two attributes disagree on, and the nine
+// size kinds.
+func mediaStates(t *testing.T) {
+	media := func(m []byte) map[string]any {
+		t.Helper()
+		got, _ := rawOf(goMediaRow(t, m))["media"].(map[string]any)
+		return got
+	}
+	cutDoc := goDocument(attrFilename("a.txt"), attrImageSize(1, 2))
+	for _, c := range []struct {
+		name  string
+		media []byte
+		want  map[string]any
+	}{
+		{"absent", goDocument(attrVideo(3, 4, 5)), map[string]any{"file_name_state": "absent", "file_name": nil}},
+		{"empty", goDocument(attrFilename("")), map[string]any{"file_name_state": "empty", "file_name": nil}},
+		{"conflict", goDocument(attrFilename("a"), attrFilename("b")), map[string]any{"file_name_state": "conflict", "file_names": []string{"a", "b"}, "file_names_total": 2, "file_name": nil}},
+		{"undecided", cutDoc[:len(cutDoc)-4], map[string]any{"file_name_state": "undecided", "file_name": nil, "attributes_state": "partial", "attributes": nil}},
+		{"one name", goDocument(attrFilename("a"), attrFilename("a")), map[string]any{"file_name": "a", "file_name_state": nil}},
+		{"duration NaN", goDocument(attrVideo(math.NaN(), 4, 5)), map[string]any{"duration_state": "out-of-range", "duration_bits": "0x7ff8000000000001", "duration": nil}},
+		{"values conflict", goDocument(attrVideo(3, 4, 5), attrImageSize(6, 7)), map[string]any{"w_state": "conflict", "h_state": "conflict", "w": nil, "h": nil}},
+	} {
+		wantKeys(t, c.name, media(c.media), c.want)
+	}
+	if got := rawOf(goMediaRow(t, goPhoto([][]byte{photoSize("m", 1, 2, 3), photoSize("x", 4, 5, 6)}, 20)))["media_sizes_state"]; got != "partial" {
+		t.Errorf("a photo cut in its sizes: media_sizes_state %v, want partial", got)
+	}
+
+	kinds := map[string]bool{}
+	for _, v := range variants {
+		res := parseAt(t, remoteApp, fixtureFiles(t, v))
+		for _, r := range res.Records { // a refused variant (a user version outside the band) has none
+			for _, key := range []string{"media_sizes", "media_video_sizes", "media_thumbs", "media_video_thumbs"} {
+				for _, e := range listOf(t, rawOf(r), key) {
+					k, _ := e["kind"].(string)
+					kinds[k] = true
+				}
+			}
+		}
+	}
+	for _, k := range []string{"size", "cached", "stripped", "path", "progressive", "empty", "video", "emoji_markup", "sticker_markup"} {
+		if !kinds[k] {
+			t.Errorf("no committed record states a %q size entry", k)
+		}
+		delete(kinds, k)
+	}
+	if len(kinds) != 0 {
+		t.Errorf("size kinds beyond the nine of the plan: %v", kinds)
+	}
 }
