@@ -249,6 +249,7 @@ func tgTSV(t *testing.T, name, src, header string) [][]string {
 // Plan 4I4c Task 2 (design D1-D4, W2, W3, §7, §8; Q5, Q10; rulings C6, T1d, T2a, T2b; P8): rows keyed by (type, ID)
 // with 0x77608b83 the one shared ID, the union, classed id and string vectors of the grammar, the 629-row counts,
 // 0x48a30254 full as a compatible widening (union), membership through the button unions and the hand-read section.
+// Plan 4I4c Task 3 (rulings B11, T2a): the second, independent hand-read agrees with each of the six rows.
 func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	dir := calendarSchemaDir(t, "telegram-android")
 	consSrc := calendarReadFile(t, filepath.Join(dir, "constructors.tsv"))
@@ -668,6 +669,38 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 				regexp.QuoteMeta(body) + ` \| read by hand \|$`
 			if n := len(regexp.MustCompile(line).FindAllString(section, -1)); n != 1 {
 				t.Errorf("CROSSCHECK.md 4I4c hand-read section: %d rows for %s %s, want 1 (ruling B11)", n, k.id, r[2])
+			}
+		}
+	}
+	// Plan 4I4c Task 3 (rulings B11, T2a): the second, independent hand-read of the same six rows agrees with each
+	// committed row token for token: one row per (type, ID) whose body read equals its fields, verdict "agrees".
+	const hand4Head = "## Hand-read rows, second read (plan 4I4c Task 3, B11)\n"
+	if i := strings.Index(report, hand4Head); i < 0 {
+		t.Errorf("CROSSCHECK.md has no section %q", strings.TrimSpace(hand4Head))
+	} else {
+		section := report[i+len(hand4Head):]
+		if j := strings.Index(section, "\n#"); j >= 0 {
+			section = section[:j]
+		}
+		for _, k := range []tgKey{
+			{"TL_keyboard.KeyboardInlineButtonRow", "0x77608b83"},
+			{"TL_keyboard.KeyboardButtonRow", "0x77608b83"},
+			{"TL_keyboard.KeyboardInlineButtonRow", "0x19420af6"},
+			{"PollResults", "0xc87024a2"},
+			{"PollResults", "0xbadcc1a3"},
+			{"PollResults", "0xdcb82ea3"},
+		} {
+			r, ok := byKey[k]
+			if !ok {
+				t.Errorf("constructors.tsv has no row %s %s (ruling B11)", k.typ, k.id)
+				continue
+			}
+			body := strings.ReplaceAll(r[6], "|", `\|`)
+			line := `(?m)^\| ` + k.id + ` \| ` + regexp.QuoteMeta(r[2]) + ` \| ` + regexp.QuoteMeta(r[5]) + ` \| ` +
+				regexp.QuoteMeta(body) + ` \| agrees \|$`
+			if n := len(regexp.MustCompile(line).FindAllString(section, -1)); n != 1 {
+				t.Errorf("CROSSCHECK.md 4I4c second hand-read section: %d agreeing rows for %s %s, want 1 (ruling B11)",
+					n, k.id, r[2])
 			}
 		}
 	}

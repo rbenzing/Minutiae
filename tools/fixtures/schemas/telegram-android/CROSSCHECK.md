@@ -3503,3 +3503,39 @@ whose every id becomes the `user_id` of a `TL_peerUser` the app builds (`:31-32`
 | 0xc87024a2 | TL_pollResults_layer111 | TLRPC.java:4262 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] | read by hand |
 | 0xbadcc1a3 | TL_pollResults_layer131 | TLRPC.java:4295 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] [F.4: solution:str solution_entities:vec<MessageEntity>] | read by hand |
 | 0xdcb82ea3 | TL_pollResults_layer158 | TLRPC.java:4437 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id64@user>] [F.4: solution:str solution_entities:vec<MessageEntity>] | read by hand |
+
+## Hand-read rows, second read (plan 4I4c Task 3, B11)
+
+The same six Stage B rows, read a second time by the Task 3 builder, a different agent from Task 2, at A-HEAD
+(21f7d109da6ab3506c9e9577f98c6a38771ab335) from `tgnet/tl/TL_keyboard.java` (SHA-256
+a026f2b766ea4ca29c9abee0a4010773d4c7f38b848939b17eeee1068388b6bc), `tgnet/TLRPC.java` (SHA-256
+37a1b1ee83d1f84352f90ac65e8d2176a863678f60c902010c3e1c0b1beea86b) and `tgnet/VectorLegacy.java` (SHA-256
+ddb561e3fd975d74306f718f94e00f11be984e1fe87d0252cf08edcfcaefac30), fetched into scratch and deleted after. Each body
+was written from the class's `readParams` and the element reader it names before `constructors.tsv`, this file or the
+recon were opened, then compared token for token with the row's `fields`. All six agree in what is read (IDs, field
+order, flag bits, wire types, and each union's order). Reading notes: the union order is the order of the element
+reader's tests. `0x19420af6` `TL_keyboardInlineButtonRow` reads at `TL_keyboard.java:636` through
+`KeyboardInlineButton.TLdeserialize` (`:734-746`): `KeyboardButton.fromConstructor` at `:735`, then the inline
+`fromConstructor` at `:745`. `0x77608b83` `TL_keyboardInlineButtonRow_layer228` reads at `:649` through
+`TLdeserializeLegacy` (`:561-575`): `KeyboardButton.fromConstructor` at `:562`, then
+`KeyboardInlineButton.fromConstructor` at `:568`, else an error (`:574`); every element is read whole and the
+non-inline ones are dropped after the read (`:651-654`). `0x77608b83` `KeyboardButtonRow` reads at `:760` through
+`KeyboardButton.TLdeserialize` (`:813-826`): `KeyboardInlineButton.fromConstructor` at `:815` (which tests
+`0x11c1a322` at `:671` before its legacy switch), then its own `fromConstructor` at `:825`. Each element is read by
+the found class's `readParams` alone (no further fallback). The two button switches share no ID (16 IDs in
+`KeyboardButton.fromConstructor`, `:776-809`; 26 in `KeyboardInlineButton.fromConstructor`, `:671-730`), so a
+union's order never changes what is read. The three PollResults rows read flags, `min` as the flag-only test of bit
+0, `results` (bit 1), `total_voters` (bit 2) and `recent_voters` (bit 3): `0xc87024a2` reads `TLRPC.java:4266-4276`,
+`recent_voters` by `VectorLegacy.deserialize_IntUserIdAsPeer` (`VectorLegacy.java:27-37`: a boxed bare int vector,
+each id the `user_id` of a `TL_peerUser` the app builds); `0xbadcc1a3` reads 4299-4313, the same, then `solution`
+and `solution_entities` under one test of bit 4; `0xdcb82ea3` reads 4441-4455, as `0xbadcc1a3` but `recent_voters`
+by `deserialize_LongUserIdAsPeer` (`VectorLegacy.java:48-58`, a bare long vector).
+
+| ID | Class | Source | Body read | Verdict |
+|---|---|---|---|---|
+| 0x77608b83 | TL_keyboardInlineButtonRow_layer228 | TL_keyboard.java:645 | buttons:vec<TL_keyboard.KeyboardButton\|TL_keyboard.KeyboardInlineButton> | agrees |
+| 0x77608b83 | KeyboardButtonRow | TL_keyboard.java:749 | buttons:vec<TL_keyboard.KeyboardInlineButton\|TL_keyboard.KeyboardButton> | agrees |
+| 0x19420af6 | TL_keyboardInlineButtonRow | TL_keyboard.java:632 | buttons:vec<TL_keyboard.KeyboardButton\|TL_keyboard.KeyboardInlineButton> | agrees |
+| 0xc87024a2 | TL_pollResults_layer111 | TLRPC.java:4262 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] | agrees |
+| 0xbadcc1a3 | TL_pollResults_layer131 | TLRPC.java:4295 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id32@user>] [F.4: solution:str solution_entities:vec<MessageEntity>] | agrees |
+| 0xdcb82ea3 | TL_pollResults_layer158 | TLRPC.java:4437 | flags:# min=F.0 [F.1: results:vec<PollAnswerVoters>] [F.2: total_voters:i32] [F.3: recent_voters:vec<id64@user>] [F.4: solution:str solution_entities:vec<MessageEntity>] | agrees |
