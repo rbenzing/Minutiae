@@ -55,6 +55,10 @@ func mediaSummary(v view, tab tl.Table, c tl.Constructor, raw map[string]any) []
 	}
 	id, mc, ok := entryAt(v, tab, "media")
 	if !ok {
+		// an ID read with no entry of its (type, ID) is still stated (Task 1 review: unknown is never absent)
+		if _, read := v.ID("media"); read {
+			raw["media"] = map[string]any{"constructor": hexID(id)}
+		}
 		return nil
 	}
 	class := mc.Name

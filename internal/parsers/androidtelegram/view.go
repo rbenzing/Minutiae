@@ -107,14 +107,15 @@ func (v view) stopAt(path string) *tl.Stop {
 	return nil
 }
 
-// Len is the element count of a vector read at path.
+// Len is the element count of a vector read at path (a vector of objects, of bare ints or ids, or of bare strings,
+// plan 4I4c W3).
 func (v view) Len(path string) (int, bool) {
 	n, ok := v.Named(path)
 	if !ok {
 		return 0, false
 	}
 	switch n.Kind {
-	case tl.KVector, tl.KVecInt32, tl.KVecInt64:
+	case tl.KVector, tl.KVecInt32, tl.KVecInt64, tl.KVecString:
 		return n.Len, true
 	}
 	return 0, false

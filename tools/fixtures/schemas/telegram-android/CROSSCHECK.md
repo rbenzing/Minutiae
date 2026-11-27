@@ -167,7 +167,7 @@ Fact files checked (SHA-256 of the committed bytes):
 | File | SHA-256 |
 |---|---|
 | `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
-| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
+| `facts.tsv` | a67b538158e7d2b14f40daf3cdf38b5347f80060db69e5ba40337c15db311078 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -896,7 +896,7 @@ Fact files checked (SHA-256 of the committed bytes):
 | File | SHA-256 |
 |---|---|
 | `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
-| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
+| `facts.tsv` | a67b538158e7d2b14f40daf3cdf38b5347f80060db69e5ba40337c15db311078 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -1381,7 +1381,7 @@ Membership: every ID the pinned types' switches read at this pin is a row of `co
 | A-11.4.2 | PollAnswer | 0xff16e2ca | in-table | TL_pollAnswer (TLRPC.java:3052) |
 | A-11.4.2 | PollAnswerVoters | 0x3b6ddad2 | in-table | TL_pollAnswerVoters (TLRPC.java:5299) |
 
-Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
+Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the tokens whose spelling differs (a field name or an inline id's class annotation; informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
 
 | Pin | Type | ID | Verdict | Class at this pin |
 |---|---|---|---|---|
@@ -1619,38 +1619,38 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | A-11.4.2 | WebPage | 0xd41a5167 | equal | TL_webPageUrlPending (TLRPC.java:23032) |
 | A-11.4.2 | WebPage | 0xe89c45b2 | equal | TL_webPage (TLRPC.java:22561) |
 | A-11.4.2 | WebPage | 0xeb1477e8 | equal | TL_webPageEmpty_layer165 (TLRPC.java:23018) |
-| A-11.4.2 | WebPage | 0xfa64e172 | equal on the wire (names differ: attribute.documents:vec<Document> / documents:vec<Document>) | TL_webPage_layer107 (TLRPC.java:22687) |
+| A-11.4.2 | WebPage | 0xfa64e172 | equal on the wire (spelling differs: attribute.documents:vec<Document> / documents:vec<Document>) | TL_webPage_layer107 (TLRPC.java:22687) |
 | A-11.4.2 | User | 0x075cf7a8 | equal | TL_userForeign_old2 (TLRPC.java:27309) |
 | A-11.4.2 | User | 0x1c60e608 | equal | TL_userSelf_old3 (TLRPC.java:27199) |
 | A-11.4.2 | User | 0x200250ba | equal | TL_userEmpty_layer131 (TLRPC.java:27245) |
-| A-11.4.2 | User | 0x215c4438 | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer184 (TLRPC.java:25872) |
+| A-11.4.2 | User | 0x215c4438 | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer184 (TLRPC.java:25872) |
 | A-11.4.2 | User | 0x22e49072 | equal | TL_user_old (TLRPC.java:27479) |
 | A-11.4.2 | User | 0x22e8ceb0 | equal | TL_userRequest_old (TLRPC.java:27259) |
 | A-11.4.2 | User | 0x2e13f4c3 | equal | TL_user_layer104 (TLRPC.java:27065) |
 | A-11.4.2 | User | 0x3ff6ecb0 | equal | TL_user_layer144 (TLRPC.java:26800) |
-| A-11.4.2 | User | 0x4fe9cce0 | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer185 (TLRPC.java:25654) |
+| A-11.4.2 | User | 0x4fe9cce0 | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer185 (TLRPC.java:25654) |
 | A-11.4.2 | User | 0x5214c89d | equal | TL_userForeign_old (TLRPC.java:27285) |
 | A-11.4.2 | User | 0x5d99adee | equal | TL_user_layer147 (TLRPC.java:26658) |
 | A-11.4.2 | User | 0x7007b451 | equal | TL_userSelf_old2 (TLRPC.java:27561) |
 | A-11.4.2 | User | 0x720535ec | equal | TL_userSelf_old (TLRPC.java:27173) |
-| A-11.4.2 | User | 0x83314fca | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user (TLRPC.java:25434) |
+| A-11.4.2 | User | 0x83314fca | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user (TLRPC.java:25434) |
 | A-11.4.2 | User | 0x8f97c628 | equal | TL_user_layer159 (TLRPC.java:26480) |
 | A-11.4.2 | User | 0x938458c1 | equal | TL_user_layer131 (TLRPC.java:26934) |
-| A-11.4.2 | User | 0xabb5f120 | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer165 (TLRPC.java:26290) |
+| A-11.4.2 | User | 0xabb5f120 | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer165 (TLRPC.java:26290) |
 | A-11.4.2 | User | 0xb29ad7cc | equal | TL_userDeleted_old (TLRPC.java:27363) |
 | A-11.4.2 | User | 0xcab35e18 | equal | TL_userContact_old2 (TLRPC.java:25366) |
 | A-11.4.2 | User | 0xd10d979a | equal | TL_user_layer65 (TLRPC.java:27381) |
 | A-11.4.2 | User | 0xd3bc4b7a | equal | TL_userEmpty (TLRPC.java:25420) |
 | A-11.4.2 | User | 0xd6016d7a | equal | TL_userDeleted_old2 (TLRPC.java:27225) |
 | A-11.4.2 | User | 0xd9ccc4ef | equal | TL_userRequest_old2 (TLRPC.java:27335) |
-| A-11.4.2 | User | 0xeb602f25 | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer166 (TLRPC.java:26084) |
+| A-11.4.2 | User | 0xeb602f25 | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_user_layer166 (TLRPC.java:26084) |
 | A-11.4.2 | User | 0xf2fb8319 | equal | TL_userContact_old (TLRPC.java:25394) |
 | A-11.4.2 | Chat | 0x07328bdb | equal | TL_chatForbidden_layer131 (TLRPC.java:50862) |
-| A-11.4.2 | Chat | 0x0aadfc8f | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer185 (TLRPC.java:49867) |
+| A-11.4.2 | Chat | 0x0aadfc8f | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer185 (TLRPC.java:49867) |
 | A-11.4.2 | Chat | 0x0cb44b1c | equal | TL_channel_layer72 (TLRPC.java:51321) |
 | A-11.4.2 | Chat | 0x0db12acb | equal | TL_channel_layer167_3 (TLRPC.java:49495) |
 | A-11.4.2 | Chat | 0x17d493d5 | equal | TL_channelForbidden (TLRPC.java:49165) |
-| A-11.4.2 | Chat | 0x1981ea7e | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer166 (TLRPC.java:50219) |
+| A-11.4.2 | Chat | 0x1981ea7e | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer166 (TLRPC.java:50219) |
 | A-11.4.2 | Chat | 0x289da732 | equal | TL_channelForbidden_layer131 (TLRPC.java:49195) |
 | A-11.4.2 | Chat | 0x29562865 | equal | TL_chatEmpty (TLRPC.java:73993) |
 | A-11.4.2 | Chat | 0x2d85832c | equal | TL_channelForbidden_layer52 (TLRPC.java:49304) |
@@ -1666,8 +1666,8 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | A-11.4.2 | Chat | 0x8261ac61 | equal | TL_channel_layer147 (TLRPC.java:50723) |
 | A-11.4.2 | Chat | 0x83259464 | equal | TL_channel_layer161 (TLRPC.java:50566) |
 | A-11.4.2 | Chat | 0x8537784f | equal | TL_channelForbidden_layer67 (TLRPC.java:49225) |
-| A-11.4.2 | Chat | 0x8e87ccd8 | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer167 (TLRPC.java:50052) |
-| A-11.4.2 | Chat | 0x94f592db | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer165 (TLRPC.java:50396) |
+| A-11.4.2 | Chat | 0x8e87ccd8 | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer167 (TLRPC.java:50052) |
+| A-11.4.2 | Chat | 0x94f592db | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel_layer165 (TLRPC.java:50396) |
 | A-11.4.2 | Chat | 0x9ba2d800 | equal | TL_chatEmpty_layer131 (TLRPC.java:74009) |
 | A-11.4.2 | Chat | 0xa14dca52 | equal | TL_channel_layer67 (TLRPC.java:50878) |
 | A-11.4.2 | Chat | 0xa636a3e2 | equal | TL_channel_layer167_2 (TLRPC.java:49322) |
@@ -1675,7 +1675,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | A-11.4.2 | Chat | 0xd31a961e | equal | TL_channel_layer131 (TLRPC.java:51011) |
 | A-11.4.2 | Chat | 0xd91cdd54 | equal | TL_chat_layer92 (TLRPC.java:51470) |
 | A-11.4.2 | Chat | 0xfb0ccc41 | equal | TL_chatForbidden_old (TLRPC.java:48997) |
-| A-11.4.2 | Chat | 0xfe4478bd | equal on the wire (names differ: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel (TLRPC.java:49674) |
+| A-11.4.2 | Chat | 0xfe4478bd | equal on the wire (spelling differs: stories_max_id:i32 / stories_max_id.max_id:i32) | TL_channel (TLRPC.java:49674) |
 | A-11.4.2 | PhotoSize | 0x021e1ad6 | equal | TL_photoCachedSize (TLRPC.java:53635) |
 | A-11.4.2 | PhotoSize | 0x0e17e23c | equal | TL_photoSizeEmpty (TLRPC.java:53579) |
 | A-11.4.2 | PhotoSize | 0x5aa86a51 | equal | TL_photoSizeProgressive_layer127 (TLRPC.java:53517) |
@@ -1886,7 +1886,7 @@ Fact files checked (SHA-256 of the committed bytes):
 | File | SHA-256 |
 |---|---|
 | `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
-| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
+| `facts.tsv` | a67b538158e7d2b14f40daf3cdf38b5347f80060db69e5ba40337c15db311078 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -2244,7 +2244,7 @@ Membership: every ID the pinned types' switches read at this pin is a row of `co
 | release-8.1.1_2431 | PollAnswer | 0x6ca9c2e9 | in-table | TL_pollAnswer (TLRPC.java:2331) |
 | release-8.1.1_2431 | PollAnswerVoters | 0x3b6ddad2 | in-table | TL_pollAnswerVoters (TLRPC.java:4279) |
 
-Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
+Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the tokens whose spelling differs (a field name or an inline id's class annotation; informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
 
 | Pin | Type | ID | Verdict | Class at this pin |
 |---|---|---|---|---|
@@ -2415,7 +2415,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-8.1.1_2431 | WebPage | 0xd41a5167 | equal | TL_webPageUrlPending (TLRPC.java:16802) |
 | release-8.1.1_2431 | WebPage | 0xe89c45b2 | compatible widening (vec<TL_webPageAttributeTheme> read as vec<WebPageAttribute>: 0x54b56617 TL_webPageAttributeTheme reads the same at TLRPC.java:9785 and at TLRPC.java:10575) | TL_webPage (TLRPC.java:16354) |
 | release-8.1.1_2431 | WebPage | 0xeb1477e8 | equal | TL_webPageEmpty (TLRPC.java:16788) |
-| release-8.1.1_2431 | WebPage | 0xfa64e172 | equal on the wire (names differ: attribute.documents:vec<Document> / documents:vec<Document>) | TL_webPage_layer107 (TLRPC.java:16479) |
+| release-8.1.1_2431 | WebPage | 0xfa64e172 | equal on the wire (spelling differs: attribute.documents:vec<Document> / documents:vec<Document>) | TL_webPage_layer107 (TLRPC.java:16479) |
 | release-8.1.1_2431 | User | 0x075cf7a8 | equal | TL_userForeign_old2 (TLRPC.java:19315) |
 | release-8.1.1_2431 | User | 0x1c60e608 | equal | TL_userSelf_old3 (TLRPC.java:19205) |
 | release-8.1.1_2431 | User | 0x200250ba | equal | TL_userEmpty_layer131 (TLRPC.java:19251) |
@@ -2515,7 +2515,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-8.1.1_2431 | PollResults | 0x5755785a | equal | TL_pollResults_layer108 (TLRPC.java:3799) |
 | release-8.1.1_2431 | PollResults | 0xbadcc1a3 | membership-only (MANUAL at TLRPC.java:3951) | TL_pollResults_layer131 (TLRPC.java:3914) |
 | release-8.1.1_2431 | PollResults | 0xc87024a2 | membership-only (MANUAL at TLRPC.java:3883) | TL_pollResults_layer111 (TLRPC.java:3846) |
-| release-8.1.1_2431 | PollResults | 0xdcb82ea3 | equal on the wire (names differ: recent_voters:vec<i64> / recent_voters:vec<id64@user>) | TL_pollResults (TLRPC.java:4013) |
+| release-8.1.1_2431 | PollResults | 0xdcb82ea3 | equal on the wire (spelling differs: recent_voters:vec<i64> / recent_voters:vec<id64@user>) | TL_pollResults (TLRPC.java:4013) |
 | release-8.1.1_2431 | ReplyMarkup | 0x3502758c | equal | TL_replyKeyboardMarkup_layer129 (TLRPC.java:9693) |
 | release-8.1.1_2431 | ReplyMarkup | 0x48a30254 | compatible widening (union) (vec<TL_keyboard.KeyboardButtonRow> read as vec<TL_keyboard.KeyboardInlineButtonRow>: the union check below holds at this pin) | TL_replyInlineMarkup (TLRPC.java:9752) |
 | release-8.1.1_2431 | ReplyMarkup | 0x85dd99d1 | equal | TL_replyKeyboardMarkup (TLRPC.java:9606) |
@@ -2566,7 +2566,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-8.1.1_2431 | InputPeer | 0xa87b0a1c | equal | TL_inputPeerUserFromMessage (TLRPC.java:41422) |
 | release-8.1.1_2431 | InputPeer | 0xbd2a0840 | equal | TL_inputPeerChannelFromMessage (TLRPC.java:41511) |
 | release-8.1.1_2431 | InputPeer | 0xdde8a54c | equal | TL_inputPeerUser (TLRPC.java:41440) |
-| release-8.1.1_2431 | PollAnswer | 0x6ca9c2e9 | equal on the wire (names differ: text:str / text.text:str) | TL_pollAnswer (TLRPC.java:2331) |
+| release-8.1.1_2431 | PollAnswer | 0x6ca9c2e9 | equal on the wire (spelling differs: text:str / text.text:str) | TL_pollAnswer (TLRPC.java:2331) |
 | release-8.1.1_2431 | PollAnswerVoters | 0x3b6ddad2 | equal | TL_pollAnswerVoters (TLRPC.java:4279) |
 
 Compared 288 rows; membership-only 32
@@ -2614,7 +2614,7 @@ Fact files checked (SHA-256 of the committed bytes):
 | File | SHA-256 |
 |---|---|
 | `constructors.tsv` | ba9229aa405b9f9e2cb31698dfa46f667f21a7a2280e07fa64abe68f45037b39 |
-| `facts.tsv` | dca5975e28eb17b1009b412ef44c14b9f0fc38864749dea18f767723136e6479 |
+| `facts.tsv` | a67b538158e7d2b14f40daf3cdf38b5347f80060db69e5ba40337c15db311078 |
 
 Rows of `constructors.tsv` pinned here, against the source of this pin (the ID read by the type's switch, the class, the source line, the body the selection asks for, and the field order reduced from `readParams`; a `prefix` row is a proper prefix of the reduced body):
 
@@ -2910,41 +2910,41 @@ Membership: every ID the pinned types' switches read at this pin is a row of `co
 | release-5.14.0_1851 | PollAnswer | 0x6ca9c2e9 | in-table | TL_pollAnswer (TLRPC.java:1938) |
 | release-5.14.0_1851 | PollAnswerVoters | 0x3b6ddad2 | in-table | TL_pollAnswerVoters (TLRPC.java:3303) |
 
-Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ (informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
+Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire types; flag-only trues, `mType.` holders and field names set aside, object types named by the deserializer a call reaches, ruling T1a). `equal on the wire` lists the tokens whose spelling differs (a field name or an inline id's class annotation; informational); `membership-only` names the line the reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).
 
 | Pin | Type | ID | Verdict | Class at this pin |
 |---|---|---|---|---|
-| release-5.14.0_1851 | Message | 0x05f46804 | equal on the wire (names differ: fwd_from.from_id:i32 / fwd_from.from_id:id32@user; from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageForwarded_old (TLRPC.java:41577) |
-| release-5.14.0_1851 | Message | 0x1c9b1027 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer104_2 (TLRPC.java:40907) |
-| release-5.14.0_1851 | Message | 0x1d86f70e | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageService_old2 (TLRPC.java:40028) |
-| release-5.14.0_1851 | Message | 0x22eb6aba | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_message_old (TLRPC.java:41616) |
-| release-5.14.0_1851 | Message | 0x2bebfa86 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old6 (TLRPC.java:41176) |
-| release-5.14.0_1851 | Message | 0x44f9b43d | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer104 (TLRPC.java:41049) |
-| release-5.14.0_1851 | Message | 0x452c0e65 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message (TLRPC.java:40591) |
-| release-5.14.0_1851 | Message | 0x555555f8 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_message_secret_old (TLRPC.java:41798) |
-| release-5.14.0_1851 | Message | 0x555555f9 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_random_id:i64 / reply_to.reply_to_random_id:i64) | TL_message_secret_layer72 (TLRPC.java:41726) |
-| release-5.14.0_1851 | Message | 0x555555fa | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_random_id:i64 / reply_to.reply_to_random_id:i64) | TL_message_secret (TLRPC.java:41648) |
-| release-5.14.0_1851 | Message | 0x567699b3 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_message_old2 (TLRPC.java:41512) |
-| release-5.14.0_1851 | Message | 0x5ba66c13 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; peer:Peer / fwd_from.from_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old7 (TLRPC.java:40426) |
+| release-5.14.0_1851 | Message | 0x05f46804 | equal on the wire (spelling differs: fwd_from.from_id:i32 / fwd_from.from_id:id32@user; from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageForwarded_old (TLRPC.java:41577) |
+| release-5.14.0_1851 | Message | 0x1c9b1027 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer104_2 (TLRPC.java:40907) |
+| release-5.14.0_1851 | Message | 0x1d86f70e | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageService_old2 (TLRPC.java:40028) |
+| release-5.14.0_1851 | Message | 0x22eb6aba | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_message_old (TLRPC.java:41616) |
+| release-5.14.0_1851 | Message | 0x2bebfa86 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old6 (TLRPC.java:41176) |
+| release-5.14.0_1851 | Message | 0x44f9b43d | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer104 (TLRPC.java:41049) |
+| release-5.14.0_1851 | Message | 0x452c0e65 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message (TLRPC.java:40591) |
+| release-5.14.0_1851 | Message | 0x555555f8 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_message_secret_old (TLRPC.java:41798) |
+| release-5.14.0_1851 | Message | 0x555555f9 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_random_id:i64 / reply_to.reply_to_random_id:i64) | TL_message_secret_layer72 (TLRPC.java:41726) |
+| release-5.14.0_1851 | Message | 0x555555fa | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_random_id:i64 / reply_to.reply_to_random_id:i64) | TL_message_secret (TLRPC.java:41648) |
+| release-5.14.0_1851 | Message | 0x567699b3 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_message_old2 (TLRPC.java:41512) |
+| release-5.14.0_1851 | Message | 0x5ba66c13 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; peer:Peer / fwd_from.from_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old7 (TLRPC.java:40426) |
 | release-5.14.0_1851 | Message | 0x83e5de54 | equal | TL_messageEmpty (TLRPC.java:40013) |
-| release-5.14.0_1851 | Message | 0x90dddc11 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer72 (TLRPC.java:40061) |
-| release-5.14.0_1851 | Message | 0x9789dac4 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer104_3 (TLRPC.java:40746) |
-| release-5.14.0_1851 | Message | 0x9e19a1f6 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_messageService (TLRPC.java:41837) |
-| release-5.14.0_1851 | Message | 0x9f8d60bb | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageService_old (TLRPC.java:41550) |
-| release-5.14.0_1851 | Message | 0xa367e716 | equal on the wire (names differ: fwd_from.from_id:i32 / fwd_from.from_id:id32@user; from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageForwarded_old2 (TLRPC.java:40547) |
-| release-5.14.0_1851 | Message | 0xa7ab1991 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old3 (TLRPC.java:41459) |
-| release-5.14.0_1851 | Message | 0xc06b9607 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageService_layer48 (TLRPC.java:41352) |
-| release-5.14.0_1851 | Message | 0xc09be45f | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer68 (TLRPC.java:40178) |
-| release-5.14.0_1851 | Message | 0xc3060325 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old4 (TLRPC.java:41399) |
-| release-5.14.0_1851 | Message | 0xc992e15c | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; peer:Peer / fwd_from.from_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer47 (TLRPC.java:40299) |
-| release-5.14.0_1851 | Message | 0xf07814c8 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old5 (TLRPC.java:41267) |
+| release-5.14.0_1851 | Message | 0x90dddc11 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer72 (TLRPC.java:40061) |
+| release-5.14.0_1851 | Message | 0x9789dac4 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer104_3 (TLRPC.java:40746) |
+| release-5.14.0_1851 | Message | 0x9e19a1f6 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_messageService (TLRPC.java:41837) |
+| release-5.14.0_1851 | Message | 0x9f8d60bb | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageService_old (TLRPC.java:41550) |
+| release-5.14.0_1851 | Message | 0xa367e716 | equal on the wire (spelling differs: fwd_from.from_id:i32 / fwd_from.from_id:id32@user; from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageForwarded_old2 (TLRPC.java:40547) |
+| release-5.14.0_1851 | Message | 0xa7ab1991 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old3 (TLRPC.java:41459) |
+| release-5.14.0_1851 | Message | 0xc06b9607 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer) | TL_messageService_layer48 (TLRPC.java:41352) |
+| release-5.14.0_1851 | Message | 0xc09be45f | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer68 (TLRPC.java:40178) |
+| release-5.14.0_1851 | Message | 0xc3060325 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old4 (TLRPC.java:41399) |
+| release-5.14.0_1851 | Message | 0xc992e15c | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; peer:Peer / fwd_from.from_id:Peer; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_layer47 (TLRPC.java:40299) |
+| release-5.14.0_1851 | Message | 0xf07814c8 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; to_id:Peer / peer_id:Peer; fwd_from.from_id:i32 / fwd_from.from_id:id32@user; reply_to_msg_id:i32 / reply_to.reply_to_msg_id:i32) | TL_message_old5 (TLRPC.java:41267) |
 | release-5.14.0_1851 | Peer | 0x9db1bc6d | equal | TL_peerUser (TLRPC.java:2820) |
 | release-5.14.0_1851 | Peer | 0xbad0e5bb | equal | TL_peerChat (TLRPC.java:2834) |
 | release-5.14.0_1851 | Peer | 0xbddde532 | equal | TL_peerChannel (TLRPC.java:2806) |
-| release-5.14.0_1851 | MessageFwdHeader | 0x559ebe6d | equal on the wire (names differ: from_id:i32 / from_id:id32@user; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader_layer96 (TLRPC.java:29972) |
-| release-5.14.0_1851 | MessageFwdHeader | 0xc786ddcb | equal on the wire (names differ: from_id:i32 / from_id:id32@?; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader_layer68 (TLRPC.java:29840) |
-| release-5.14.0_1851 | MessageFwdHeader | 0xec338270 | equal on the wire (names differ: from_id:i32 / from_id:id32@user; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader (TLRPC.java:29874) |
-| release-5.14.0_1851 | MessageFwdHeader | 0xfadff4ac | equal on the wire (names differ: from_id:i32 / from_id:id32@user; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader_layer72 (TLRPC.java:29932) |
+| release-5.14.0_1851 | MessageFwdHeader | 0x559ebe6d | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader_layer96 (TLRPC.java:29972) |
+| release-5.14.0_1851 | MessageFwdHeader | 0xc786ddcb | equal on the wire (spelling differs: from_id:i32 / from_id:id32@?; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader_layer68 (TLRPC.java:29840) |
+| release-5.14.0_1851 | MessageFwdHeader | 0xec338270 | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader (TLRPC.java:29874) |
+| release-5.14.0_1851 | MessageFwdHeader | 0xfadff4ac | equal on the wire (spelling differs: from_id:i32 / from_id:id32@user; channel_id:i32 / from_id:id32@channel) | TL_messageFwdHeader_layer72 (TLRPC.java:29932) |
 | release-5.14.0_1851 | MessageEntity | 0x020df5d0 | equal | TL_messageEntityBlockquote (TLRPC.java:22674) |
 | release-5.14.0_1851 | MessageEntity | 0x208e68c9 | equal | TL_inputMessageEntityMentionName (TLRPC.java:22576) |
 | release-5.14.0_1851 | MessageEntity | 0x28a20571 | equal | TL_messageEntityCode (TLRPC.java:22642) |
@@ -3047,7 +3047,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-5.14.0_1851 | WebPage | 0xd41a5167 | equal | TL_webPageUrlPending (TLRPC.java:12061) |
 | release-5.14.0_1851 | WebPage | 0xe89c45b2 | compatible widening (vec<TL_webPageAttributeTheme> read as vec<WebPageAttribute>: 0x54b56617 TL_webPageAttributeTheme reads the same at TLRPC.java:7627 and at TLRPC.java:10575) | TL_webPage (TLRPC.java:11613) |
 | release-5.14.0_1851 | WebPage | 0xeb1477e8 | equal | TL_webPageEmpty (TLRPC.java:12047) |
-| release-5.14.0_1851 | WebPage | 0xfa64e172 | equal on the wire (names differ: attribute.documents:vec<Document> / documents:vec<Document>) | TL_webPage_layer107 (TLRPC.java:11738) |
+| release-5.14.0_1851 | WebPage | 0xfa64e172 | equal on the wire (spelling differs: attribute.documents:vec<Document> / documents:vec<Document>) | TL_webPage_layer107 (TLRPC.java:11738) |
 | release-5.14.0_1851 | User | 0x075cf7a8 | equal | TL_userForeign_old2 (TLRPC.java:14024) |
 | release-5.14.0_1851 | User | 0x1c60e608 | equal | TL_userSelf_old3 (TLRPC.java:13914) |
 | release-5.14.0_1851 | User | 0x200250ba | equal | TL_userEmpty (TLRPC.java:13960) |
@@ -3125,7 +3125,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-5.14.0_1851 | ReactionCount | 0x6fb250d1 | CONFLICT (opaque; pin conflict: flags:# reaction:str count:i32 at TLRPC.java:30615, flags:# reaction:Reaction count:i32 at TLRPC.java:45165) | TL_reactionCount (TLRPC.java:30615) |
 | release-5.14.0_1851 | Poll | 0xd5529d06 | equal | TL_poll (TLRPC.java:24034) |
 | release-5.14.0_1851 | PollResults | 0x5755785a | equal | TL_pollResults_layer108 (TLRPC.java:3093) |
-| release-5.14.0_1851 | PollResults | 0xc87024a2 | equal on the wire (names differ: recent_voters:vec<i32> / recent_voters:vec<id32@user>) | TL_pollResults (TLRPC.java:3140) |
+| release-5.14.0_1851 | PollResults | 0xc87024a2 | equal on the wire (spelling differs: recent_voters:vec<i32> / recent_voters:vec<id32@user>) | TL_pollResults (TLRPC.java:3140) |
 | release-5.14.0_1851 | ReplyMarkup | 0x3502758c | equal | TL_replyKeyboardMarkup (TLRPC.java:7586) |
 | release-5.14.0_1851 | ReplyMarkup | 0x48a30254 | compatible widening (union) (vec<TL_keyboard.KeyboardButtonRow> read as vec<TL_keyboard.KeyboardInlineButtonRow>: the union check below holds at this pin) | TL_replyInlineMarkup (TLRPC.java:7519) |
 | release-5.14.0_1851 | ReplyMarkup | 0xa03e5b85 | equal | TL_replyKeyboardHide (TLRPC.java:7552) |
@@ -3168,7 +3168,7 @@ Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch
 | release-5.14.0_1851 | InputPeer | 0x7da07ec9 | equal | TL_inputPeerSelf (TLRPC.java:32044) |
 | release-5.14.0_1851 | InputPeer | 0x7f3b18ea | equal | TL_inputPeerEmpty (TLRPC.java:32139) |
 | release-5.14.0_1851 | InputPeer | 0x9c95f7bb | equal | TL_inputPeerChannelFromMessage (TLRPC.java:32103) |
-| release-5.14.0_1851 | PollAnswer | 0x6ca9c2e9 | equal on the wire (names differ: text:str / text.text:str) | TL_pollAnswer (TLRPC.java:1938) |
+| release-5.14.0_1851 | PollAnswer | 0x6ca9c2e9 | equal on the wire (spelling differs: text:str / text.text:str) | TL_pollAnswer (TLRPC.java:1938) |
 | release-5.14.0_1851 | PollAnswerVoters | 0x3b6ddad2 | equal | TL_pollAnswerVoters (TLRPC.java:3303) |
 
 Compared 249 rows; membership-only 7
@@ -3489,9 +3489,9 @@ then its own switch (`:825`). `0x19420af6` `TL_keyboardInlineButtonRow` reads it
 `KeyboardInlineButton.TLdeserialize`, which tries `KeyboardButton.fromConstructor` first (`:735-742`, kept as a disabled
 inline button) and then its own (`:745`). The two button switches share no ID, so the order of a union never changes
 what is read (ruling T2a). `0xc87024a2` and `0xbadcc1a3` read `recent_voters` (bit 3) through
-`VectorLegacy.deserialize_IntUserIdAsPeer` (`TLRPC.java:4275`, `:4308`): a boxed bare int vector (`VectorLegacy.java:28`)
+`VectorLegacy.deserialize_IntUserIdAsPeer` (`TLRPC.java:4275`, `:4308`): a boxed vector of bare ints (`VectorLegacy.java:28`)
 whose every id becomes the `user_id` of a `TL_peerUser` the app builds (`:31-32`); `0xdcb82ea3` through
-`deserialize_LongUserIdAsPeer` (`TLRPC.java:4450`; `VectorLegacy.java:49`, `:52-53`), a bare long vector. `0xbadcc1a3`
+`deserialize_LongUserIdAsPeer` (`TLRPC.java:4450`; `VectorLegacy.java:49`, `:52-53`), a boxed vector of bare longs. `0xbadcc1a3`
 (reads 4299-4313) and `0xdcb82ea3` (reads 4441-4455) read `solution` and `solution_entities` under one test of bit 4;
 `0xc87024a2` reads 4266-4276.
 
@@ -3526,10 +3526,10 @@ the found class's `readParams` alone (no further fallback). The two button switc
 `KeyboardButton.fromConstructor`, `:776-809`; 26 in `KeyboardInlineButton.fromConstructor`, `:671-730`), so a
 union's order never changes what is read. The three PollResults rows read flags, `min` as the flag-only test of bit
 0, `results` (bit 1), `total_voters` (bit 2) and `recent_voters` (bit 3): `0xc87024a2` reads `TLRPC.java:4266-4276`,
-`recent_voters` by `VectorLegacy.deserialize_IntUserIdAsPeer` (`VectorLegacy.java:27-37`: a boxed bare int vector,
+`recent_voters` by `VectorLegacy.deserialize_IntUserIdAsPeer` (`VectorLegacy.java:27-37`: a boxed vector of bare ints,
 each id the `user_id` of a `TL_peerUser` the app builds); `0xbadcc1a3` reads 4299-4313, the same, then `solution`
 and `solution_entities` under one test of bit 4; `0xdcb82ea3` reads 4441-4455, as `0xbadcc1a3` but `recent_voters`
-by `deserialize_LongUserIdAsPeer` (`VectorLegacy.java:48-58`, a bare long vector).
+by `deserialize_LongUserIdAsPeer` (`VectorLegacy.java:48-58`, a boxed vector of bare longs).
 
 | ID | Class | Source | Body read | Verdict |
 |---|---|---|---|---|

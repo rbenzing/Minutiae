@@ -441,8 +441,10 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	}
 }
 
-// idReplyKeyboardHide is TL_replyKeyboardHide (ReplyMarkup), an opaque row in this plan (Stage B reads reply markup).
-const idReplyKeyboardHide = 0xa03e5b85
+// idUnknownMarkup is an ID no ReplyMarkup row holds (plan 4I4c P11, ruling PL4): a Go-built row that sets the reply
+// markup bit and holds it stops there, unknown-constructor at reply_markup (state partial), before edit_date, whatever
+// the table reads of reply markup (TL_replyKeyboardHide 0xa03e5b85, the opaque stop of plan 4I4b, is full since 4I4c).
+const idUnknownMarkup = 0x0bad0f06
 
 // Plan 4I4b design D9, rulings R5, B3 (Review Focus 4): edit_date is Unix seconds at all four pins (facts.tsv
 // unit.edit_date), so a read valid edit_date is Times.edited beside the raw value and its unit; 0 is a sentinel and
@@ -464,7 +466,7 @@ func TestTelegramEditTimeFollowsTheUnitFact(t *testing.T) {
 		msg(3, -100, false, 0, nil, nil),
 		msg(4, baseDate+600, false, bitEditHide, nil, nil),
 		msg(5, baseDate+600, false, bitReactions, nil, reactionsWith(old)),
-		msg(6, baseDate+600, false, 0, append(le32(idReplyKeyboardHide), le32(0)...), nil),
+		msg(6, baseDate+600, false, 0, append(le32(idUnknownMarkup), le32(0)...), nil),
 	}
 	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, rows))).Records)
 	rec := func(n int) (records.Record, map[string]any) {

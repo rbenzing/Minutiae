@@ -164,6 +164,31 @@ var (
 	tgBareStarsRE = regexp.MustCompile(`(^|[^.\w])StarsAmount\b`)
 )
 
+// tgScalarKinds are the scalar kinds of the grammar: never an object type, never a member of a union.
+var tgScalarKinds = map[string]bool{"#": true, "i32": true, "i64": true, "dbl": true, "bool": true, "bytes": true, "str": true, "secret": true}
+
+// tgKindDefect is why a field kind the token grammar accepts is still outside it (ruling C6), "" when it is not: a
+// vector of a scalar the walker has no reader for, or a union whose two members are equal or one is a scalar.
+func tgKindDefect(kind string) string {
+	if tgForbiddenKindRE.MatchString(kind) {
+		return "a vector of " + kind[4:len(kind)-1]
+	}
+	inner, ok := strings.CutPrefix(kind, "vec<")
+	if !ok {
+		return ""
+	}
+	a, b, union := strings.Cut(strings.TrimSuffix(inner, ">"), "|")
+	switch {
+	case !union:
+		return ""
+	case a == b:
+		return "a union of one type twice"
+	case tgScalarKinds[a] || tgScalarKinds[b]:
+		return "a scalar inside a union"
+	}
+	return ""
+}
+
 // tgField is one field token of a constructors.tsv row: its name, kind (empty for a flag-only true) and, for an
 // inline id, the resolved class.
 type tgField struct{ name, kind, class string }
@@ -196,8 +221,8 @@ func tgParseFields(t *testing.T, row string, s string) []tgField {
 		if m[4] != "" {
 			class = m[4]
 		}
-		if tgForbiddenKindRE.MatchString(m[2]) {
-			t.Errorf("%s: %q holds a kind outside the grammar (ruling C6)", row, tok)
+		if why := tgKindDefect(m[2]); why != "" {
+			t.Errorf("%s: %q holds a kind outside the grammar (ruling C6): %s", row, tok, why)
 		}
 		out = append(out, tgField{name: m[1], kind: m[2], class: class})
 		if m[5] == "]" {
@@ -727,6 +752,25 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	for name, src := range map[string]string{"constructors.tsv": consSrc, "facts.tsv": factsSrc, "CROSSCHECK.md": report} {
 		if lines := calendarURLLines(src); len(lines) > 0 {
 			t.Errorf("%s holds a URL (cite by repository and commit): %q", name, lines)
+		}
+	}
+}
+
+// Plan 4I4c W2 and ruling C6 (Task 2 review, carried into Task 4): the token grammar's union vec<A|B> takes two
+// distinct object types; a union of one type twice or with a scalar member, and a vector of a scalar without a reader,
+// are outside it. The kinds the walker reads pass.
+func TestTelegramFieldGrammarRefusesBadUnions(t *testing.T) {
+	for _, kind := range []string{"vec<X|X>", "vec<str|Foo>", "vec<Foo|str>", "vec<bytes|Foo>", "vec<Foo|i64>", "vec<bytes>", "vec<dbl>"} {
+		if tgKindDefect(kind) == "" {
+			t.Errorf("%s: accepted, want a defect (ruling C6)", kind)
+		}
+	}
+	for _, kind := range []string{
+		"vec<TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton>", "vec<str>", "vec<i32>",
+		"vec<id32@user>", "vec<id64@user>", "vec<MessageEntity>", "i32", "Peer",
+	} {
+		if why := tgKindDefect(kind); why != "" {
+			t.Errorf("%s: refused (%s), want accepted", kind, why)
 		}
 	}
 }

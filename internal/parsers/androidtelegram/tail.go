@@ -96,6 +96,19 @@ func entityLabel(class string) string {
 	return classLabel(class, "TL_messageEntity")
 }
 
+// inputUserLabel is the label of an InputUser class (ruling C4): its classLabel after "TL_inputUser"
+// ("from_message", "self", "empty"), and "user" for TL_inputUser and TL_inputUser_layer132, whose class name has no
+// label (a layer suffix is no label). A class of another prefix has none ("").
+func inputUserLabel(class string) string {
+	if !strings.HasPrefix(class, "TL_inputUser") {
+		return ""
+	}
+	if label := classLabel(class, "TL_inputUser"); label != "" {
+		return label
+	}
+	return "user"
+}
+
 // entityOf is one scalar-only entry of raw.entities: its type label, offset, length, url (4 KiB, cleaned), the user of
 // a mention (an inline id, "user:<id>"; an InputUser object read in its place is no id: user_class, its class label,
 // ruling F2), document_id and language (64 B).
@@ -117,10 +130,10 @@ func entityOf(v view, raw map[string]any, p string) map[string]any {
 		case tl.KInt32, tl.KInt64:
 			x["user"] = "user:" + strconv.FormatInt(n.Int, 10)
 		case tl.KObject:
-			// ruling F2: an InputUser object read in place of an id (inputUserSelf, inputUserEmpty) is stated by its
-			// class label, never as a user
+			// ruling F2: an InputUser object read in place of an id is stated by its class label (ruling C4:
+			// inputUserLabel), never as a user
 			class := v.Class(p + ".user_id")
-			if label := classLabel(class, "TL_inputUser"); label != "" {
+			if label := inputUserLabel(class); label != "" {
 				class = label
 			}
 			x["user_class"] = class

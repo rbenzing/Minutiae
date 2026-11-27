@@ -25,6 +25,9 @@ schemas/telegram-android/constructors.tsv, and it never reads facts.tsv. A value
     when the value gives them): the fixture states the rest as `_raw`.
   - `secret` fields hold key material in the app. The encoder refuses any value that does not start with
     SYNTHETIC_PREFIX, so a fixture can only ever carry obviously synthetic bytes; use synthetic_secret(n).
+  - Plan 4I4c (W2, W3): a `vec<A|B>` element is encoded by its value's class under A, else under B (a class of B whose
+    id A also holds is an error: the reader would take it as A); `vec<id32@C>`/`vec<id64@C>` is a boxed vector
+    (0x1cb5c415, count) of bare ints or longs (VectorLegacy reads it boxed); `vec<str>` a boxed vector of bare strings.
 """
 import os
 import struct
@@ -103,6 +106,27 @@ def find_row(typ, cls):
     raise ValueError("no constructor row of class %r (type %r)" % (cls, typ))
 
 
+def union_row(types, cls):
+    """The row of class cls under the first of types that has it (plan 4I4c P5: the reader takes an element as the
+    first type holding its id, so a class of a later type whose id an earlier type holds cannot be written)."""
+    for i, typ in enumerate(types):
+        hits = [r for r in rows() if r[0] == typ and r[2] == cls]
+        if hits:
+            row = hits[0]
+            if any(r[0] in types[:i] and r[1] == row[1] for r in rows()):
+                raise ValueError("%s 0x%08x: an earlier type of %s holds the id" % (cls, row[1], "|".join(types)))
+            return row
+    raise ValueError("no constructor row of class %r in %s" % (cls, "|".join(types)))
+
+
+def bare_vector_kind(kind):
+    """The element kind of a boxed vector of bare values (vec<i32>, vec<i64>, vec<idNN@C>, vec<str>), else None."""
+    if not kind.startswith("vec<"):
+        return None
+    elem = kind[4:-1]
+    return elem if elem in ("i32", "i64", "str") or elem.startswith(("id32@", "id64@")) else None
+
+
 def i32(v):
     """A signed int32 value (a field of kind i32 or id32@): the unsigned range is refused (Task 4 review)."""
     if not -(1 << 31) <= v < (1 << 31):
@@ -160,9 +184,9 @@ def encode_kind(kind, v):
         return tl_bytes(data)
     if kind == "#":
         return u32(v)
-    if kind in ("vec<i32>", "vec<i64>"):
-        pack = i32 if kind == "vec<i32>" else i64
-        return u32(VECTOR_ID) + i32(len(v)) + b"".join(pack(x) for x in v)
+    elem = bare_vector_kind(kind)
+    if elem is not None:
+        return u32(VECTOR_ID) + i32(len(v)) + b"".join(encode_kind(elem, x) for x in v)
     if kind.startswith("vec<"):
         elem = kind[4:-1]
         return u32(VECTOR_ID) + i32(len(v)) + b"".join(encode(elem, x) for x in v)
@@ -214,7 +238,7 @@ def _start(typ, value):
     raw = _raw(value)
     if raw is not None:
         return None, bytes(raw)
-    row = find_row(typ, value["_"])
+    row = union_row(typ.split("|"), value["_"]) if "|" in typ else find_row(typ, value["_"])
     return row, u32(row[1])
 
 
@@ -235,12 +259,12 @@ def _deep_kind(kind, v, path, pos, out):
     if raw is not None or not kind.startswith("vec<") and (kind in ("i32", "id32", "i64", "dbl", "bool", "str", "bytes", "secret", "#")
                                                           or kind.startswith(("id32@", "id64@"))):
         return encode_kind(kind, v)
-    if kind in ("vec<i32>", "vec<i64>"):
-        pack = i32 if kind == "vec<i32>" else i64
+    elem = bare_vector_kind(kind)
+    if elem is not None:
         b = u32(VECTOR_ID) + i32(len(v))
         for i, x in enumerate(v):
             out.append(("%s[%d]" % (path, i), pos + len(b)))
-            b += pack(x)
+            b += encode_kind(elem, x)
         return b
     if kind.startswith("vec<"):
         b = u32(VECTOR_ID) + i32(len(v))
@@ -391,6 +415,30 @@ def self_test():
     eq(blob[at["media.photo.sizes[1]"]:at["media.photo.sizes[1]"] + 4], u32(0xFA3EFB95), "deep: an element")
     eq(blob[at["media.photo.sizes[1].sizes[1]"]:at["media.photo.sizes[1].sizes[1]"] + 4], i32(5), "deep: an int element")
     eq(blob[at["media.photo.dc_id"]:at["media.photo.dc_id"] + 4], i32(2), "deep: the field after a vector")
+    # plan 4I4c W3 (carried review item 7): a classed id vector is boxed, then bare ints or longs; a string vector is
+    # boxed, then bare strings
+    eq(encode_kind("vec<id32@user>", [7, -1]), u32(VECTOR_ID) + i32(2) + i32(7) + i32(-1), "id32 vector")
+    eq(encode_kind("vec<id64@user>", [1 << 40]), u32(VECTOR_ID) + i32(1) + i64(1 << 40), "id64 vector")
+    eq(encode_kind("vec<str>", ["de", ""]), u32(VECTOR_ID) + i32(2) + tl_bytes(b"de") + tl_bytes(b""), "string vector")
+    voters = {"_": "TL_pollResults_layer111", "recent_voters": [7, 9]}
+    eq(encode("PollResults", voters), u32(0xC87024A2) + i32(1 << 3) + u32(VECTOR_ID) + i32(2) + i32(7) + i32(9),
+       "pollResults recent_voters")
+    deep = dict(field_offsets("PollResults", voters, deep=True))
+    if deep["recent_voters[1]"] != 20:
+        raise SystemExit("self-test deep offsets of a bare id vector: %r" % (deep,))
+    # W2: a union element by its class under the first type, then the second
+    kb = lambda cls: {"_": cls, "text": "a"}
+    row = encode("TL_keyboard.KeyboardInlineButtonRow", {"_": "TL_keyboardInlineButtonRow_layer228", "buttons": [
+        kb("TL_keyboardButton_layer223"), kb("TL_keyboardButtonGame_layer223")]})
+    eq(row, u32(0x77608B83) + u32(VECTOR_ID) + i32(2) + u32(0xA2FA4880) + tl_bytes(b"a") + u32(0x50F41CCF)
+       + tl_bytes(b"a"), "union row")
+    try:
+        encode("TL_keyboard.KeyboardInlineButtonRow",
+               {"_": "TL_keyboardInlineButtonRow_layer228", "buttons": [kb("TL_poll")]})
+    except ValueError:
+        pass
+    else:
+        raise SystemExit("self-test: a union element of neither type was accepted")
     print("ok")
     return 0
 

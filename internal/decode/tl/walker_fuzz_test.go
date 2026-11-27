@@ -8,9 +8,10 @@ import (
 
 // FuzzTLDecodeSynthetic (plan 4I4 Task 3, 4I4-P13; plan 4I4c W1-W3 adds Pair, Mixed and
 // Bare; the Telegram table's FuzzTLDecode lives in the parser package): Decode over random
-// bytes with the synthetic table and a counting budget never panics; End <= len(b); a decode without a stop ends at the end of the top
-// object (decoding b[:End] gives the same result); every path is unique; no KSecret field
-// holds bytes; the budget holds exactly 128 bytes and the path's length per field (F8, I1).
+// bytes with the synthetic table and a counting budget never panics; End <= len(b); a decode
+// without a stop ends at the end of the top object (decoding b[:End] gives the same result);
+// every path is unique; no KSecret field holds bytes; the budget holds exactly 128 bytes and
+// the path's length per field (F8, I1).
 func FuzzTLDecodeSynthetic(f *testing.F) {
 	f.Add(fullBox(), uint8(0))
 	f.Add(boxBlob(nil, nil, nil, nil, 0), uint8(0))

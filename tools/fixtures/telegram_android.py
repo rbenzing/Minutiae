@@ -276,7 +276,8 @@ class Blob:
         else:
             self.state = stop["kind"]
         top = self.res["top"]
-        self.row = O.table().get(top) if top is not None and self.state != "unknown-constructor" else None
+        # plan 4I4c W1: a row is keyed by (type, ID); the top is read as typ
+        self.row = O.row_of(top, typ) if top is not None and self.state != "unknown-constructor" else None
         self.cls = self.row.cls if self.row else None
 
     def val(self, path):
@@ -293,6 +294,11 @@ class Blob:
     def obj_cls(self, path):
         e = self.f.get(path)
         return e["cls"] if e and e["kind"] == "object" else None
+
+    def obj_row(self, path):
+        """The table row of the object read at path, by the type it was read as and its ID (plan 4I4c W1), or None."""
+        e = self.f.get(path)
+        return O.table().get((e["type"], e["id"])) if e and e["kind"] == "object" else None
 
     def stop_at(self, path):
         """The stop when it lies at path (an object whose id stopped the decode), else None."""
@@ -836,8 +842,9 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                 raw["media"] = {"constructor": hx(st["id"])}
             else:
                 raw["media"] = {"state": st["kind"]}
-                if st["id"] and O.table().get(st["id"]) is not None:
-                    raw["media"].update({"constructor": hx(st["id"]), "type": media_type(O.table()[st["id"]].cls)})
+                known = O.table().get((st["type"], st["id"])) if st["id"] else None
+                if known is not None:
+                    raw["media"].update({"constructor": hx(st["id"]), "type": media_type(known.cls)})
         else:
             gate = [it for it in b.row.items if it.name == "media"]
             if gate and gate[0].word is not None and b.val(gate[0].word) is not None and not b.val(gate[0].word) >> gate[0].bit & 1:
@@ -935,6 +942,14 @@ def class_label(cls, prefix):
     return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name).lower()
 
 
+def input_user_label(cls):
+    """inputUserLabel (ruling C4): the label of an InputUser class, "user" for TL_inputUser and TL_inputUser_layer132
+    (no label after the prefix: a layer suffix is no label); "" for a class of another prefix."""
+    if cls is None or not cls.startswith("TL_inputUser"):
+        return ""
+    return class_label(cls, "TL_inputUser") or "user"
+
+
 def entity_label(cls):
     if cls is not None and cls.startswith("TL_inputMessageEntity"):
         return "input_" + class_label(cls, "TL_inputMessageEntity")
@@ -994,7 +1009,7 @@ def put_list(b, m, key, path, cap, entry):
 def field_kind(b, path):
     """The kind the row of the object holding path gives the field at path (None when that object was not read)."""
     parent, _, name = path.rpartition(".")
-    row = O.table().get(b.obj_id(parent)) if parent else b.row
+    row = b.obj_row(parent) if parent else b.row
     for it in row.items if row else []:
         if it.name == name and it.kind is not None:
             return it.kind
@@ -1059,7 +1074,7 @@ def file_name(b, m, raw, doc, key):
     """D10, R6, B6: the name of the document at doc from exactly its filename attributes (or the inline file_name of an
     old class): m[key] when every one holds the same bytes and they clean to a text; else m[<key>_state] absent, empty,
     conflict (with <key>s, at most 8 distinct names in wire order, and <key>s_total) or undecided. Returns the name."""
-    row = O.table().get(b.obj_id(doc))
+    row = b.obj_row(doc)
     names = [it.name for it in row.items] if row else []
     if "file_name" in names:
         if not b.has(doc + ".file_name"):
@@ -1303,8 +1318,9 @@ def map_media(b, media, attachments, raw):
             file_name(b, media, raw, w + "document", "document_file_name")
         label_list(b, media, "webpage_attributes", w + "attributes", "TL_webPageAttribute")
         s = b.stop_at(w + "cached_page")
-        if s and s["id"] is not None and O.table().get(s["id"]) is not None:
-            media["cached_page_class"] = O.table()[s["id"]].cls
+        known = O.table().get((s["type"], s["id"])) if s and s["id"] is not None else None
+        if known is not None:
+            media["cached_page_class"] = known.cls
     elif cls.startswith("TL_messageMediaDice"):
         if b.val(W + "emoticon") is not None:
             clean_into(media, raw, "emoticon", "media.emoticon", b.val(W + "emoticon"), MAX_TINY)
@@ -1517,9 +1533,9 @@ def map_tail(b, raw):
         if uid is not None and uid["kind"] in ("i32", "i64"):
             x["user"] = "user:%d" % uid["value"]
         elif uid is not None and uid["kind"] == "object":
-            # final-review ruling F2: an InputUser object read in place of an id (inputUserSelf, inputUserEmpty) is
-            # stated by its class label, never as a user
-            x["user_class"] = class_label(uid["cls"], "TL_inputUser") or uid["cls"]
+            # final-review ruling F2: an InputUser object read in place of an id is stated by its class label (ruling
+            # C4: input_user_label), never as a user
+            x["user_class"] = input_user_label(uid["cls"]) or uid["cls"]
         return x
     put_list(b, raw, "entities", "entities", MAX_ENTITIES, entity)
 
@@ -2362,14 +2378,21 @@ STAGE_A_TYPES = ("PhotoSize", "VideoSize", "DocumentAttribute", "FileLocation", 
 
 
 def seen_ids(blobs, typ):
-    """The constructor IDs the oracle reads in blobs as typ (the top's and every nested object's)."""
+    """The (type, ID) of every constructor the oracle reads in blobs as typ (the top's and every nested object's; plan
+    4I4c W1: a row is keyed by its type and ID)."""
     out = set()
     for b in blobs:
         res = O.decode(b, typ)
         if res["top"] is not None and O.row_of(res["top"], typ) is not None:
-            out.add(res["top"])
-        out |= {f["id"] for f in res["fields"] if f["kind"] == "object"}
+            out.add((typ, res["top"]))
+        out |= {(f["type"], f["id"]) for f in res["fields"] if f["kind"] == "object"}
     return out
+
+
+# The rows of the 4I4b types that plan 4I4c makes full (the InputUser classes and TL_messageMediaPoll_layer223): their
+# layers rows follow every 4I4b one, so no 4I4b row changes its rowid.
+STAGE_B_FULL = (("InputUser", 0xF21158C6), ("InputUser", 0xD8292816), ("InputUser", 0x1DA448E2),
+                ("InputUser", 0x2D117597), ("MessageMedia", 0x4BD6E798))
 
 
 def layers_rows():
@@ -2398,7 +2421,8 @@ def layers_rows():
         rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "entity " + r.cls, frm=pu(ANN), entities=[ent]))))
     # every full media wrapper (TL_messageMediaEmpty and TL_messageMediaUnsupported among them since ruling M3: a
     # constructor that reads no field is full) and one opaque one, TL_messageMediaUnsupported_old
-    media = [r for r in ordered if r.typ == "MessageMedia" and r.body == "full"] + [tab[0x29632A36]]
+    media = [r for r in ordered if r.typ == "MessageMedia" and r.body == "full" and (r.typ, r.cid) not in STAGE_B_FULL]
+    media += [tab[("MessageMedia", 0x29632A36)]]
     for i, r in enumerate(media):
         rid = 1501 + i
         rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "media " + r.cls, frm=pu(ANN), media=mandatory(r, "MessageMedia", rid, "")))))
@@ -2411,7 +2435,8 @@ def layers_rows():
     scenario = [r["data"] for r in list(core_messages().values()) + list(pre84_rows().values()) + list(v84_rows().values()) + rows
                 if isinstance(r.get("data"), (bytes, bytearray))]
     seen = seen_ids(scenario, "Message")
-    todo = [r for r in ordered if r.typ in STAGE_A_TYPES and r.body == "full" and r.cid not in seen]
+    todo = [r for r in ordered if r.typ in STAGE_A_TYPES and r.body == "full" and (r.typ, r.cid) not in seen]
+    todo = [r for r in todo if (r.typ, r.cid) not in STAGE_B_FULL] + [r for r in todo if (r.typ, r.cid) in STAGE_B_FULL]
     for i, r in enumerate(todo):
         rid = 1701 + i
         rows.append(row(rid, rid, ANN, enc(embed(r, rid))))

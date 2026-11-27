@@ -1213,7 +1213,8 @@ def wire_shape(items):
 
 
 def name_differences(older, ref):
-    """The field tokens two bodies of one wire shape spell differently (`older / ref`), for the informational note."""
+    """The field tokens two bodies of one wire shape spell differently (`older / ref`: a field name, or an inline id's
+    class annotation such as `vec<i32>` / `vec<id32@user>`), for the informational note."""
     a = " ".join(older).split()
     b = " ".join(ref).split()
     return ["%s / %s" % (x.rstrip("]"), y.rstrip("]")) for x, y in zip(a, b) if x != y]
@@ -1282,6 +1283,9 @@ def union_check(table, src, head, pin):
     sw = src.switch("ReplyMarkup") or []
     old = [c for cid, _, c in sw if cid == 0x48A30254]
     row = src.switch("TL_keyboard.KeyboardButtonRow") or []
+    if len(row) != 1:
+        holds = False
+        why.append("the older KeyboardButtonRow switch reads %d classes, not one" % len(row))
     olds = []
     try:
         olds = [field_kinds(normalize(reduce_class(src, old[0]), names)) if old else None,
@@ -1334,17 +1338,17 @@ def body_check(table, src, head, pin):
     """Design D6, ruling B4, 4I4b-P7, rulings T1a-T1c: the body of every row whose ID this pin's switch reads, compared
     with its A-HEAD reading by what is read (normalised at each pin by `normalize`, then `wire_shape`): (report lines,
     number of CONFLICT verdicts that count as bad). Field names that differ on one wire shape are informational
-    (`equal on the wire`); an older vector element class of WIDENINGS whose ID reads the same is a `compatible
-    widening`. The A-HEAD reading is the reduced body at A-HEAD, or the row's own fields when A-HEAD does not read the
+    (`equal on the wire`, the spellings listed); an older vector element class of WIDENINGS whose ID reads the same is
+    a `compatible widening`. The A-HEAD reading is the reduced body at A-HEAD, or the row's own fields when A-HEAD does not read the
     ID or the row is read by hand there. A row the reduction cannot read at this pin is membership-only."""
     names, hnames = compare_names(src), compare_names(head)
     union_lines, union_holds = union_check(table, src, head, pin)
     lines = ["Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at "
              "this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire "
              "types; flag-only trues, `mType.` holders and field names set aside, object types named by the "
-             "deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ "
-             "(informational); `membership-only` names the line the reduction cannot read; `compatible widening "
-             "(union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).", "",
+             "deserializer a call reaches, ruling T1a). `equal on the wire` lists the tokens whose spelling differs "
+             "(a field name or an inline id's class annotation; informational); `membership-only` names the line the "
+             "reduction cannot read; `compatible widening (union)` an older row of the button union that the union check below holds for (Q5, ruling T2a).", "",
              "| Pin | Type | ID | Verdict | Class at this pin |", "|---|---|---|---|---|"]
     bad = compared = membership = 0
     for typ, _, _ in SELECTION:
@@ -1386,7 +1390,7 @@ def body_check(table, src, head, pin):
                 older, wider = older[:len(ref)], wider[:len(ref)]
             if wire_shape(older) == wire_shape(ref):
                 diff = name_differences(older, ref)
-                verdict = "equal" if not diff else "equal on the wire (names differ: %s)" % "; ".join(diff)
+                verdict = "equal" if not diff else "equal on the wire (spelling differs: %s)" % "; ".join(diff)
             elif notes and wire_shape(wider) == wire_shape(ref):
                 verdict = "compatible widening (%s)" % "; ".join(notes)
             elif union_holds and (typ, cid) in UNION_WIDENINGS and wire_shape(
@@ -1422,7 +1426,8 @@ def membership(table, keys, typ, cid):
              if typ in k.replace("vec<", "").replace(">", "").split("|")]
     union = "vec<%s|%s>" % (typ, other), "vec<%s|%s>" % (other, typ)
     if kinds and all(k in union for k in kinds):
-        return "in-table through the union (A-HEAD reads it as %s; every field of type %s is a union with it, "                "ruling T2a)" % (other, typ)
+        return ("in-table through the union (A-HEAD reads it as %s; every field of type %s is a union with it, "
+                "ruling T2a)" % (other, typ))
     return "narrowing (A-HEAD reads it as %s; a field of type %s that is no union with it stops there)" % (other, typ)
 
 
@@ -1580,7 +1585,7 @@ def go_type(name):
     return GO_TYPE_CONST.get(name) or '"%s"' % name
 
 
-def go_field(name, kind, of="", gate=None, cls=""):
+def go_field(name, kind, of="", gate=None, cls="", alt=""):
     """One tl.Field literal; gate is (flags word name, bit) or None."""
     parts = ['Name: "%s"' % name, "Kind: tl.%s" % kind]
     if of:
@@ -1590,11 +1595,45 @@ def go_field(name, kind, of="", gate=None, cls=""):
         parts.append("Bit: %d" % gate[1])
     if cls:
         parts.append('Class: "%s"' % cls)
+    if alt:
+        parts.append("Alt: %s" % go_type(alt))
     return "{" + ", ".join(parts) + "},"
 
 
+GO_ID_CLASSES = ("user", "chat", "channel", "unknown")
+# the scalar kinds of the grammar: never a member of a union, never an object type (plan 4I4c W2, ruling C6)
+GO_SCALAR_NAMES = {"i32", "i64", "dbl", "bool", "bytes", "str", "secret", "#"}
+
+
+def go_vector(row_id, name, inner, gate):
+    """The tl.Field literal of a vector field `name:vec<inner>` (plan 4I4c W2, W3, ruling C6): `vec<i32>`/`vec<i64>` a
+    bare int vector, `vec<id32@C>`/`vec<id64@C>` one whose elements are ids of class C, `vec<str>` a bare string vector,
+    `vec<A|B>` a union of two object types (read by A when A holds the ID, else by B), `vec<T>` a vector of boxed T.
+    Any other vector kind (`vec<bytes>`, a union of three, a scalar in a union, an unknown id class) stops the run:
+    the walker has no reader for it."""
+    if inner == "i32":
+        return go_field(name, "KVecInt32", gate=gate)
+    if inner == "i64":
+        return go_field(name, "KVecInt64", gate=gate)
+    if inner == "str":
+        return go_field(name, "KVecString", gate=gate)
+    m = re.fullmatch(r"id(32|64)@(\w+)", inner)
+    if m:
+        if m.group(2) not in GO_ID_CLASSES:
+            raise SystemExit("%s: vector kind vec<%s> names an id class outside %s (ruling C6)" % (
+                row_id, inner, "|".join(GO_ID_CLASSES)))
+        return go_field(name, "KVecInt" + m.group(1), gate=gate, cls=m.group(2))
+    members = inner.split("|")
+    if len(members) > 2 or any(not re.fullmatch(NAME, t) or t in GO_SCALAR_NAMES for t in members) or (
+            len(members) == 2 and members[0] == members[1]):
+        raise SystemExit("%s: vector kind vec<%s> has no walker reader (ruling C6)" % (row_id, inner))
+    if len(members) == 2:
+        return go_field(name, "KVector", of=members[0], gate=gate, alt=members[1])
+    return go_field(name, "KVector", of=inner, gate=gate)
+
+
 def go_fields(row_id, text):
-    """The tl.Field literals of one fields column (grammar of 4I4-P4)."""
+    """The tl.Field literals of one fields column (grammar of 4I4-P4, with plan 4I4c's vector forms)."""
     out, gate = [], None
     for tok in text.split():
         m = RE_GO_GATE.match(tok)
@@ -1613,14 +1652,12 @@ def go_fields(row_id, text):
             out.append(go_field(name, GO_SCALAR[typ], gate=gate))
         elif re.fullmatch(r"id(32|64)@(user|chat|channel|unknown)", typ):
             out.append(go_field(name, "KID" + typ[2:4], gate=gate, cls=typ.split("@")[1]))
-        elif typ == "vec<i32>":
-            out.append(go_field(name, "KVecInt32", gate=gate))
-        elif typ == "vec<i64>":
-            out.append(go_field(name, "KVecInt64", gate=gate))
         elif typ.startswith("vec<") and typ.endswith(">"):
-            out.append(go_field(name, "KVector", of=typ[4:-1], gate=gate))
-        else:
+            out.append(go_vector(row_id, name, typ[4:-1], gate))
+        elif re.fullmatch(NAME, typ):
             out.append(go_field(name, "KObject", of=typ, gate=gate))
+        else:
+            raise SystemExit("%s: field kind %r has no walker reader (ruling C6)" % (row_id, typ))
         if close:
             if not gate:
                 raise SystemExit("%s: %r closes a gate that is not open" % (row_id, tok))

@@ -216,8 +216,8 @@ func TestTelegramRepliesDataConflictIsStated(t *testing.T) {
 	cell := slices.Concat(le32(0x83d60fc2), le32(0), le32(3), le32(77))
 	withReplies := tlMessage{flags: 1 << 23, id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", tail: cell}
 	noReplies := tlMessage{id: 2, from: idAnn, peer: idSelf, date: baseDate, text: "x"}
-	// the decode stops at the opaque reply markup, before replies (F.6 before F.23)
-	stopped := tlMessage{flags: 1 << 23, id: 3, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: le32(idReplyKeyboardHide)}
+	// the decode stops at an unknown reply markup (P11), before replies (F.6 before F.23)
+	stopped := tlMessage{flags: 1 << 23, id: 3, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: le32(idUnknownMarkup)}
 	badCell := []byte{1, 2, 3}
 	diff := slices.Concat(le32(0x83d60fc2), le32(0), le32(5), le32(77))
 	mk := func(mid int64, m tlMessage, rd []byte) msgCells {
@@ -239,8 +239,9 @@ func TestTelegramRepliesDataConflictIsStated(t *testing.T) {
 	if raw := rawOf(got["messages_v2/2"]); raw["replies"] != nil {
 		t.Errorf("row 2: raw.replies %v, the blob has no replies", raw["replies"])
 	}
-	if raw := rawOf(got["messages_v2/3"]); raw["replies"] != nil || raw["data_stop_kind"] != "opaque" {
-		t.Errorf("row 3: raw.replies %v, data_stop_kind %v; want none and an opaque stop before replies", raw["replies"], raw["data_stop_kind"])
+	// plan 4I4c P11: the stop before replies is the unknown markup, at reply_markup
+	if raw := rawOf(got["messages_v2/3"]); raw["replies"] != nil || raw["data_stop_kind"] != "unknown-constructor" || raw["data_stop_path"] != "reply_markup" {
+		t.Errorf("row 3: raw.replies %v, data_stop_kind %v at %v; want none and an unknown-constructor stop at reply_markup", raw["replies"], raw["data_stop_kind"], raw["data_stop_path"])
 	}
 	if raw := rawOf(got["messages_v2/5"]); raw["replies_conflict"] != true {
 		t.Errorf("row 5: replies_conflict %v, the blob says 3 and the cell 5", raw["replies_conflict"])
@@ -406,7 +407,7 @@ func noFieldAfterStopTail4I4b(t *testing.T) {
 	if !slices.Equal(got[len(got)-14:], mappedTail4I4b()) || slices.Index(got, "ttl_period") != len(got)-15 {
 		t.Errorf("MappedFields %v, want the fourteen tail names after ttl_period in the plan's order", got)
 	}
-	m := tlMessage{flags: 1<<20 | 1<<22, id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: le32(idReplyKeyboardHide)}
+	m := tlMessage{flags: 1<<20 | 1<<22, id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: le32(idUnknownMarkup)}
 	raw, _ := androidtelegram.DecodeBlob(m.bytes(), androidtelegram.TypeMessage, parse.NewBudget(1<<20).View())
 	if raw["data_stop_path"] != "reply_markup" || raw["data_undecided"] != "reactions,restriction_reason" {
 		t.Errorf("a stop at reply_markup: data_stop_path %v, data_undecided %v; want reactions,restriction_reason", raw["data_stop_path"], raw["data_undecided"])

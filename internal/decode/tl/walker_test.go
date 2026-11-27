@@ -28,6 +28,7 @@ import (
 //	shared as Left (BodyOpaque), shared{c:i32} as Right                            one ID, opaque in the first type
 //	pair{l:Left, r:Right}                                                          Pair
 //	mixed{u:vec<Left|Right>}                                                       Mixed (a union vector, W2)
+//	loop{next:vec<Loop|Left>}                                                      Loop (nesting through a union)
 //	bare{ids32:vec<id32@user>, ids64:vec<id64@channel>, strs:vec<str>}             Bare (bare vectors, W3)
 const (
 	idPoint  uint32 = 0x0a0b0c01
@@ -44,6 +45,7 @@ const (
 	idPair   uint32 = 0x0a0b0c0c
 	idMixed  uint32 = 0x0a0b0c0d
 	idBare   uint32 = 0x0a0b0c0e
+	idLoop   uint32 = 0x0a0b0c0f
 )
 
 func synthTable() Table {
@@ -105,6 +107,9 @@ func synthTable() Table {
 		}},
 		{Type: "Mixed", ID: idMixed}: {ID: idMixed, Name: "mixed", Type: "Mixed", Body: BodyFull, Source: "test", Fields: []Field{
 			{Name: "u", Kind: KVector, Of: "Left", Alt: "Right"},
+		}},
+		{Type: "Loop", ID: idLoop}: {ID: idLoop, Name: "loop", Type: "Loop", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "next", Kind: KVector, Of: "Loop", Alt: "Left"},
 		}},
 		{Type: "Bare", ID: idBare}: {ID: idBare, Name: "bare", Type: "Bare", Body: BodyFull, Source: "test", Fields: []Field{
 			{Name: "ids32", Kind: KVecInt32, Class: "user"},
@@ -894,6 +899,31 @@ func TestTLDecodeUnionElement(t *testing.T) {
 	checkStop(t, "shared", r, StopOpaque, nil, "u[0]", 12)
 	if s := r.Stop; s.Type != "Left" || s.ID != idShared || !slices.Equal(paths(r.Fields), []string{"u"}) {
 		t.Errorf("shared: stop %+v, paths %v; want opaque Left %#x after u", *s, paths(r.Fields), idShared)
+	}
+
+	// Task 1 review: an element ID cut by the blob's end is truncated at the element, naming both
+	// types. The count check (4 bytes an element) lets the first element's ID start whole, so the
+	// cut falls 2 bytes into u[1]'s ID, after u[0] was read.
+	blob = mixedBlob(left, right)
+	blob = blob[:12+len(left)+2]
+	blob[8] = 2
+	r = Decode(blob, "Mixed", tab, open())
+	checkStop(t, "cut id", r, StopTruncated, ErrTruncated, "u[1]", 12+len(left))
+	if s := r.Stop; s.Type != "Left|Right" || !slices.Equal(paths(r.Fields), []string{"u", "u[0]", "u[0].a"}) {
+		t.Errorf("cut id: stop %+v, paths %v; want truncated naming Left|Right after u[0]", *s, paths(r.Fields))
+	}
+
+	// Task 1 review: nesting through a union stops at MaxDepth with ErrDepth at the element,
+	// naming both types (loop{next:vec<Loop|Left>}, 12 bytes a level).
+	var bomb []byte
+	for range MaxDepth + 1 {
+		bomb = append(bomb, cat(le32(idLoop), le32(IDVector), le32(1))...)
+	}
+	r = Decode(bomb, "Loop", tab, open())
+	path := strings.TrimSuffix(strings.Repeat("next[0].", MaxDepth), ".")
+	checkStop(t, "union depth", r, StopCap, ErrDepth, path, 12*MaxDepth)
+	if s := r.Stop; s.Type != "Loop|Left" {
+		t.Errorf("union depth: stop type %q, want Loop|Left", s.Type)
 	}
 
 	// An ID both types hold is read as the first (Left: x, an int32), never the second.

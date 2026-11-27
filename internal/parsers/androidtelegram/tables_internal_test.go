@@ -26,7 +26,10 @@ var (
 	notationGate  = regexp.MustCompile(`^\[(F2?)\.([0-9]+):$`)
 	notationField = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_.]*)(?:=(F2?)\.([0-9]+)|:(.+?))(\]?)$`)
 	notationID    = regexp.MustCompile(`^id(32|64)@(user|chat|channel|unknown)$`)
-	notationKinds = map[string]tl.Kind{
+	notationType  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+	// notationScalars are the scalar kinds of the grammar: never an object type, never a member of a union.
+	notationScalars = map[string]bool{"i32": true, "i64": true, "dbl": true, "bool": true, "bytes": true, "str": true, "secret": true}
+	notationKinds   = map[string]tl.Kind{
 		"i32": tl.KInt32, "i64": tl.KInt64, "dbl": tl.KDouble, "bool": tl.KBool, "bytes": tl.KBytes,
 		"str": tl.KString, "secret": tl.KSecret, "#": tl.KFlags, "vec<i32>": tl.KVecInt32, "vec<i64>": tl.KVecInt64,
 	}
@@ -36,6 +39,39 @@ var (
 		"MessageMedia": typeMedia, "User": typeUser, "Chat": typeChat,
 	}
 )
+
+// notationVector completes f, a field of kind vec<inner> (plan 4I4c W2, W3, ruling C6): vec<str> is KVecString,
+// vec<id32@C>/vec<id64@C> a KVecInt32/KVecInt64 of class C, vec<A|B> a KVector of A with Alt B, vec<T> a KVector of
+// T; any other vector kind (a scalar element, a union of three, a scalar in a union, an unknown id class) is refused.
+func notationVector(f tl.Field, inner string) (tl.Field, error) {
+	switch {
+	case inner == "str":
+		f.Kind = tl.KVecString
+		return f, nil
+	case notationID.MatchString(inner):
+		id := notationID.FindStringSubmatch(inner)
+		f.Kind, f.Class = tl.KVecInt32, id[2]
+		if id[1] == "64" {
+			f.Kind = tl.KVecInt64
+		}
+		return f, nil
+	}
+	members := strings.Split(inner, "|")
+	for _, m := range members {
+		if !notationType.MatchString(m) || notationScalars[m] {
+			return f, fmt.Errorf("vector kind vec<%s> has no walker reader (ruling C6)", inner)
+		}
+	}
+	switch {
+	case len(members) == 1:
+		f.Kind, f.Of = tl.KVector, typeName(inner)
+	case len(members) == 2 && members[0] != members[1]:
+		f.Kind, f.Of, f.Alt = tl.KVector, typeName(members[0]), typeName(members[1])
+	default:
+		return f, fmt.Errorf("vector kind vec<%s> has no walker reader (ruling C6)", inner)
+	}
+	return f, nil
+}
 
 func flagsWord(f string) string {
 	if f == "F2" {
@@ -86,9 +122,14 @@ func parseNotation(s string) ([]tl.Field, error) {
 					f.Kind = tl.KID64
 				}
 			case strings.HasPrefix(typ, "vec<") && strings.HasSuffix(typ, ">"):
-				f.Kind, f.Of = tl.KVector, typeName(typ[4:len(typ)-1])
-			default:
+				var err error
+				if f, err = notationVector(f, typ[4:len(typ)-1]); err != nil {
+					return nil, err
+				}
+			case notationType.MatchString(typ):
 				f.Kind, f.Of = tl.KObject, typeName(typ)
+			default:
+				return nil, fmt.Errorf("field kind %q has no walker reader (ruling C6)", typ)
 			}
 			if gate != "" {
 				f.Flags, f.Bit = gate, bit
@@ -263,7 +304,7 @@ func TestTelegramTablesGoIsGofmtClean(t *testing.T) {
 	}
 }
 
-// closureGaps are the object types a full or prefix row of tab names (a KObject or KVector field's Of) that no
+// closureGaps are the object types a full or prefix row of tab names (a KObject or KVector field's Of or Alt) that no
 // constructor of tab has, one line per naming field: "<type> named by <class>.<field>", sorted.
 func closureGaps(tab tl.Table) []string {
 	types := map[string]bool{}
@@ -276,8 +317,14 @@ func closureGaps(tab tl.Table) []string {
 			continue
 		}
 		for _, f := range c.Fields {
-			if (f.Kind == tl.KObject || f.Kind == tl.KVector) && f.Of != "" && !types[f.Of] {
-				out = append(out, f.Of+" named by "+c.Name+"."+f.Name)
+			if f.Kind != tl.KObject && f.Kind != tl.KVector {
+				continue
+			}
+			// plan 4I4c W2: a union names two types, both of which a decode can meet
+			for _, of := range []string{f.Of, f.Alt} {
+				if of != "" && !types[of] {
+					out = append(out, of+" named by "+c.Name+"."+f.Name)
+				}
 			}
 		}
 	}
@@ -306,5 +353,36 @@ func TestTelegramTableIsClosed(t *testing.T) {
 	gaps = closureGaps(withoutType(newTable(), typeAction))
 	if !slices.ContainsFunc(gaps, func(g string) bool { return strings.HasPrefix(g, typeAction+" named by ") }) {
 		t.Errorf("without MessageAction: no gap naming MessageAction in %v", gaps)
+	}
+	// Plan 4I4c W2 (design D3): the second type of a union is checked too; TL_keyboardInlineButtonRow_layer228 reads
+	// its buttons by KeyboardButton, else KeyboardInlineButton (its Alt).
+	const inline = "TL_keyboard.KeyboardInlineButton"
+	gaps = closureGaps(withoutType(newTable(), inline))
+	if want := inline + " named by TL_keyboardInlineButtonRow_layer228.buttons"; !slices.Contains(gaps, want) {
+		t.Errorf("without %s: no gap %q in %v", inline, want, gaps)
+	}
+}
+
+// Plan 4I4c W2, W3 and ruling C6: the test's own reading of the notation accepts the three vector forms the walker
+// reads (a union of two object types, a classed id vector, a string vector) and refuses every other vector kind and a
+// union outside a vector, as the generator does.
+func TestTelegramNotationRefusesOutsideGrammar(t *testing.T) {
+	for _, bad := range []string{"a:vec<A|B|C>", "a:A|B", "a:vec<bytes>", "a:vec<id32@robot>", "a:vec<A|A>", "a:vec<str|Foo>", "a:vec<dbl>"} {
+		if f, err := parseNotation(bad); err == nil {
+			t.Errorf("parseNotation(%q) = %+v, want an error (ruling C6)", bad, f)
+		}
+	}
+	for text, want := range map[string]tl.Field{
+		"a:vec<TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton>": {Name: "a", Kind: tl.KVector, Of: "TL_keyboard.KeyboardButton", Alt: "TL_keyboard.KeyboardInlineButton"},
+		"a:vec<MessageMedia|Peer>": {Name: "a", Kind: tl.KVector, Of: typeMedia, Alt: typePeer},
+		"a:vec<id32@user>":         {Name: "a", Kind: tl.KVecInt32, Class: "user"},
+		"a:vec<id64@channel>":      {Name: "a", Kind: tl.KVecInt64, Class: "channel"},
+		"a:vec<str>":               {Name: "a", Kind: tl.KVecString},
+		"a:vec<i64>":               {Name: "a", Kind: tl.KVecInt64},
+	} {
+		got, err := parseNotation(text)
+		if err != nil || len(got) != 1 || got[0] != want {
+			t.Errorf("parseNotation(%q) = %+v, %v; want [%+v]", text, got, err, want)
+		}
 	}
 }

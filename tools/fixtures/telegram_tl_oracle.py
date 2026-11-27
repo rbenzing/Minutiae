@@ -14,7 +14,8 @@ decode(blob, type) -> {"top", "fields", "stop", "flags", "end"}:
   top     the constructor id of the blob (None when fewer than 4 bytes or the blob is over MAX_BLOB)
   fields  the fields read, in wire order, each {"path", "kind", "start", ...}: "value" for a number, boolean or byte
           string (strings stay bytes), "len" for a secret (its bytes are never kept) and for a vector (the count),
-          "id" and "cls" for a nested object, "cls" for an inline id (id32@<class>). The top object has no entry.
+          "id", "cls" and "type" (the type it was read as) for a nested object, "cls" for an inline id (id32@<class>)
+          and for each element of a classed id vector. The top object has no entry.
   stop    None, or {"kind", "path", "offset", "type", "id"}: kind is one of
             unknown-constructor  an id the table lacks for the type expected there ("path" "" at the top)
             opaque               an object whose row lists no body (its id is known, its fields are not)
@@ -25,11 +26,19 @@ decode(blob, type) -> {"top", "fields", "stop", "flags", "end"}:
             cap                  a vector count below 0 or above MAX_VECTOR, nesting above MAX_DEPTH, more than
                                  MAX_STEPS values, a blob above MAX_BLOB
           "offset" is where the item that stopped the decode starts (the constructor id, the length prefix, the
-          value); for prefix it is the end of the last listed field. "id" is the constructor id when the stop names one.
+          value); for prefix it is the end of the last listed field. "id" is the constructor id when the stop names one;
+          "type" the type expected there ("A|B" for an element of a union vector no row of either type holds).
   flags   in this order when they occur: length-prefix-255 (a string whose first byte is 255, read as the long form),
           non-canonical-length (the long form for a length below 254), padding-nonzero, unknown-flag-bits (a `full`
           object whose flags words set a bit that gates no field and names no flag-only true).
   end     the offset after the last value read whole.
+
+The table is keyed by (type, id) (plan 4I4c W1): one id can be a constructor of two types, and an object is looked up
+under the type its field names. The vector forms (plan 4I4c W2, W3, recon 2-3): `vec<T>` a boxed vector of boxed T;
+`vec<A|B>` a boxed vector whose every element is read as A when A has a row of its id (whatever that row's body), else
+as B, else unknown-constructor naming "A|B"; `vec<i32>`/`vec<i64>` a boxed vector of bare ints; `vec<id32@C>`/
+`vec<id64@C>` a boxed vector (0x1cb5c415, count) of bare ints or longs, each an id of class C; `vec<str>` a boxed vector
+of bare TL strings.
 """
 import argparse
 import csv
@@ -98,21 +107,22 @@ _TABLE = {}
 
 
 def table():
-    """{id: Row} of constructors.tsv, read once."""
+    """{(type, id): Row} of constructors.tsv, read once (plan 4I4c W1: one id can be a row of two types). A repeated
+    (type, id) is an error, never a silent overwrite."""
     if not _TABLE:
         with open(TABLE_FILE, encoding="utf-8", newline="") as fh:
             for rec in csv.DictReader(fh, delimiter="\t", quoting=csv.QUOTE_NONE):
                 cid = int(rec["id"], 16)
-                _TABLE[cid] = Row(rec["type"], cid, rec["class"], rec["body"], parse_items(rec["fields"] or ""))
+                key = (rec["type"], cid)
+                if key in _TABLE:
+                    raise SystemExit("constructors.tsv repeats %s 0x%08x" % key)
+                _TABLE[key] = Row(rec["type"], cid, rec["class"], rec["body"], parse_items(rec["fields"] or ""))
     return _TABLE
 
 
 def row_of(cid, expected):
-    """The row of cid when it can stand where expected (a type name, or a class name a field names) is read."""
-    r = table().get(cid)
-    if r is not None and (r.typ == expected or r.cls == expected):
-        return r
-    return None
+    """The row of cid under the type expected there (a field's type), or None: looked up by the key alone."""
+    return table().get((expected, cid))
 
 
 # ---------------------------------------------------------------- the reader
@@ -233,19 +243,24 @@ class Reader:
         self.emit(path, "vector", at, len=count)
         return count
 
-    def obj(self, path, expected, depth):
-        """Reads a boxed object of the expected type at path; depth 1 is the blob's top object."""
+    def obj(self, path, expected, depth, alt=None):
+        """Reads a boxed object of the expected type at path; depth 1 is the blob's top object. alt is the second type
+        of a union element: read as expected when expected has a row of the id, else as alt (plan 4I4c W2)."""
+        named = expected + "|" + alt if alt else expected
         if depth > MAX_DEPTH:
-            raise Stopped("cap", path, self.pos, expected)
+            raise Stopped("cap", path, self.pos, named)
         at = self.pos
         cid, _ = self.u32(path)
         if depth == 1:
             self.top = cid
-        r = row_of(cid, expected)
+        typ, r = expected, row_of(cid, expected)
+        if r is None and alt:
+            typ, r = alt, row_of(cid, alt)
         if r is None:
-            raise Stopped("unknown-constructor", path, at, expected, cid)
+            raise Stopped("unknown-constructor", path, at, named, cid)
+        expected = typ
         if depth > 1:
-            self.emit(path, "object", at, id=cid, cls=r.cls)
+            self.emit(path, "object", at, id=cid, cls=r.cls, type=typ)
         else:
             self.end = self.pos
         if r.body == "opaque":
@@ -278,17 +293,24 @@ class Reader:
     def field(self, path, kind, depth):
         if kind in PRIMITIVES or kind.startswith("id32@") or kind.startswith("id64@"):
             self.value(path, kind)
-        elif kind in ("vec<i32>", "vec<i64>"):
-            size = 4 if kind == "vec<i32>" else 8
-            n = self.vector_head(path, size)
-            for i in range(n):
-                self.value("%s[%d]" % (path, i), "i32" if size == 4 else "i64")
-        elif kind.startswith("vec<"):
-            n = self.vector_head(path, 4)
-            for i in range(n):
-                self.obj("%s[%d]" % (path, i), kind[4:-1], depth + 1)
-        else:
+            return
+        if not kind.startswith("vec<"):
             self.obj(path, kind, depth + 1)
+            return
+        elem = kind[4:-1]
+        if elem in ("i32", "i64", "str") or elem.startswith(("id32@", "id64@")):
+            # a boxed vector of bare values (recon 2-3; VectorLegacy reads the id vectors boxed, plan 4I4c W3): each
+            # element at least 4 bytes (an int, an id32, a string's shortest framing) or 8 (a long, an id64)
+            n = self.vector_head(path, 8 if elem == "i64" or elem.startswith("id64@") else 4)
+            for i in range(n):
+                self.value("%s[%d]" % (path, i), elem)
+            return
+        types = elem.split("|")
+        if len(types) > 2 or any(t in PRIMITIVES for t in types):
+            raise AssertionError("no reader for the vector kind " + kind)
+        n = self.vector_head(path, 4)
+        for i in range(n):
+            self.obj("%s[%d]" % (path, i), types[0], depth + 1, types[1] if len(types) == 2 else None)
 
 
 def decode(blob, typ):
@@ -381,6 +403,42 @@ def self_test():
     finally:
         MAX_DEPTH, MAX_STEPS = saved
     check("caps restored", decode(msg, "Message")["stop"] is None)
+    # plan 4I4c W1: the table is keyed by (type, id); 0x77608b83 is a row of two types, each read by the type asked
+    check("two types, one id", table()[("TL_keyboard.KeyboardButtonRow", 0x77608B83)].cls == "KeyboardButtonRow" and
+          table()[("TL_keyboard.KeyboardInlineButtonRow", 0x77608B83)].cls == "TL_keyboardInlineButtonRow_layer228")
+    check("by key only", row_of(0x77608B83, "KeyboardButtonRow") is None and row_of(0x59511722, "Peer") is not None)
+    # W2 (P5): TL_keyboardInlineButtonRow_layer228 reads vec<KeyboardButton|KeyboardInlineButton>: an element by the
+    # first type holding its id (TL_keyboardButton_layer223, text), else the second (TL_keyboardButtonGame_layer223)
+    s2 = lambda t: bytes([len(t)]) + t + b"\x00" * ((4 - (1 + len(t)) % 4) % 4)
+    row = lambda *els: le(0x77608B83) + le(VECTOR) + le(len(els)) + b"".join(els)
+    r = decode(row(le(0xA2FA4880) + s2(b"a"), le(0x50F41CCF) + s2(b"b")), "TL_keyboard.KeyboardInlineButtonRow")
+    objs = [(f["path"], f.get("type")) for f in r["fields"] if f["kind"] == "object"]
+    check("union read", r["stop"] is None and r["fields"][-1]["value"] == b"b" and objs ==
+          [("buttons[0]", "TL_keyboard.KeyboardButton"), ("buttons[1]", "TL_keyboard.KeyboardInlineButton")])
+    s = decode(row(le(0xDEADBEEF)), "TL_keyboard.KeyboardInlineButtonRow")["stop"]
+    check("union neither", s["kind"] == "unknown-constructor" and s["path"] == "buttons[0]" and
+          s["id"] == 0xDEADBEEF and s["type"] == "TL_keyboard.KeyboardButton|TL_keyboard.KeyboardInlineButton")
+    # an opaque row of the first type stops there, naming it (TL_inputKeyboardButtonRequestPeer_layer228)
+    s = decode(row(le(0x02B78156)), "TL_keyboard.KeyboardInlineButtonRow")["stop"]
+    check("union opaque", s["kind"] == "opaque" and s["type"] == "TL_keyboard.KeyboardButton" and s["id"] == 0x02B78156)
+    # W3: recent_voters of TL_pollResults_layer111 is a boxed vector (0x1cb5c415, count) of bare ints, each a user id
+    # (VectorLegacy.java:28); of TL_pollResults_layer158 bare longs; countries_iso2 of TL_poll bare strings
+    r = decode(le(0xC87024A2) + le(1 << 3) + le(VECTOR) + le(2) + le(7) + le(9), "PollResults")
+    got = [(f["path"], f["kind"], f.get("value"), f.get("cls")) for f in r["fields"]]
+    check("id32 vector", r["stop"] is None and got == [("flags", "#", 8, None), ("recent_voters", "vector", None, None), ("recent_voters[0]", "id32", 7, "user"),
+           ("recent_voters[1]", "id32", 9, "user")])
+    s = decode(le(0xC87024A2) + le(1 << 3) + le(2) + le(7) + le(9), "PollResults")["stop"]
+    check("id32 vector unboxed", s["kind"] == "malformed")
+    r = decode(le(0xDCB82EA3) + le(1 << 3) + le(VECTOR) + le(1) + struct.pack("<q", 1 << 40), "PollResults")
+    check("id64 vector", r["stop"] is None and (r["fields"][-1]["kind"], r["fields"][-1]["value"]) == ("id64", 1 << 40))
+    s = decode(le(0xDCB82EA3) + le(1 << 3) + le(VECTOR) + le(1) + le(1), "PollResults")["stop"]
+    check("id64 vector short", s["kind"] == "truncated" and s["path"] == "recent_voters")
+    question = le(0x751F3146) + s2(b"q") + le(VECTOR) + le(0)  # TL_textWithEntities, no entities
+    poll = (le(0x966E2DBF) + struct.pack("<q", 5) + le(1 << 12) + question + le(VECTOR) + le(0)
+            + le(VECTOR) + le(2) + s2(b"de") + s2(b"") + struct.pack("<q", 6))
+    r = decode(poll, "Poll")
+    iso = [f["value"] for f in r["fields"] if f["path"].startswith("countries_iso2[")]
+    check("string vector", r["stop"] is None and iso == [b"de", b""] and r["end"] == len(poll))
     print("ok")
     return 0
 
