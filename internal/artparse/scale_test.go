@@ -1385,12 +1385,21 @@ func tgStr(b, s []byte) []byte {
 	return b
 }
 
-// tgMessage is one TL_message blob: flags (from_id when from != 0, entities, out), flags2 0, id, [from_id], peer_id,
-// date, the text, one bold entity over its first four bytes, then the app-local trailer (spec 8.8): one string, the
-// attach path. A dialog uid below 0 is a basic group (TL_peerChat of -uid), else a user dialog (TL_peerUser).
+// tgMessage is one TL_message blob: flags (from_id when from != 0, entities, out, and by the message id the media mix
+// of plan 4I4b Q17: id%10 < 3 a photo, id%10 == 3 a document, id%10 == 4 reactions), flags2 0, id, [from_id], peer_id,
+// date, the text, [media], one bold entity over its first four bytes, [reactions], then the app-local trailer (spec
+// 8.8): one string, the attach path. A dialog uid below 0 is a basic group (TL_peerChat of -uid), else a user dialog
+// (TL_peerUser).
 func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []byte {
-	const bitOut, bitEntities, bitFromID = 1 << 1, 1 << 7, 1 << 8
+	const bitOut, bitEntities, bitFromID, bitMedia, bitReactions = 1 << 1, 1 << 7, 1 << 8, 1 << 9, 1 << 20
 	flags := uint32(bitEntities)
+	mix := id % 10
+	switch {
+	case mix < 4:
+		flags |= bitMedia
+	case mix == 4:
+		flags |= bitReactions
+	}
 	if out {
 		flags |= bitOut
 	}
@@ -1409,9 +1418,54 @@ func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []b
 	}
 	b = tgLE32(b, uint32(date))
 	b = tgStr(b, text)
+	switch {
+	case mix < 3:
+		b = tgPhotoMedia(b, int64(id), date)
+	case mix == 3:
+		b = tgDocumentMedia(b, int64(id), date)
+	}
 	b = tgLE32(tgLE32(b, 0x1cb5c415), 1)
 	b = tgLE32(tgLE32(tgLE32(b, 0xbd610bc9), 0), 4)
+	if mix == 4 { // TL_messageReactions: flags 0, results [2 x TL_reactionCount{flags 0, TL_reactionEmoji, count 3}]
+		b = tgLE32(tgLE32(tgLE32(b, 0x0a339f0b), 0), 0x1cb5c415)
+		b = tgLE32(b, 2)
+		for range 2 {
+			b = tgStr(tgLE32(tgLE32(tgLE32(b, 0xa3d1cb80), 0), 0x1b2286b8), []byte("\U0001F44D"))
+			b = tgLE32(b, 3)
+		}
+	}
 	return tgStr(b, []byte("/storage/emulated/0/Telegram/img.jpg"))
+}
+
+// tgPhotoMedia appends a TL_messageMediaPhoto (flags 1: the photo) of a TL_photo (flags 0, id, access_hash, an 8-byte
+// file_reference, date, three TL_photoSize of 1 to 50 KB, dc_id 2).
+func tgPhotoMedia(b []byte, id int64, date int32) []byte {
+	b = tgLE32(tgLE32(b, 0xe216eb63), 1)
+	b = tgLE64(tgLE64(tgLE32(tgLE32(b, 0xfb197a65), 0), id), id*7+1)
+	b = tgStr(b, []byte{1, 2, 3, 4, 5, 6, 7, 8})
+	b = tgLE32(tgLE32(tgLE32(b, uint32(date)), 0x1cb5c415), 3)
+	for _, ps := range []struct {
+		t        string
+		wh, size uint32
+	}{{"s", 90, 1 << 10}, {"m", 320, 12 << 10}, {"x", 800, 50 << 10}} {
+		b = tgStr(tgLE32(b, 0x75c78e60), []byte(ps.t))
+		b = tgLE32(tgLE32(tgLE32(b, ps.wh), ps.wh), ps.size)
+	}
+	return tgLE32(b, 2)
+}
+
+// tgDocumentMedia appends a TL_messageMediaDocument (flags 1: the document) of a TL_document (flags 0, mime
+// application/pdf, size, dc_id 2, attributes [filename "doc<id>.pdf", image size 800x600, animated]).
+func tgDocumentMedia(b []byte, id int64, date int32) []byte {
+	b = tgLE32(tgLE32(b, 0x52d8ccd9), 1)
+	b = tgLE64(tgLE64(tgLE32(tgLE32(b, 0x8fd4c4d8), 0), id), id*7+1)
+	b = tgStr(b, []byte{1, 2, 3, 4, 5, 6, 7, 8})
+	b = tgStr(tgLE32(b, uint32(date)), []byte("application/pdf"))
+	b = tgLE32(tgLE64(b, 123456+id), 2)
+	b = tgLE32(tgLE32(b, 0x1cb5c415), 3)
+	b = tgStr(tgLE32(b, 0x15590068), fmt.Appendf(nil, "doc%d.pdf", id))
+	b = tgLE32(tgLE32(tgLE32(b, 0x6c37c15c), 800), 600)
+	return tgLE32(b, 0x11b58939)
 }
 
 // tgUser is a TL_user blob with a first name and a phone; tgChat a TL_chat blob with a title.
@@ -1521,6 +1575,8 @@ func runGenTelegram(t *testing.T, e scaleEnv) {
 type stateCheckWriter struct {
 	countWriter
 	undecided, budget int64
+	notDecoded        int64 // message records whose raw.data_state is not "decoded"
+	named             int64 // attachments with a name
 	types             map[string]int64
 }
 
@@ -1533,10 +1589,22 @@ func (w *stateCheckWriter) Add(ctx context.Context, r records.Record) error {
 		if _, has := raw["join_undecided"]; has {
 			w.undecided++
 		}
+		if r.Type == "message" && raw["data_state"] != "decoded" {
+			w.notDecoded++
+		}
 		for k, v := range raw {
 			if strings.HasSuffix(k, "_state") && v == "budget" {
 				w.budget++
 				break
+			}
+		}
+	}
+	if atts, ok := r.Payload["attachments"].([]any); ok {
+		for _, a := range atts {
+			if am, ok := a.(map[string]any); ok {
+				if n, _ := am["name"].(string); n != "" {
+					w.named++
+				}
 			}
 		}
 	}
@@ -1606,7 +1674,7 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 	fillResult(&res, sum, wall, rss, ok)
 	res.Streamed = streamedOf(t, c)
 	writeResult(t, e, res)
-	t.Logf("telegram-decode: records by type %v, undecided joins %d, budget states %d", w.types, w.undecided, w.budget)
+	t.Logf("telegram-decode: records by type %v, undecided joins %d, budget states %d, not decoded %d, named attachments %d", w.types, w.undecided, w.budget, w.notDecoded, w.named)
 	if len(sum.Jobs) != 1 {
 		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
 	}
@@ -1621,6 +1689,12 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 	}
 	if w.budget != 0 {
 		t.Errorf("%d records state budget: a decode's charge outlived its row (F8)", w.budget)
+	}
+	if w.notDecoded != 0 {
+		t.Errorf("%d message records have a raw.data_state other than decoded: every generated blob is read in full (plan 4I4b Q17)", w.notDecoded)
+	}
+	if want := (g.Rows["messages_v2"] + 7) / 10; w.named != want { // the document of every id with id%10 == 3 names its file
+		t.Errorf("%d attachments with a name, want %d (one per document message)", w.named, want)
 	}
 	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
 }
