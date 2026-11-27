@@ -426,7 +426,7 @@ func utf8Valid(v any) bool {
 // trailer statements about the cell itself).
 func blobKey(k string) bool {
 	for _, p := range []string{
-		"media", "reply_markup", "live_photo", "blob_forwards", "post_author", "quick_reply", "effect", "report_delivery", "paid_message",
+		"media", "reply_markup", "poll", "live_photo", "blob_forwards", "post_author", "quick_reply", "effect", "report_delivery", "paid_message",
 		"schedule_repeat", "summary_from", "replies", "reactions", "restriction_reason", "factcheck", "suggested_post", "entities", "edit_date", "views",
 	} {
 		if strings.HasPrefix(k, p) {

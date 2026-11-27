@@ -1,7 +1,6 @@
 package androidtelegram_test
 
 import (
-	"maps"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,86 +25,12 @@ func TestAndroidTelegramMatchesOracle(t *testing.T) {
 			b := fx.Bundle(h, remoteApp)
 			p := androidtelegram.Parser{}
 			res := h.RunLenient(p, b.Input(h, p, false))
-			parsertest.AssertMatchesOracle(t, res, b, pendingOracle(fx.Expect))
+			parsertest.AssertMatchesOracle(t, res, b, fx.Expect)
 		})
 	}
 	if ran != 9 {
 		t.Errorf("%d variants with records, want 9", ran)
 	}
-}
-
-// pendingOracle is exp without the keys of the plan 4I4c mapping the Go parser does not state yet (plan 4I4c Task 5:
-// the oracle restates the Stage B "Raw shapes" before Task 7 maps them; Task 6 mapped the reply markup). It never drops a variant, a record or
-// any other key. Poll and mention part (Task 7 deletes it and the function): raw.poll, poll_answers, poll_results,
-// poll_results_options, poll_voters with their _state, _len, _sha256, _unit, _total and _truncated siblings, the
-// text-flag names poll.*, poll_answers.* and poll_results.*, and in each raw.entities[i] user (when user_class is set),
-// user_from_msg_id, user_from_peer, user_from_peer_class and user_access_hash_present.
-func pendingOracle(exp parsertest.Expect) parsertest.Expect {
-	out := exp
-	out.Records = make([]parsertest.ExpRecord, len(exp.Records))
-	for i, r := range exp.Records {
-		out.Records[i] = r
-		raw, ok := r.Payload["raw"].(map[string]any)
-		if !ok {
-			continue
-		}
-		payload := maps.Clone(r.Payload)
-		raw = maps.Clone(raw)
-		payload["raw"] = raw
-		out.Records[i].Payload = payload
-		for _, base := range []string{"poll", "poll_answers", "poll_results", "poll_results_options", "poll_voters"} {
-			for _, suffix := range []string{"", "_state", "_len", "_sha256", "_unit", "_total", "_truncated"} {
-				delete(raw, base+suffix)
-			}
-		}
-		pruneList(raw, "text_flags", func(name string) bool {
-			for _, p := range []string{"poll.", "poll_answers.", "poll_results."} {
-				if strings.HasPrefix(name, p) {
-					return true
-				}
-			}
-			return false
-		})
-		if ents, ok := raw["entities"].([]any); ok {
-			pruned := make([]any, len(ents))
-			for j, e := range ents {
-				m, ok := e.(map[string]any)
-				if !ok {
-					pruned[j] = e
-					continue
-				}
-				m = maps.Clone(m)
-				if _, has := m["user_class"]; has {
-					delete(m, "user")
-				}
-				for _, k := range []string{"user_from_msg_id", "user_from_peer", "user_from_peer_class", "user_access_hash_present"} {
-					delete(m, k)
-				}
-				pruned[j] = m
-			}
-			raw["entities"] = pruned
-		}
-	}
-	return out
-}
-
-// pruneList drops the names drop selects from the comma-joined string raw[key], and the key when none is left.
-func pruneList(raw map[string]any, key string, drop func(string) bool) {
-	s, ok := raw[key].(string)
-	if !ok {
-		return
-	}
-	var keep []string
-	for _, name := range strings.Split(s, ",") {
-		if !drop(name) {
-			keep = append(keep, name)
-		}
-	}
-	if len(keep) == 0 {
-		delete(raw, key)
-		return
-	}
-	raw[key] = strings.Join(keep, ",")
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }

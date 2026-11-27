@@ -111,6 +111,8 @@ func mediaSummary(v view, tab tl.Table, c tl.Constructor, raw map[string]any) []
 		webPageSummary(v, tab, m, raw)
 	case strings.HasPrefix(class, "TL_messageMediaDice"):
 		diceSummary(v, m, raw)
+	case strings.HasPrefix(class, "TL_messageMediaPoll"):
+		pollRaw(v, tab, raw) // raw only (design 9.3): raw.media keeps its type and constructor, the poll sits at the top
 	}
 	return atts
 }

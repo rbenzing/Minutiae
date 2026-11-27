@@ -140,9 +140,10 @@ func TestTelegramTailObjectsAreRawOnly(t *testing.T) {
 	mentionUserClass(t)
 }
 
-// mentionUserClass is the final-review ruling F2 part of TestTelegramTailObjectsAreRawOnly: a
-// TL_inputMessageEntityMentionName whose user_id is an InputUser object that is no id (the telegram-layers rows of
-// TL_inputUserEmpty and TL_inputUserSelf) states user_class, the object's class label, and never a user.
+// mentionUserClass is the final-review ruling F2 part of TestTelegramTailObjectsAreRawOnly, as ruling Q6 amends it
+// (plan 4I4c): a TL_inputMessageEntityMentionName whose user_id is an InputUser object states user_class, the object's
+// class label; the telegram-layers rows of TL_inputUserEmpty and TL_inputUserSelf never state a user, and a full
+// InputUser (user, from_message) states the user of its own user_id.
 func mentionUserClass(t *testing.T) {
 	t.Helper()
 	seen := map[string]bool{}
@@ -154,8 +155,13 @@ func mentionUserClass(t *testing.T) {
 				continue
 			}
 			c, _ := m["user_class"].(string)
-			if m["user"] != nil || c == "" {
-				t.Errorf("%s: input_mention_name %v; want user_class and no user", r.Locator, m)
+			switch {
+			case c == "":
+				t.Errorf("%s: input_mention_name %v; want a user_class", r.Locator, m)
+			case (c == "self" || c == "empty") && m["user"] != nil:
+				t.Errorf("%s: input_mention_name %v; want no user for the class %s", r.Locator, m, c)
+			case (c == "user" || c == "from_message") && m["user"] == nil:
+				t.Errorf("%s: input_mention_name %v; want the user of the full InputUser", r.Locator, m)
 			}
 			seen[c] = true
 		}
@@ -190,6 +196,7 @@ func TestTelegramReactorsAreNeverParticipants(t *testing.T) {
 	if got := jsonText(rawOf(rows["messages_v2/63"])["replies"]); !strings.Contains(got, `"recent_repliers":["user:1000002"]`) {
 		t.Errorf("R63: raw.replies %s, want the replier as an address in raw", got)
 	}
+	pollParticipants(t)
 }
 
 // Plan 4I4b design D13, rulings B8, P3 (Review Focus 3): replies_data is decoded as a MessageReplies beside the blob

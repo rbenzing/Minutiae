@@ -109,9 +109,55 @@ func inputUserLabel(class string) string {
 	return "user"
 }
 
+// mentionUser states the InputUser object read at p in a mention (design 9.4, rulings Q6, C4, F2, R7): user_class is its
+// label; user is "user:<id>" of its own user_id for the user and from_message classes, the id as stored; for from_message
+// also user_from_msg_id and the address of its InputPeer by the peer's own id field (user_from_peer), or that peer's label
+// (user_from_peer_class: self, empty, a from-message peer; the inner peer is never followed). self and empty give no user
+// (the owner's id is never looked up). An access hash is never stated, only user_access_hash_present when one was read
+// inside the InputUser.
+func mentionUser(v view, x map[string]any, p string) {
+	class := v.Class(p)
+	label := inputUserLabel(class)
+	if label == "" {
+		label = class
+	}
+	x["user_class"] = label
+	if label == "user" || label == "from_message" {
+		if id, ok := v.Int(p + ".user_id"); ok {
+			x["user"] = "user:" + strconv.FormatInt(id, 10)
+		}
+	}
+	if label == "from_message" {
+		if n, ok := v.Int(p + ".msg_id"); ok {
+			x["user_from_msg_id"] = n
+		}
+		if pc := v.Class(p + ".peer"); pc != "" {
+			pl := inputPeerLabel(pc)
+			id, ok := int64(0), false
+			if pl == "user" || pl == "chat" || pl == "channel" {
+				id, ok = v.Int(p + ".peer." + pl + "_id")
+			}
+			switch {
+			case ok:
+				x["user_from_peer"] = pl + ":" + strconv.FormatInt(id, 10)
+			case pl != "":
+				x["user_from_peer_class"] = pl
+			default:
+				x["user_from_peer_class"] = pc
+			}
+		}
+	}
+	for i := range v.r.Fields {
+		if n := &v.r.Fields[i]; strings.HasPrefix(n.Path, p+".") && strings.HasSuffix(n.Path, "access_hash") {
+			x["user_access_hash_present"] = true
+			break
+		}
+	}
+}
+
 // entityOf is one scalar-only entry of raw.entities: its type label, offset, length, url (4 KiB, cleaned), the user of
-// a mention (an inline id, "user:<id>"; an InputUser object read in its place is no id: user_class, its class label,
-// ruling F2), document_id and language (64 B).
+// a mention (an inline id, "user:<id>"; an InputUser object read in its place by mentionUser), document_id and language
+// (64 B).
 func entityOf(v view, raw map[string]any, p string) map[string]any {
 	x := map[string]any{"type": entityLabel(v.Class(p))}
 	for _, k := range []string{"offset", "length", "document_id"} {
@@ -130,13 +176,7 @@ func entityOf(v view, raw map[string]any, p string) map[string]any {
 		case tl.KInt32, tl.KInt64:
 			x["user"] = "user:" + strconv.FormatInt(n.Int, 10)
 		case tl.KObject:
-			// ruling F2: an InputUser object read in place of an id is stated by its class label (ruling C4:
-			// inputUserLabel), never as a user
-			class := v.Class(p + ".user_id")
-			if label := inputUserLabel(class); label != "" {
-				class = label
-			}
-			x["user_class"] = class
+			mentionUser(v, x, p+".user_id")
 		}
 	}
 	return x

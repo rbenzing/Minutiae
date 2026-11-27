@@ -695,7 +695,7 @@ func stageBHostileFacts(want func(string, bool), h func(int64) rec, hostile map[
 			want(tag+": no poll key before the poll", e.raw["poll"] == nil && e.raw["poll_state"] == nil && e.raw["poll_results"] == nil)
 		}
 	})
-	want("H3001 H3301 rows", n83 > 20 && n88 > 40)
+	want(fmt.Sprintf("H3001 H3301 rows: %d and %d, want 44 and 80", n83, n88), n83 == 44 && n88 == 80)
 }
 
 // photoFieldOrder is TL_photo's fields in wire order (constructors.tsv, TLRPC.java:33327@A-HEAD), then the media

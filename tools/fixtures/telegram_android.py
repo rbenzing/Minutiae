@@ -58,8 +58,7 @@ coordinator rules):
     takes its type's label as kind; any other button its class label, "default" when that is empty (PL5).
   - quiz and a request-peer type's bool fields are stated as read (true or false); a flag-only true only when set.
   - an admin-rights object read with no right set is "" (read, empty), never absent.
-  - peer_types states its _total and, only when cut, peer_types_truncated (T5r1); countries_iso2 states its _total and no
-    _truncated until plan 4I4c Task 7 (T5r1);
+  - peer_types and countries_iso2 state their _total and, only when cut, their _truncated (ruling T5r1);
     an element of countries_iso2 over 64 bytes makes countries_iso2_state too-long with no list (the total stays).
   - an option of a results entry and of a flattened voter follows the answer's option rule (hex, else too-long).
   - poll_answers is stated only with raw.poll, poll_results_options and poll_voters only with raw.poll_results (a cut
@@ -1754,8 +1753,11 @@ def map_poll(b, raw):
         n = vec_len(b, q)
         if n is not None:
             o["countries_iso2_total"] = n
+            if n > MAX_COUNTRIES:
+                o["countries_iso2_truncated"] = True  # ruling T5r1: every capped list states its cut
             cl = [C.clean(bytes(b.val("%s[%d]" % (q, i))), 1 << 30) for i in range(n)]
-            if any(len(c.text.encode("utf-8")) > MAX_TINY for c in cl):
+            raw_over = any(len(bytes(b.val("%s[%d]" % (q, i)))) > MAX_TINY for i in range(n))  # the stored bytes, as ident
+            if raw_over or any(len(c.text.encode("utf-8")) > MAX_TINY for c in cl):
                 o["countries_iso2_state"] = "too-long"  # an identifier is never cut: no list
             else:
                 if any(c.flags for c in cl[:MAX_COUNTRIES]):
@@ -2854,10 +2856,58 @@ def seen_ids(blobs, typ):
 # layers rows follow every 4I4b one, so no 4I4b row changes its rowid.
 STAGE_B_FULL = (("InputUser", 0xF21158C6), ("InputUser", 0xD8292816), ("InputUser", 0x1DA448E2),
                 ("InputUser", 0x2D117597), ("MessageMedia", 0x4BD6E798))
-# The number of full rows of STAGE_A_TYPES in the plan 4I4b table: every full row of those types beyond them must be in
-# STAGE_B_FULL (layers_rows asserts it), so a later plan that makes another 4I4b-type row full fails here instead of
+# The (type, ID) of every full row of STAGE_A_TYPES in the plan 4I4b table, sorted (164 rows): every full row of those types
+# beyond them must be in STAGE_B_FULL (layers_rows asserts the two sets equal, ruling carried to plan 4I4c Task 7), so a later
+# plan that makes another 4I4b-type row full, or turns one of these opaque while another turns full, fails here instead of
 # shifting the 4I4b layers rowids (Task 4 review).
-STAGE_A_FULL_4I4B = 164
+STAGE_A_FULL_4I4B = (
+    ("Audio", 0x427425E7), ("Audio", 0x555555F6), ("Audio", 0x586988D8), ("Audio", 0xC7AC6496), ("Audio", 0xF9E35055),
+    ("Document", 0x1E87342B), ("Document", 0x36F8C871), ("Document", 0x55555556), ("Document", 0x55555558),
+    ("Document", 0x59534E4C), ("Document", 0x87232BC7), ("Document", 0x8FD4C4D8), ("Document", 0x9BA29CC1),
+    ("Document", 0x9EFC6326), ("Document", 0xF9A39F4F), ("DocumentAttribute", 0x051448E5),
+    ("DocumentAttribute", 0x0EF02CE6), ("DocumentAttribute", 0x11B58939), ("DocumentAttribute", 0x15590068),
+    ("DocumentAttribute", 0x17399FAD), ("DocumentAttribute", 0x3A556302), ("DocumentAttribute", 0x43C57C48),
+    ("DocumentAttribute", 0x5910CCCB), ("DocumentAttribute", 0x6319D612), ("DocumentAttribute", 0x6C37C15C),
+    ("DocumentAttribute", 0x9801D2F7), ("DocumentAttribute", 0x9852F9C6), ("DocumentAttribute", 0x994C9882),
+    ("DocumentAttribute", 0xD38FF1C2), ("DocumentAttribute", 0xDED218E0), ("DocumentAttribute", 0xFB0A5727),
+    ("DocumentAttribute", 0xFD149899), ("FileLocation", 0x091D11EB), ("FileLocation", 0x53D69076),
+    ("FileLocation", 0x55555554), ("FileLocation", 0x7C596B46), ("FileLocation", 0xBC7FC6CD),
+    ("InputStickerSet", 0x028703C8), ("InputStickerSet", 0x04C4D4CE), ("InputStickerSet", 0x1CF671A0),
+    ("InputStickerSet", 0x29D0F5EE), ("InputStickerSet", 0x44C1F8E9), ("InputStickerSet", 0x49748553),
+    ("InputStickerSet", 0x79E21A53), ("InputStickerSet", 0x861CC8A0), ("InputStickerSet", 0x9DE7A269),
+    ("InputStickerSet", 0xC88B3B02), ("InputStickerSet", 0xE67F520E), ("InputStickerSet", 0xFFB62B95),
+    ("InputUser", 0xB98886CF), ("InputUser", 0xF7C1B13F), ("MessageAction", 0x01BAA035), ("MessageAction", 0x4792929B),
+    ("MessageAction", 0x55555550), ("MessageAction", 0x55555557), ("MessageAction", 0x80E11A7F),
+    ("MessageAction", 0x94BD38ED), ("MessageAction", 0x95E3FBEF), ("MessageAction", 0x9FBAB604),
+    ("MessageAction", 0xB6AEF7B0), ("MessageAction", 0xC1D2F1C6), ("MessageAction", 0xE7E75F97),
+    ("MessageAction", 0xEBBCA3CB), ("MessageAction", 0xF3F25F76), ("MessageMedia", 0x08CBEC07),
+    ("MessageMedia", 0x2EC0533F), ("MessageMedia", 0x2FDA2204), ("MessageMedia", 0x3D8CE53D), ("MessageMedia", 0x3DED6320),
+    ("MessageMedia", 0x3F7EE58B), ("MessageMedia", 0x4CF4D72D), ("MessageMedia", 0x52D8CCD9), ("MessageMedia", 0x56E0D474),
+    ("MessageMedia", 0x5BCF1675), ("MessageMedia", 0x5E7D2F39), ("MessageMedia", 0x638FE46B), ("MessageMedia", 0x695150D7),
+    ("MessageMedia", 0x70322949), ("MessageMedia", 0x773F4E66), ("MessageMedia", 0x7912B71F), ("MessageMedia", 0x7C3C2609),
+    ("MessageMedia", 0x7C4414D3), ("MessageMedia", 0x9CB070D7), ("MessageMedia", 0x9F84F49E), ("MessageMedia", 0xA2D24290),
+    ("MessageMedia", 0xA32DD600), ("MessageMedia", 0xB5223B0F), ("MessageMedia", 0xB940C666), ("MessageMedia", 0xC6B68300),
+    ("MessageMedia", 0xC8C45A2A), ("MessageMedia", 0xCBF24940), ("MessageMedia", 0xDBBDF614), ("MessageMedia", 0xDD570BD5),
+    ("MessageMedia", 0xDDF10C3B), ("MessageMedia", 0xE216EB63), ("MessageMedia", 0xF3E02EA8),
+    ("MessagePeerReaction", 0x51B67EFF), ("MessagePeerReaction", 0x8C79B63C), ("MessagePeerReaction", 0x932844FA),
+    ("MessagePeerReaction", 0xB156FE9C), ("MessageReactions", 0x087B6E36), ("MessageReactions", 0x0A339F0B),
+    ("MessageReactions", 0x4F2B9479), ("MessageReactions", 0xB87A24D1), ("MessageReactor", 0x4BA3A95A),
+    ("MessageReactor", 0xEF00D448), ("MessageReplies", 0x4128FAAC), ("MessageReplies", 0x83D60FC2), ("Photo", 0x22B56751),
+    ("Photo", 0x2331B22D), ("Photo", 0x9288DD29), ("Photo", 0x9C477DD8), ("Photo", 0xC3838076), ("Photo", 0xCDED42FE),
+    ("Photo", 0xD07504A5), ("Photo", 0xFB197A65), ("PhotoSize", 0x021E1AD6), ("PhotoSize", 0x0E17E23C),
+    ("PhotoSize", 0x5AA86A51), ("PhotoSize", 0x75C78E60), ("PhotoSize", 0x77BFB61B), ("PhotoSize", 0xD8214D41),
+    ("PhotoSize", 0xE0B0BC2E), ("PhotoSize", 0xE9A734FA), ("PhotoSize", 0xFA3EFB95), ("Reaction", 0x1B2286B8),
+    ("Reaction", 0x523DA4EB), ("Reaction", 0x79F5D419), ("Reaction", 0x8935FC73), ("ReactionCount", 0xA3D1CB80),
+    ("RestrictionReason", 0xD072ACB4), ("SuggestedPost", 0x0E8E37E5), ("TL_factCheck", 0xB89BFCCF),
+    ("TL_iv.RichText", 0xDC3D824F), ("TL_maskCoords", 0xAED6DBB2), ("TL_messages_emojiGameOutcome", 0xDA2AD647),
+    ("TL_stars.StarsAmount", 0x74AEE3E0), ("TL_stars.StarsAmount", 0xBBB6B4A3), ("TL_textWithEntities", 0x751F3146),
+    ("Video", 0x388FA391), ("Video", 0x55555553), ("Video", 0x5A04A49F), ("Video", 0xC10658A8), ("Video", 0xEE9F4A4D),
+    ("Video", 0xF72887D3), ("VideoSize", 0x0DA082FE), ("VideoSize", 0x435BB987), ("VideoSize", 0xDE33B094),
+    ("VideoSize", 0xE831C556), ("VideoSize", 0xF85C413C), ("WebPage", 0x211A1788), ("WebPage", 0x5F07B4BC),
+    ("WebPage", 0x7311CA11), ("WebPage", 0xA31EA0B5), ("WebPage", 0xB0D13E47), ("WebPage", 0xC586DA1C),
+    ("WebPage", 0xCA820ED7), ("WebPage", 0xD41A5167), ("WebPage", 0xE89C45B2), ("WebPage", 0xEB1477E8),
+    ("WebPage", 0xFA64E172), ("WebPageAttribute", 0x31CAD303), ("WebPageAttribute", 0x50CC03D3),
+    ("WebPageAttribute", 0x7781FE18))
 
 # The types plan 4I4c adds (design 7): every full row of these is read by some committed cell (TestTelegramFixtures-
 # ReadEveryStageAFullRow); the layers rows from 2101 embed the ones the scenario does not read.
@@ -2943,8 +2993,11 @@ def layers_rows():
                 if isinstance(r.get("data"), (bytes, bytearray))]
     seen = seen_ids(scenario, "Message")
     full_a = [r for r in ordered if r.typ in STAGE_A_TYPES and r.body == "full"]
-    extra = len([r for r in full_a if (r.typ, r.cid) not in STAGE_B_FULL]) - STAGE_A_FULL_4I4B
-    assert extra == 0, "%d full rows of 4I4b types outside the 4I4b set are not listed in STAGE_B_FULL" % extra
+    outside = sorted((r.typ, r.cid) for r in full_a if (r.typ, r.cid) not in STAGE_B_FULL)
+    assert outside == sorted(STAGE_A_FULL_4I4B), (
+        "full rows of 4I4b types differ from the pinned 4I4b set and STAGE_B_FULL: new %s, gone %s" % (
+            ["%s 0x%08X" % k for k in sorted(set(outside) - set(STAGE_A_FULL_4I4B))],
+            ["%s 0x%08X" % k for k in sorted(set(STAGE_A_FULL_4I4B) - set(outside))]))
     todo = [r for r in full_a if (r.typ, r.cid) not in seen]
     todo = [r for r in todo if (r.typ, r.cid) not in STAGE_B_FULL] + [r for r in todo if (r.typ, r.cid) in STAGE_B_FULL]
     for i, r in enumerate(todo):
