@@ -25,3 +25,20 @@ func TestTelegramIdentIsNeverCut(t *testing.T) {
 		t.Errorf("an identifier grown past the limit by U+FFFD was kept: %v", raw)
 	}
 }
+
+// identClean is the cleaned text of an identifier and whether its cleaning flagged anything; it refuses a stored text
+// over the limit before any copy and one the cleaning grows past it (the shared core of ident and the poll's countries).
+func TestTelegramIdentCleanShared(t *testing.T) {
+	if s, flagged, ok := identClean([]byte("FR"), maxTiny); !ok || s != "FR" || flagged {
+		t.Errorf("a clean code: %q %v %v", s, flagged, ok)
+	}
+	if s, flagged, ok := identClean([]byte{'F', 0xff}, maxTiny); !ok || s != "F�" || !flagged {
+		t.Errorf("an invalid byte: %q %v %v; want it cleaned and flagged", s, flagged, ok)
+	}
+	if _, _, ok := identClean([]byte(strings.Repeat("a", maxTiny+1)), maxTiny); ok {
+		t.Error("a stored text over the limit was kept")
+	}
+	if _, _, ok := identClean(append([]byte(strings.Repeat("a", maxTiny-1)), 0xff), maxTiny); ok {
+		t.Error("a text grown past the limit by U+FFFD was kept")
+	}
+}

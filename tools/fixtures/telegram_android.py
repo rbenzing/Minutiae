@@ -1756,8 +1756,8 @@ def map_poll(b, raw):
             if n > MAX_COUNTRIES:
                 o["countries_iso2_truncated"] = True  # ruling T5r1: every capped list states its cut
             cl = [C.clean(bytes(b.val("%s[%d]" % (q, i))), 1 << 30) for i in range(n)]
-            raw_over = any(len(bytes(b.val("%s[%d]" % (q, i)))) > MAX_TINY for i in range(n))  # the stored bytes, as ident
-            if raw_over or any(len(c.text.encode("utf-8")) > MAX_TINY for c in cl):
+            # cleaning only ever grows a text (an invalid byte becomes U+FFFD), so the cleaned length is also the test of the stored one
+            if any(len(c.text.encode("utf-8")) > MAX_TINY for c in cl):
                 o["countries_iso2_state"] = "too-long"  # an identifier is never cut: no list
             else:
                 if any(c.flags for c in cl[:MAX_COUNTRIES]):

@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 
 	"github.com/rbenzing/minutiae/internal/decode/tl"
-	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 )
 
 // The caps of the poll lists (plan 4I4c "Raw shapes"): a list is cut at its cap and states its total and that it was
@@ -129,14 +128,14 @@ func countriesInto(v view, o, raw map[string]any) {
 	flagged := false
 	for i := range n {
 		b, _ := v.Str(elem(p, i))
-		cl := common.CleanText(b, maxTiny)
-		if len(b) > maxTiny || cl.Truncated {
+		text, fl, ok := identClean(b, maxTiny)
+		if !ok {
 			o["countries_iso2_state"] = stateTooLong
 			return
 		}
 		if i < maxCountries {
-			codes = append(codes, cl.Text)
-			flagged = flagged || len(cl.Flags) > 0
+			codes = append(codes, text)
+			flagged = flagged || fl
 		}
 	}
 	if flagged {

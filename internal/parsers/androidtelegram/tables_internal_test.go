@@ -386,3 +386,57 @@ func TestTelegramNotationRefusesOutsideGrammar(t *testing.T) {
 		}
 	}
 }
+
+// reachableFrom walks the types a Message can contain (every constructor of a type is reachable, the wire ID decides,
+// through the Of and Alt of its object and vector fields) and returns, for each type reached, the path that reached it.
+func reachableFrom(tab tl.Table, root string) map[string]string {
+	paths := map[string]string{root: root}
+	queue := []string{root}
+	for len(queue) > 0 {
+		typ := queue[0]
+		queue = queue[1:]
+		for _, k := range slices.SortedFunc(maps.Keys(tab), func(a, b tl.Key) int {
+			return strings.Compare(fmt.Sprintf("%s/%08x", a.Type, a.ID), fmt.Sprintf("%s/%08x", b.Type, b.ID))
+		}) {
+			if k.Type != typ {
+				continue
+			}
+			c := tab[k]
+			for _, f := range c.Fields {
+				for _, of := range []string{f.Of, f.Alt} {
+					if of == "" {
+						continue
+					}
+					if _, seen := paths[of]; !seen {
+						paths[of] = paths[typ] + " > " + c.Name + "." + f.Name + " > " + of
+						queue = append(queue, of)
+					}
+				}
+			}
+		}
+	}
+	return paths
+}
+
+// The parser's view.inside ignores StopPrefix, so a prefix row reachable from a Message (through its markup, media or
+// any nested object) would let markupOf and pollOf state entries for elements the walker never read. Today every
+// prefix row is a Chat or a User and none is reachable; this fails, naming the path, the moment one is.
+func TestNoPrefixRowIsReachableFromAMessage(t *testing.T) {
+	reach := reachableFrom(table, typeMessage)
+	if len(reach) < 10 {
+		t.Fatalf("only %d types reached from Message: the walk is broken", len(reach))
+	}
+	prefix := 0
+	for k, c := range table {
+		if c.Body != tl.BodyPrefix {
+			continue
+		}
+		prefix++
+		if path, ok := reach[k.Type]; ok {
+			t.Errorf("prefix row %s (%s, %#x) is reachable from Message: %s", c.Name, k.Type, k.ID, path)
+		}
+	}
+	if prefix == 0 {
+		t.Fatal("no prefix row in the table: the guard has nothing to guard")
+	}
+}

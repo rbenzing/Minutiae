@@ -23,15 +23,26 @@ const stateTooLong = "too-long"
 // for the cleaned text, so a stored text within it whose invalid bytes grow past it is too long as well. A stored
 // text over the limit is refused before any copy.
 func ident(raw map[string]any, key string, b []byte, limit int) (string, bool) {
-	if len(b) <= limit {
-		if c := common.CleanText(b, limit); !c.Truncated {
-			return c.Text, true
-		}
+	if s, _, ok := identClean(b, limit); ok {
+		return s, true
 	}
 	raw[key+"_state"] = stateTooLong
 	raw[key+"_len"] = int64(len(b))
 	raw[key+"_sha256"] = sha256Hex(b)
 	return "", false
+}
+
+// identClean is the shared core of ident and the poll's country codes: the cleaned text of b and whether the cleaning
+// flagged anything, ok false when b is over limit (tested first, so nothing is copied) or its cleaning grows past it.
+func identClean(b []byte, limit int) (text string, flagged, ok bool) {
+	if len(b) > limit {
+		return "", false, false
+	}
+	c := common.CleanText(b, limit)
+	if c.Truncated {
+		return "", false, false
+	}
+	return c.Text, len(c.Flags) > 0, true
 }
 
 // sha256Hex is the lower-case hex SHA-256 of b: the digest raw keeps beside a blob or an identifier it does not hold
