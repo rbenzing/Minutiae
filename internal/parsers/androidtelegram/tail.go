@@ -184,10 +184,7 @@ func reactionOf(v view, path string, raw map[string]any) (string, bool) {
 	}
 	switch label := classLabel(class, "TL_reaction"); label {
 	case "emoji":
-		if s, ok := emoji(path + ".emoticon"); ok {
-			return s, true
-		}
-		return "emoji:", true
+		return emoji(path + ".emoticon") // an emoticon not read is no reaction, never "emoji:"
 	case "custom_emoji":
 		if x, ok := v.Int(path + ".document_id"); ok {
 			return "custom:" + strconv.FormatInt(x, 10), true
@@ -377,7 +374,7 @@ func sameReplies(a, b map[string]any) bool {
 		}
 		la, isList := x.([]any)
 		if !isList {
-			if x != y {
+			if !sameValue(x, y) {
 				return false
 			}
 			continue
@@ -387,10 +384,27 @@ func sameReplies(a, b map[string]any) bool {
 			return false
 		}
 		for i := range la {
-			if la[i] != lb[i] {
+			if !sameValue(la[i], lb[i]) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+// sameValue says two replies values are equal, by an explicit kind: int64, string and bool (repliesOf's only scalar
+// kinds). A value of any other kind, or of two kinds, is not the same.
+func sameValue(x, y any) bool {
+	switch x := x.(type) {
+	case int64:
+		y, ok := y.(int64)
+		return ok && x == y
+	case string:
+		y, ok := y.(string)
+		return ok && x == y
+	case bool:
+		y, ok := y.(bool)
+		return ok && x == y
+	}
+	return false
 }

@@ -1,6 +1,8 @@
 package androidtelegram
 
 import (
+	"strings"
+
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/tl"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -90,20 +92,28 @@ func Table() tl.Table { return newTable() }
 // TableEntry is the constructor table's entry of id (the zero Constructor when the table lacks it).
 func TableEntry(id uint32) tl.Constructor { return newTable()[id] }
 
-// SeenConstructors is every constructor ID tl.Decode read in b as the TL type typ with the parser's table (plan 4I4b
-// P10): the top object's when the table knows it for typ, and every nested object's (a field or a vector element of
-// kind KObject), in decode order. An object whose body then stops still had its ID read (a TL_messageMediaPoll can be
-// read no further than its opaque Poll).
+// SeenConstructors is every constructor ID tl.Decode read WHOLE in b as the TL type typ with the parser's table (plan
+// 4I4b P10, Task 4 review M1): the top object's when the table knows it for typ, and every nested object's (a field or a
+// vector element of kind KObject), in decode order, each only when the decode's stop (if any) is neither at nor inside
+// the object's path. An object whose body then stops (a TL_messageMediaPoll can be read no further than its opaque Poll)
+// had its ID read but is not whole.
 func SeenConstructors(b []byte, typ string) []uint32 {
 	bud := parse.NewBudget(1 << 30).View()
 	r := tl.Decode(b, typ, newTable(), bud)
 	defer bud.Free(r.Charged())
+	whole := func(path string) bool {
+		if r.Stop == nil {
+			return true
+		}
+		s := r.Stop.Path
+		return path != "" && s != path && !strings.HasPrefix(s, path+".") && !strings.HasPrefix(s, path+"[")
+	}
 	var out []uint32
-	if c, ok := newTable()[r.Top]; ok && c.Type == typ {
+	if c, ok := newTable()[r.Top]; ok && c.Type == typ && whole("") {
 		out = append(out, r.Top)
 	}
 	for _, n := range r.Fields {
-		if n.Kind == tl.KObject {
+		if n.Kind == tl.KObject && whole(n.Path) {
 			out = append(out, n.ID)
 		}
 	}

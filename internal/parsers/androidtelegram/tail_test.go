@@ -307,6 +307,12 @@ func tailVocabulary4I4b(t *testing.T) {
 			t.Errorf("the reaction and price kinds read are %v: %s is missing", slices.Sorted(mapsKeysBool(kinds)), k)
 		}
 	}
+	// the price kinds are exactly stars, ton and unknown (a price class the table does not name; none is in a fixture)
+	for k := range kinds {
+		if strings.HasPrefix(k, "price:") && !slices.Contains([]string{`price:"stars"`, `price:"ton"`, `price:"unknown"`}, k) {
+			t.Errorf("price kind %s is outside the vocabulary stars, ton, unknown", k)
+		}
+	}
 	for _, k := range []string{"2806", "2807"} {
 		if rawOf(hostile["messages_v2/"+k])["replies_data_state"] != nil {
 			t.Errorf("H%s: replies_data_state %v on a row without a cell", k, rawOf(hostile["messages_v2/"+k])["replies_data_state"])

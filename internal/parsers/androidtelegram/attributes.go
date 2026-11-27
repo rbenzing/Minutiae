@@ -1,7 +1,6 @@
 package androidtelegram
 
 import (
-	"bytes"
 	"fmt"
 	"maps"
 	"math"
@@ -15,10 +14,11 @@ import (
 // attributes (or the inline file_name of an old class), never from another document the media holds (alt documents, a
 // live photo's document, a link preview's document are named by their own keys).
 const (
-	nameAbsent    = "absent"       // the attributes were read whole and none is a filename
-	nameEmpty     = "empty"        // the one name is empty: no name
-	nameConflict  = "conflict"     // two different names: neither is chosen, the names are raw
-	nameUndecided = stateUndecided // the attribute list was not read whole
+	nameAbsent      = "absent"       // the attributes were read whole and none is a filename
+	nameEmpty       = "empty"        // the one name has no stored bytes: no name
+	nameUnprintable = "unprintable"  // the one name has stored bytes the cleaning reduces to nothing (T5a)
+	nameConflict    = "conflict"     // two different names: neither is chosen, the names are raw
+	nameUndecided   = stateUndecided // the attribute list was not read whole
 )
 
 // fileName is the name of the document read at doc: its text (cleaned at maxName; flag names it in raw.text_flags) when
@@ -56,12 +56,7 @@ func fileName(v view, tab tl.Table, doc, flag string, raw map[string]any) (name,
 	default:
 		return "", "", nil, 0
 	}
-	var distinct [][]byte
-	for _, b := range values {
-		if !slices.ContainsFunc(distinct, func(d []byte) bool { return bytes.Equal(d, b) }) {
-			distinct = append(distinct, b)
-		}
-	}
+	distinct := distinctBytes(values)
 	switch {
 	case len(distinct) == 0:
 		return "", nameAbsent, nil, 0
@@ -72,7 +67,7 @@ func fileName(v view, tab tl.Table, doc, flag string, raw map[string]any) (name,
 		return "", nameConflict, names, len(distinct)
 	}
 	if name = cleaned(raw, flag, distinct[0], maxName); name == "" {
-		return "", nameEmpty, nil, 0
+		return "", noNameState(distinct[0]), nil, len(distinct[0]) // total: the stored bytes of an unprintable name
 	}
 	return name, "", nil, 0
 }
@@ -86,6 +81,9 @@ func documentName(v view, tab tl.Table, m, raw map[string]any, doc, key string) 
 		m[key] = name
 	case state != "":
 		m[key+"_state"] = state
+	}
+	if state == nameUnprintable {
+		m[key+"_len"] = int64(total)
 	}
 	if state == nameConflict {
 		out := make([]any, len(names))
@@ -165,7 +163,7 @@ func attributeScalars(v view, tab tl.Table, m, raw map[string]any, path string) 
 		lab := classLabel(class, "TL_documentAttribute")
 		for _, f := range boolFields[lab] {
 			if v.True(a + "." + f) {
-				bools[f] = true
+				bools[ownKey(lab, f)] = true // T5c
 			}
 		}
 		for _, f := range scalarFields[lab] {
@@ -281,4 +279,38 @@ func identInto(m, raw map[string]any, key, flag string, b []byte, limit int) {
 			markText(raw, flag)
 		}
 	}
+}
+
+// noNameState is the state of a stored name that cleaned to no text (T5a).
+func noNameState(stored []byte) string {
+	if len(stored) == 0 {
+		return nameEmpty
+	}
+	return nameUnprintable
+}
+
+// distinctBytes is the values without repeats, in first-occurrence order (T5b).
+func distinctBytes(values [][]byte) [][]byte {
+	seen := make(map[string]struct{}, len(values))
+	var out [][]byte
+	for _, b := range values {
+		if _, ok := seen[string(b)]; ok {
+			continue
+		}
+		seen[string(b)] = struct{}{}
+		out = append(out, b)
+	}
+	return out
+}
+
+// ownKey is the raw key of an attribute's boolean flag: the audio attribute's voice and the video attribute's
+// round_message keep their own keys beside the wrapper's voice and round (T5c); the others keep their name.
+func ownKey(label, flag string) string {
+	switch {
+	case label == "audio" && flag == "voice":
+		return "audio_voice"
+	case label == "video" && flag == "round_message":
+		return "video_round_message"
+	}
+	return flag
 }

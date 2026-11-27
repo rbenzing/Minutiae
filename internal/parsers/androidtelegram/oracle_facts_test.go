@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -315,10 +316,10 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 		num(mc["y"]) == "-0.25" && num(mc["zoom"]) == "1.5" && media(68)["stickerset_kind"] == "id" && num(media(68)["stickerset_id"]) == "7000001" &&
 		media(68)["stickerset_access_hash_present"] == true && media(68)["file_name_state"] == "absent")
 	want("R69", media(69)["stickerset_kind"] == "short_name" && media(69)["stickerset_short_name"] == "FixtureSet" && media(69)["sticker_alt"] == "⭐")
-	want("R70", media(70)["voice"] == true && num(media(70)["duration"]) == "12" && media(70)["duration_unit"] == "unestablished" &&
+	want("R70", media(70)["voice"] == true && media(70)["audio_voice"] == true && num(media(70)["duration"]) == "12" && media(70)["duration_unit"] == "unestablished" &&
 		media(70)["title"] == "Memo" && media(70)["performer"] == "Ann" && num(media(70)["waveform_len"]) == "63" && media(70)["waveform_sha256"] != nil)
 	vt := list(msg(71), "media_video_thumbs")
-	want("R71", num(media(71)["duration"]) == "7.5" && media(71)["round_message"] == true && media(71)["supports_streaming"] == true &&
+	want("R71", num(media(71)["duration"]) == "7.5" && media(71)["video_round_message"] == true && media(71)["round_message"] == nil && media(71)["supports_streaming"] == true &&
 		media(71)["video_codec"] == "h264" && num(media(71)["video_start_ts"]) == "0.5" && len(vt) == 1 && entry(vt, 0)["kind"] == "video")
 	g, _ := media(72)["game_outcome"].(map[string]any)
 	want("R72", num(g["stake_ton_amount"]) == "100" && num(g["ton_amount"]) == "200" && num(g["seed_len"]) == "19" && len(g) == 3)
@@ -439,6 +440,7 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 			}
 		}
 		want(fmt.Sprintf("H%d truncated", rowid), e.raw["data_state"] == "truncated")
+		cutMediaKeys(want, rowid, e, stop, head, at)
 	}
 	want("H2401 H2601 count", cutRows == 68+51)
 	h := func(rowid int64) rec { return hostileMsg(rowid) }
@@ -462,4 +464,60 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	want("H2812", num(h12["recent_repliers_total"]) == "17" && h12["recent_repliers_truncated"] == true && len(strs(h12["recent_repliers"])) == 16)
 	want("H2813", num(hm(2813)["attributes_total"]) == "33" && hm(2813)["attributes_truncated"] == true && len(strs(hm(2813)["attributes"])) == 32)
 	want("H2814", hm(2814)["file_name_state"] == "conflict" && num(hm(2814)["file_names_total"]) == "9" && len(strs(hm(2814)["file_names"])) == 8)
+}
+
+// photoFieldOrder is TL_photo's fields in wire order (constructors.tsv, TLRPC.java:33327@A-HEAD), then the media
+// wrapper's own after-photo fields: what a cut inside the photo leaves unread (Task 4 review M3).
+var photoFieldOrder = []string{"has_stickers", "id", "access_hash", "file_reference", "date", "sizes", "video_sizes", "dc_id"}
+
+// cutMediaKeys requires that the oracle's cut row states no media list or live-photo key whose source field starts at
+// or after the cut, and states a list the cut lies inside as _state partial with no entry (plan 4I4b P3; Task 4 review
+// M3). head is the top-level field of the stop (at its index in topFields, or -1), stop its full path.
+func cutMediaKeys(want func(string, bool), rowid int64, e rec, stop, head string, headAt int) {
+	mediaAt := -1
+	for i, f := range topFields() {
+		if f.name == "media" {
+			mediaAt = i
+		}
+	}
+	// reached: how much of the media the decode read; 0 none, 1 the sizes list, 2 the video sizes, 3 the live document
+	sizesDone, videoDone, docDone := false, false, false
+	partialSizes, partialVideo := false, false
+	switch {
+	case headAt > mediaAt && mediaAt >= 0:
+		sizesDone, videoDone, docDone = true, true, true // the media was read whole
+	case head == "media":
+		rest := strings.TrimPrefix(stop, "media")
+		rest = strings.TrimPrefix(rest, ".")
+		if first, tail, _ := strings.Cut(rest, "."); first == "photo" {
+			field, _, _ := strings.Cut(strings.SplitN(tail, "[", 2)[0], ".")
+			at := slices.Index(photoFieldOrder, field)
+			sizesDone = at > slices.Index(photoFieldOrder, "sizes")
+			videoDone = at > slices.Index(photoFieldOrder, "video_sizes")
+			partialSizes = field == "sizes"
+			partialVideo = field == "video_sizes"
+		} else if first == "ttl_seconds" || first == "document" {
+			sizesDone, videoDone = true, true
+			// the live document's id and mime_type are fields of media.document: read once the stop lies past them
+			field, _, _ := strings.Cut(strings.SplitN(tail, "[", 2)[0], ".")
+			docDone = first == "document" && field != "" && field != "id"
+		}
+	}
+	tag := fmt.Sprintf("H%d (stop %q)", rowid, stop)
+	if !sizesDone {
+		want(tag+": media_sizes stated at or after the cut", e.raw["media_sizes"] == nil)
+	}
+	if !videoDone {
+		want(tag+": media_video_sizes stated at or after the cut", e.raw["media_video_sizes"] == nil)
+	}
+	if !docDone {
+		m, _ := e.raw["media"].(map[string]any)
+		want(tag+": live_photo_document_id stated at or after the cut", m["live_photo_document_id"] == nil)
+	}
+	if partialSizes {
+		want(tag+": media_sizes_state is not partial inside the list", e.raw["media_sizes_state"] == "partial")
+	}
+	if partialVideo {
+		want(tag+": media_video_sizes_state is not partial inside the list", e.raw["media_video_sizes_state"] == "partial")
+	}
 }

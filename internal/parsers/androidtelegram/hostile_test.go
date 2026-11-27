@@ -88,6 +88,8 @@ func TestTelegramHostileBlobsAreStated(t *testing.T) {
 		}
 	}
 
+	hostileCutsAndCaps(t, recs, blobs)
+
 	// a blob above MaxBlob and one of exactly MaxBlob, in a Go-built database
 	msg := func(id int32, text string) []byte {
 		return tlMessage{id: id, from: idAnn, peer: idSelf, date: baseDate, text: text}.bytes()
@@ -417,4 +419,86 @@ func utf8Valid(v any) bool {
 		}
 	}
 	return true
+}
+
+// blobKey says the raw key states a value read from the blob's media or tail (not a plain column, nor the data_* and
+// trailer statements about the cell itself).
+func blobKey(k string) bool {
+	for _, p := range []string{
+		"media", "live_photo", "blob_forwards", "post_author", "quick_reply", "effect", "report_delivery", "paid_message",
+		"schedule_repeat", "summary_from", "replies", "reactions", "restriction_reason", "factcheck", "suggested_post", "entities", "edit_date", "views",
+	} {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostileCutsAndCaps is plan 4I4b Task 7's part of TestTelegramHostileBlobsAreStated (spec 8.4, rulings P3, B1): every
+// H2401/H2601 row is R76's or R60's blob cut at a boundary, so it is a record that is truncated or partial, whose stop
+// lies within the cut, and that states no raw value the whole blob does not state identically (a field at or after the
+// cut is never stated: a list the cut reaches is its own _state partial and none of its entries, never a shorter
+// list); H2802 is cap, and H2803 and H2804 carry unknown-flag-bits.
+func hostileCutsAndCaps(t *testing.T, recs map[string]records.Record, blobs map[int64][]byte) {
+	t.Helper()
+	full := byRow(parseFixture(t, "telegram-v181").Records)
+	var diff func(path string, cut, whole map[string]any)
+	diff = func(path string, cut, whole map[string]any) {
+		for k, v := range cut {
+			if path == "" && !blobKey(k) {
+				continue // a plain column, or the cut's own statement about the cell
+			}
+			if path == "media." && k == "state" {
+				continue // the stop's own statement about the media (mediaStop), not a value read
+			}
+			w, ok := whole[k]
+			if cm, isMap := v.(map[string]any); isMap {
+				wm, _ := w.(map[string]any)
+				diff(path+k+".", cm, wm)
+				continue
+			}
+			switch {
+			case strings.HasSuffix(k, "_state") && v == "partial":
+				if _, listed := cut[strings.TrimSuffix(k, "_state")]; listed {
+					t.Errorf("%s%s partial but %s stated: a cut list shows no entry", path, k, strings.TrimSuffix(k, "_state"))
+				}
+			case strings.HasSuffix(k, "_state") && !ok:
+				// a state the whole blob does not need (an unread name, an unreached list): it states the cut, not a value
+			case !ok || jsonText(v) != jsonText(w):
+				t.Errorf("%s%s = %v at the cut, %v whole: a value at or after the cut was stated", path, k, v, w)
+			}
+		}
+	}
+	cuts := 0
+	for id := int64(2401); id < 2801; id++ {
+		r, ok := recs["messages_v2/"+itoa(id)]
+		if !ok {
+			continue
+		}
+		cuts++
+		whole := full["messages_v2/76"]
+		if id >= 2601 {
+			whole = full["messages_v2/60"]
+		}
+		raw := rawOf(r)
+		if st := raw["data_state"]; st != "truncated" && st != "partial" {
+			t.Errorf("H%d: data_state %v, want truncated or partial", id, st)
+		}
+		if off, err := strconv.Atoi(jsonText(raw["data_stop_offset"])); err != nil || off > len(blobs[id]) {
+			t.Errorf("H%d: data_stop_offset %v beyond the cut at %d", id, raw["data_stop_offset"], len(blobs[id]))
+		}
+		diff("", raw, rawOf(whole))
+	}
+	if cuts != 68+51 {
+		t.Errorf("%d cut rows, want %d", cuts, 68+51)
+	}
+	if r := rawOf(recs["messages_v2/2802"]); r["data_state"] != "cap" {
+		t.Errorf("H2802: data_state %v, want cap", r["data_state"])
+	}
+	for _, id := range []string{"2803", "2804"} {
+		if f, _ := rawOf(recs["messages_v2/"+id])["data_flags"].(string); !strings.Contains(f, "unknown-flag-bits") {
+			t.Errorf("H%s: data_flags %q, want unknown-flag-bits", id, f)
+		}
+	}
 }

@@ -123,11 +123,15 @@ func tlCells(t *testing.T, db []byte) map[string][][]byte {
 	return out
 }
 
+// idMessageMediaPoll is TL_messageMediaPoll (0x773f4e66): its Poll body is opaque, so it is never read whole (R1).
+const idMessageMediaPoll = 0x773f4e66
+
 // Plan 4I4b P10 (design 10, first bullet): the committed fixtures read every full row of the 4I4b types at least once.
 // The union of SeenConstructors over every TL cell of every variant's database (messages and messages_v2 data,
 // replydata and replies_data, users and chats data) holds every full row of stageATypes: the 32 full MessageMedia,
 // every full Photo, Document and WebPage row, every full MessageAction row and every full row of the new types. A miss
-// is listed by type, ID and class.
+// is listed by type, ID and class. An object counts only when read whole (the decode's stop neither at nor inside it,
+// Task 4 review M1); the one exemption is TL_messageMediaPoll, whose Poll is opaque under R1.
 func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
 	seen := map[uint32]bool{}
 	for _, v := range variants {
@@ -151,7 +155,7 @@ func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
 		case "MessageAction":
 			actions++
 		}
-		if !seen[id] {
+		if !seen[id] && id != idMessageMediaPoll {
 			missing = append(missing, fmt.Sprintf("%s 0x%08x %s", c.Type, id, c.Name))
 		}
 	}

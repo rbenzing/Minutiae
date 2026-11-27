@@ -18,7 +18,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.telegram"
-	Version = "1.1.2"
+	Version = "1.1.3"
 )
 
 // The errors of Parse, wrapped with %w (the plan's "Notes and warnings").

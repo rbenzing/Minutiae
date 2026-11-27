@@ -43,12 +43,15 @@ coordinator rules):
   - a list read whole states <key>_total (0 included) and <key>_truncated when cut; an empty list and an empty entry
     are absent. A stop at or inside a list or a tail object (its own read included) is <key>_state "partial".
   - a document's attribute scalars (P5) and its labels are stated only when the attributes vector was read whole;
-    file_names lists the distinct names in wire order (file_names_total counts them).
+    file_names lists the distinct names in wire order (file_names_total counts them). file_name_state is "empty" only
+    for a stored name of zero bytes; a non-empty stored name the cleaning reduces to nothing is "unprintable" with
+    file_name_len (T5a). The audio attribute's voice flag is audio_voice and the video attribute's round_message flag
+    is video_round_message, beside the wrapper's own voice and round (T5c).
   - raw.media.caption is captionLegacy when the wrapper read it, else a legacy Photo or Video caption.
   - raw.replies_data (the replies shape) is stated when the cell decoded whole.
   - the text-flag names: media.<key>, <list>.type of a size entry, post_author, summary_from_language,
     restriction_reason.<key>, factcheck.<key>, entities.<key>, reactions.emoticon.
-Every value here is fictional (example.test, 1555 numbers, invented names).
+Every value here is fictional (fixture.invalid, 1555 numbers, invented names).
 """
 import base64
 import hashlib
@@ -1070,10 +1073,7 @@ def file_name(b, m, raw, doc, key):
                   if b.obj_cls("%s[%d]" % (p, i)) == "TL_documentAttributeFilename"]
     else:
         return None
-    distinct = []
-    for v in values:
-        if v not in distinct:
-            distinct.append(v)
+    distinct = list(dict.fromkeys(bytes(v) for v in values))  # first occurrence, wire order (T5b)
     if not distinct:
         m[key + "_state"] = "absent"
         return None
@@ -1084,7 +1084,10 @@ def file_name(b, m, raw, doc, key):
         return None
     t = cleaned(raw, "media." + key, distinct[0], MAX_NAME)
     if not t:
-        m[key + "_state"] = "empty"
+        # T5a: "empty" only for zero stored bytes; a stored name the cleaning reduces to nothing is unprintable
+        m[key + "_state"] = "empty" if not distinct[0] else "unprintable"
+        if distinct[0]:
+            m[key + "_len"] = len(distinct[0])
         return None
     m[key] = t
     return t
@@ -1104,7 +1107,9 @@ def attribute_scalars(b, m, raw, path):
         flags = {"video": ("round_message", "supports_streaming", "nosound"), "audio": ("voice",), "sticker": ("mask",)}
         for f in flags.get(lab, ()):
             if b.flag(a + "." + f):
-                bools.add(f)
+                # T5c: the audio attribute's voice and the video attribute's round_message keep their own keys,
+                # beside the wrapper's voice and round
+                bools.add({"voice": "audio_voice", "round_message": "video_round_message"}.get(f, f))
         fields = {"image_size": ("w", "h"), "video": ("duration", "w", "h", "preload_prefix_size", "video_start_ts", "video_codec"),
                   "audio": ("duration", "title", "performer", "waveform")}
         for f in fields.get(lab, ()):
@@ -2079,7 +2084,7 @@ def core_messages():
     R[27] = row(27, 123, ANN, enc(tlmsg(123, 27, "", frm=pu(ANN), media={
         "_": "TL_messageMediaVenue", "geo": geo(52.52), "title": "Office", "address": "1 Main St", "provider": "", "venue_id": "", "venue_type": ""})))
     R[28] = row(28, 124, ANN, enc(tlmsg(124, 28, "", frm=pu(ANN), media={"_": "TL_messageMediaWebPage", "webpage": {
-        "_": "TL_webPage", "id": 9003, "url": "https://example.test/a", "display_url": "example.test/a", "hash": 0}})))
+        "_": "TL_webPage", "id": 9003, "url": "fixture.invalid/a", "display_url": "fixture.invalid/a", "hash": 0}})))
     R[29] = row(29, 125, ANN, enc(tlmsg(125, 29, "", frm=pu(ANN), media={"_": "TL_messageMediaDice", "value": 3, "emoticon": "\U0001F3B2"})))  # Dice is full since 4I4b: a well-formed body
     R[30] = row(30, 126, ANN, enc(tlmsg(126, 30, "Reply", frm=pu(ANN), reply_to={"_": "TL_messageReplyHeader", "reply_to_msg_id": 101})),
                 replydata=R[1]["data"], reply_to_message_id=101)

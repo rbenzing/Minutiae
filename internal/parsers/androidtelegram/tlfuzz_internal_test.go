@@ -17,14 +17,14 @@ type countBudget struct{ held int64 }
 func (b *countBudget) Alloc(n int64) error { b.held += n; return nil }
 func (b *countBudget) Free(n int64)        { b.held -= n }
 
-var fuzzTypes = []string{typeMessage, typeUser, typeChat}
+var fuzzTypes = []string{typeMessage, typeUser, typeChat, typeReplies}
 
 // seedsPerType caps the seeds of one fuzzed type per fixture file, so every type gets its own (Task 7 review M2).
 const seedsPerType = 10
 
-// FuzzTLDecode (plan 4I4-P13, T3): the walker over the Telegram table and arbitrary bytes never panics, ends
+// FuzzTLDecode (plan 4I4-P13, T3; plan 4I4b Task 7 adds MessageReplies, the object replies_data decodes as): the walker over the Telegram table and arbitrary bytes never panics, ends
 // inside the input and never lets a KSecret field hold bytes. Seeds are the TL objects found in the images of
-// telegram-v181 and telegram-hostile (each constructor ID of the three types found there, with the bytes after it),
+// telegram-v181 and telegram-hostile (each constructor ID of the four types found there, with the bytes after it),
 // taken in ascending ID order with at most seedsPerType per type and file: the same seeds on every run (Task 7
 // review M2, carried into Task 8 as C6).
 func FuzzTLDecode(f *testing.F) {

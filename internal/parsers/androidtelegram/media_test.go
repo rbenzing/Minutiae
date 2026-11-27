@@ -134,7 +134,7 @@ func TestTelegramMediaSummaries(t *testing.T) {
 			"user_id": 1000002,
 		},
 		27: {"type": "venue", "constructor": "0x2ec0533f", "lat": 52.52, "long": 13.405, "title": "Office", "address": "1 Main St"},
-		28: {"type": "web_page", "constructor": "0xddf10c3b", "url": "https://example.test/a", "display_url": "example.test/a"},
+		28: {"type": "web_page", "constructor": "0xddf10c3b", "url": "fixture.invalid/a", "display_url": "fixture.invalid/a"},
 		29: {"type": "dice", "constructor": "0x08cbec07", "emoticon": "🎲", "value": 3}, // plan 4I4b Task 5: the dice summary
 	}
 	for id, m := range want {
@@ -355,14 +355,18 @@ func mediaSummaries4I4b(t *testing.T) {
 
 	// R70 to R72, R68, R69: the attribute scalars (P5), the sticker set and the dice outcome
 	wantKeys(t, "R70", media(70), map[string]any{
-		"attributes": []string{"audio"}, "attributes_total": 1, "voice": true, "duration": 12, "duration_unit": "unestablished",
+		"attributes": []string{"audio"}, "attributes_total": 1, "voice": true, "audio_voice": true, "duration": 12, "duration_unit": "unestablished",
 		"title": "Memo", "performer": "Ann", "waveform_len": 63, "waveform_sha256": sha256Hex(string(pad("SYNTHETIC-WAVE-", 1, 63))),
 		"file_name_state": "absent",
 	})
 	wantKeys(t, "R71", media(71), map[string]any{
-		"round": true, "round_message": true, "supports_streaming": true, "duration": 7.5, "duration_unit": "unestablished",
+		"round": true, "video_round_message": true, "supports_streaming": true, "duration": 7.5, "duration_unit": "unestablished",
 		"video_codec": "h264", "video_start_ts": 0.5, "w": 240, "h": 240,
 	})
+	// T5c: the video attribute's own flag is video_round_message; the wrapper's round stays, no merged round_message
+	if _, merged := media(71)["round_message"]; merged {
+		t.Errorf("R71: round_message stated; the video attribute's flag is video_round_message (T5c)")
+	}
 	if vt := listOf(t, rawOf(v181["messages_v2/71"]), "media_video_thumbs"); len(vt) != 1 || vt[0]["kind"] != "video" {
 		t.Errorf("R71: media_video_thumbs %s, want one video entry", jsonText(vt))
 	}

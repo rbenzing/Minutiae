@@ -3,6 +3,7 @@ package androidtelegram_test
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -81,6 +82,50 @@ func keyPatterns(t *testing.T) map[string]keyPattern {
 	return out
 }
 
+// secretI64Base is the base of secret_i64(n) in tools/fixtures/telegram_android.py (plan 4I4b, Fixture scenario),
+// restated from the plan, never read from the generator.
+const secretI64Base = 0x7E575EC2E7A10000
+
+// keyInt64s are the int64 credentials of the fixtures (R7, D12): secret_i64(n) = secretI64Base + n for every n the
+// generator names (a secret_i64(<literal>) and the id of every document(<id>, ...), whose access_hash is secret_i64(id);
+// required: some variant must hold it) and every n a layers row can take (the rowid-numbered access_hash and secret of
+// a nested object; searched, not required). The label is "i64:<n>".
+func keyInt64s(t *testing.T) (required, searched map[string]uint64) {
+	t.Helper()
+	src, err := os.ReadFile(generatorSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required, searched = map[string]uint64{}, map[string]uint64{}
+	for _, re := range []*regexp.Regexp{regexp.MustCompile(`secret_i64\((\d+)\)`), regexp.MustCompile(`[^_a-z]document\((\d+),`)} {
+		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+			n, err := strconv.ParseUint(m[1], 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			required["i64:"+m[1]] = secretI64Base + n
+		}
+	}
+	for n := uint64(1); n <= 4000; n++ {
+		if _, ok := required["i64:"+strconv.FormatUint(n, 10)]; !ok {
+			searched["i64:"+strconv.FormatUint(n, 10)] = secretI64Base + n
+		}
+	}
+	if len(required) < 10 {
+		t.Fatalf("the generator names only %d secret_i64 numbers: the patterns are not derived from it", len(required))
+	}
+	return required, searched
+}
+
+// int64Forms are the forms an int64 credential could take in an output: its decimal, its 16-digit hex in both cases
+// with and without 0x, and the encoded forms of its 8 little-endian bytes.
+func int64Forms(v uint64) []string {
+	h := strconv.FormatUint(v, 16)
+	le := binary.LittleEndian.AppendUint64(nil, v)
+	out := []string{strconv.FormatUint(v, 10), h, strings.ToUpper(h), "0x" + h, "0x" + strings.ToUpper(h)}
+	return append(out, encodedForms(le)...)
+}
+
 // fprint is the fixtures' enc_chats.fprint (a key fingerprint).
 const fprint = 0x0123456789ABCDEF
 
@@ -103,8 +148,13 @@ func encodedForms(p []byte) []string {
 
 // needles are every form of every pattern and of each of its 8-byte windows from its first key-bearing one, by a
 // label naming the pattern; fprint in decimal and hex.
-func needles(ps map[string]keyPattern) map[string][]string {
+func needles(ps map[string]keyPattern, ints ...map[string]uint64) map[string][]string {
 	out := map[string][]string{}
+	for _, m := range ints {
+		for name, v := range m {
+			out[name] = int64Forms(v)
+		}
+	}
 	for name, p := range ps {
 		out[name] = append(out[name], encodedForms(p.b)...)
 		for i := p.first; i+8 <= len(p.b); i++ {
@@ -211,10 +261,11 @@ func outputTexts(t *testing.T, res parsertest.Result) []string {
 // documents), telegram-hostile (enc_chats rows and secret documents whose key and IV bytes lie in the cell (the decode stops at media.document.thumbs, T5)), telegram-layers
 // (one row per constructor: a secret-kind field filled with the 4i4-layers chain) and telegram-deleted (live enc_chats
 // rows and a deleted secret message with a secret document in its WAL, plan 4I4 Task 14 C1) and telegram-v64 (plan
-// 4I4b P7, P8: the file references of a layer-115 photo, its layer-97 location and a layer-113 document). Every other
+// 4I4b P7, P8: the file references of a layer-115 photo, its layer-97 location and a layer-113 document) and telegram-v84
+// (plan 4I4b V5 to V8: the access_hash int64 credentials of the legacy photo, video, audio and document). Every other
 // variant holds none by design, and the test fails when a variant's files say otherwise either way.
 func keyBearing() []string {
-	return []string{"telegram-v181", "telegram-hostile", "telegram-layers", "telegram-deleted", "telegram-v64"}
+	return []string{"telegram-v181", "telegram-hostile", "telegram-layers", "telegram-deleted", "telegram-v64", "telegram-v84"}
 }
 
 // Spec 9 (call 6), ruling T1: no key material reaches any output of android.telegram. The live pass over every
@@ -228,9 +279,16 @@ func keyBearing() []string {
 // vacuous.
 func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
 	ps := keyPatterns(t)
-	f := newFinder(needles(ps))
+	required, searched := keyInt64s(t)
+	f := newFinder(needles(ps, required, searched))
 	if name, _, ok := f.find("x" + hex.EncodeToString(ps["chain:4i4-khash"].b[3:11]) + "y"); !ok || name != "chain:4i4-khash" {
 		t.Fatal("the finder misses a hex window")
+	}
+	// the int64 forms are each found: decimal, hex of either case with and without 0x, and the encoded little-endian bytes
+	for _, form := range int64Forms(required["i64:9101"]) {
+		if name, _, ok := f.find("x" + form + "y"); !ok || !strings.HasPrefix(name, "i64:") {
+			t.Fatalf("the finder misses the int64 form %q (found %q)", form, name)
+		}
 	}
 	seen := map[string]bool{}
 	for _, v := range variants {
@@ -251,6 +309,11 @@ func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
 	for name := range ps {
 		if !seen[name] {
 			t.Errorf("no variant holds the pattern %s", name)
+		}
+	}
+	for name := range required {
+		if !seen[name] {
+			t.Errorf("no variant holds the int64 credential %s", name)
 		}
 	}
 	for _, v := range variants {
