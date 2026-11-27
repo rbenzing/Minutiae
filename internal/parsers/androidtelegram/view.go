@@ -11,8 +11,9 @@ import (
 // is gated off, lies after the stop, or is not in the constructor; the caller tells these apart through the stop and
 // the flags (spec 8.4), never by reading an absence as a value.
 type view struct {
-	r  tl.Result
-	at map[string]int
+	r   tl.Result
+	at  map[string]int
+	tab tl.Table // the constructor table the result was decoded with (nil: class names are not asked)
 }
 
 // newView indexes the fields of r by path (the first field of each path).
@@ -125,3 +126,7 @@ func (v view) inside(path string) bool {
 // Whole says the value at path was read and the stop lies neither at nor inside it (P3: read whole; a list or an object
 // a stop cut is not what the wire holds).
 func (v view) Whole(path string) bool { return v.Has(path) && !v.inside(path) }
+
+// Class is the table class name of the object read at path ("" when no object was read there, or the view has no
+// table).
+func (v view) Class(path string) string { return className(v, v.tab, path) }

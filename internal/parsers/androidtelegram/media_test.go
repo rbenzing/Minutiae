@@ -537,4 +537,21 @@ func TestTelegramDeepestRawShapeValidates(t *testing.T) {
 	if n == 0 {
 		t.Fatal("no message record")
 	}
+	// plan 4I4b Task 6: the tail objects sit in the deepest shapes (R62 reactions, R63 replies with a replier list, R65 a
+	// fact check, a suggested post and a restriction reason) and pass the schema.
+	v181 := byRow(parseFixture(t, "telegram-v181").Records)
+	for _, id := range []string{"62", "63", "65"} {
+		r, ok := v181["messages_v2/"+id]
+		if !ok {
+			t.Fatalf("R%s: no record", id)
+		}
+		if err := message.Validate(r.Payload); err != nil {
+			t.Errorf("R%s: %v", id, err)
+		}
+	}
+	for id, key := range map[string]string{"62": "reactions_recent", "63": "replies", "65": "factcheck"} {
+		if rawOf(v181["messages_v2/"+id])[key] == nil {
+			t.Errorf("R%s: raw.%s is not stated, so the shape is not exercised", id, key)
+		}
+	}
 }

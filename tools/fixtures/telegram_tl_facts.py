@@ -1306,6 +1306,7 @@ GO_TYPE_CONST = {
     "Message": "typeMessage", "Peer": "typePeer", "MessageFwdHeader": "typeFwd", "MessageReplyHeader": "typeReply",
     "MessageEntity": "typeEntity", "MessageAction": "typeAction", "PhoneCallDiscardReason": "typeReason",
     "MessageMedia": "typeMedia", "User": "typeUser", "Chat": "typeChat",
+    "MessageReplies": "typeReplies",
 }
 GO_BODY = {"full": "tl.BodyFull", "prefix": "tl.BodyPrefix", "opaque": "tl.BodyOpaque"}
 GO_SCALAR = {"i32": "KInt32", "i64": "KInt64", "dbl": "KDouble", "bool": "KBool", "bytes": "KBytes", "str": "KString",

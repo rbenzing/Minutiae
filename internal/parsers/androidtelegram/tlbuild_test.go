@@ -59,7 +59,7 @@ func peerUser(id int64) []byte { return append(le32(idPeerUser), le64(id)...) }
 // fromPeer and peerObj, when set, are the encoded from_id and peer_id objects in place of a TL_peerUser of from and
 // peer. editSet writes F.15 and editDate even when editDate is 0 (plan 4I4b Task 3).
 type tlMessage struct {
-	flags             uint32
+	flags, flags2     uint32
 	id                int32
 	from, peer        int64
 	date, editDate    int32
@@ -89,7 +89,7 @@ func (m tlMessage) bytes() []byte {
 		flags |= bitMedia
 	}
 	b := append(le32(idTLMessage), le32(flags)...)
-	b = append(b, le32(0)...)
+	b = append(b, le32(m.flags2)...)
 	b = append(b, le32(uint32(m.id))...)
 	switch {
 	case m.fromPeer != nil:
@@ -132,6 +132,7 @@ type msgCells struct {
 	midCell, uidCell           any  // when set, the stored mid or uid cell (a REAL, a NaN, a TEXT)
 	read, send, date, out, ttl any
 	data, replydata            any
+	repliesData                []byte // the replies_data cell (NULL when nil)
 }
 
 // key is the stored mid and uid (NULL when asked).
@@ -158,7 +159,7 @@ func (c msgCells) v2Values() []any {
 	return []any{
 		mid, uid, orDefault(c.read, int64(3)), orDefault(c.send, int64(0)), orDefault(c.date, int64(baseDate)),
 		c.data, orDefault(c.out, int64(0)), orDefault(c.ttl, int64(0)), int64(-1), c.replydata, int64(0), int64(0), int64(0),
-		nil, int64(0), int64(0), int64(0), nil, nil, int64(0),
+		c.repliesCell(), int64(0), int64(0), int64(0), nil, nil, int64(0),
 	}
 }
 
@@ -239,4 +240,12 @@ func jsonText(v any) string {
 		return err.Error()
 	}
 	return string(bs)
+}
+
+// repliesCell is the stored replies_data cell: NULL for none.
+func (c msgCells) repliesCell() any {
+	if c.repliesData == nil {
+		return nil
+	}
+	return c.repliesData
 }

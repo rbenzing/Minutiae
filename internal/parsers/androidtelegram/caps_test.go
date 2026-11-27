@@ -121,6 +121,7 @@ func TestTelegramCapsAreCountedNeverSilent(t *testing.T) {
 		t.Errorf("%d warnings, summary %q, %d contacts; want 1000, the 1500/500 summary and every record", one, summary, len(contactsOf(big)))
 	}
 	mediaCaps4I4b(t)
+	tailCaps4I4b(t)
 }
 
 // imsOf is a contact's ims entries.

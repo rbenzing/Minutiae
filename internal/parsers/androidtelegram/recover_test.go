@@ -238,8 +238,7 @@ func TestClaimedTablesMapRecoveredRows(t *testing.T) {
 			b := parsertest.LoadFixture(t, "testdata", v).Bundle(h, remoteApp)
 			want := parsertest.RecoverExpect{Variant: v, Claimed: androidtelegram.ClaimableTables()}
 			if v == "telegram-deleted" {
-				// plan 4I4b Task 4: through pendingRecover until Tasks 5 and 6 map what the oracle restates
-				want = pendingRecover(t, parsertest.LoadRecoverExpect(t, "testdata", v))
+				want = parsertest.LoadRecoverExpect(t, "testdata", v)
 				if len(want.Records) == 0 {
 					t.Fatal("the telegram-deleted recover oracle lists no record: the check proves nothing")
 				}

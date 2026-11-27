@@ -122,7 +122,14 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 		"flags": {"blob_flags"}, "flags2": {"blob_flags2"}, "id": {"id", "id_conflict"}, "via_bot_id": {"via_bot_id"},
 		"reply_to": {"reply_to_msg_id"}, "date": {"date", "date_conflict"}, "views": {"views"},
 		"edit_date": {"edit_date", "edit_date_unit"}, "grouped_id": {"grouped_id"}, "ttl_period": {"ttl_period"},
+		"forwards": {"blob_forwards", "forwards_conflict"}, "post_author": {"post_author"}, "replies": {"replies", "replies_state"},
+		"reactions":          {"reactions", "reactions_results", "reactions_recent", "reactions_top_reactors", "reactions_state"},
+		"restriction_reason": {"restriction_reason", "restriction_reason_total"}, "quick_reply_shortcut_id": {"quick_reply_shortcut_id"},
+		"effect": {"effect"}, "factcheck": {"factcheck", "factcheck_state"}, "report_delivery_until_date": {"report_delivery_until_date"},
+		"paid_message_stars": {"paid_message_stars"}, "suggested_post": {"suggested_post", "suggested_post_state"},
+		"schedule_repeat_period": {"schedule_repeat_period"}, "summary_from_language": {"summary_from_language"}, "entities": {"entities", "entities_total"},
 	}
+	noFieldAfterStopTail4I4b(t)
 	mapped := androidtelegram.MappedFields()
 	res := parseFixture(t, "telegram-hostile")
 	n := 0
@@ -417,11 +424,20 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 		t.Errorf("telegram-v181: constructors_seen %q, the oracle %q", v181.Notes["constructors_seen"], exp.Notes["constructors_seen"])
 	}
 	// plan 4I4b: R29's Dice is full and well-formed, so it decodes (49 decoded and 7 partial before); R60-R80 add 20
-	// decoded rows and R79 (partial). The oracle also counts replies_data (P6), which Task 6 maps: pendingOracle takes
-	// that segment out until then.
-	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:70,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" ||
-		got != pendingOracle(exp).Notes["blob_states"] {
+	// decoded rows and R79 (partial). replies_data is a counted column too (P6, D13): R63 and R64 decode, R55 stops at an unknown constructor.
+	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:70,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;messages_v2.replies_data=decoded:2,unknown-constructor:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" ||
+		got != exp.Notes["blob_states"] {
 		t.Errorf("telegram-v181: blob_states %q (the oracle: %q)", got, exp.Notes["blob_states"])
+	}
+	// P6: replies_data is counted like data: R55 stops at an unknown constructor, one counted warning for the column
+	var rd []string
+	for _, w := range v181.Warnings {
+		if strings.Contains(w.Reason, "telegram-blob-undecoded: messages_v2.replies_data") {
+			rd = append(rd, w.Reason)
+		}
+	}
+	if len(rd) != 1 || rd[0] != "telegram-blob-undecoded: messages_v2.replies_data: 1 records (unknown-constructor:1)" {
+		t.Errorf("telegram-v181: replies_data warnings %q, want one counting the unknown constructor", rd)
 	}
 }
 

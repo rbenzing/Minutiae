@@ -1,7 +1,6 @@
 package androidtelegram
 
 import (
-	"encoding/binary"
 	"slices"
 	"strconv"
 	"strings"
@@ -418,27 +417,23 @@ func kindOf(v view, c tl.Constructor, top bool, state string) string {
 	return message.KindUnknown
 }
 
-// readSideBlobs states custom_params and replies_data (spec 8.5, F19): never decoded, their length and SHA-256,
-// and replies_data's constructor (at least 4 bytes); a cell of another class or an unreadable one is listed in
-// unknown_columns, a NULL states nothing.
+// readSideBlobs states custom_params (spec 8.5, F19): never decoded, its length and SHA-256; a cell of another class or
+// an unreadable one is listed in unknown_columns, a NULL states nothing. replies_data is decoded beside the blob
+// (readRepliesData).
 func (r *msgRow) readSideBlobs(row parse.Row, c rowrun.Cols) {
-	for _, name := range []string{"custom_params", "replies_data"} {
-		col := c.At(name)
-		if col < 0 {
-			continue
-		}
-		b, k := blobCell(row, col)
-		switch k {
-		case rowrun.CellValue:
-			r.raw[name+"_len"], r.raw[name+"_sha256"] = int64(len(b)), sha256Hex(b)
-			if name == "replies_data" && len(b) >= 4 {
-				r.raw[name+"_constructor"] = hexID(binary.LittleEndian.Uint32(b))
-			}
-		case rowrun.CellOther:
-			r.unknown[r.unknownName(name)] = unknownTypeMismatch
-		case rowrun.CellUnknown:
-			r.unknown[r.unknownName(name)] = rowrun.StateOf(row, col).String()
-		}
+	const name = "custom_params"
+	col := c.At(name)
+	if col < 0 {
+		return
+	}
+	b, k := blobCell(row, col)
+	switch k {
+	case rowrun.CellValue:
+		r.raw[name+"_len"], r.raw[name+"_sha256"] = int64(len(b)), sha256Hex(b)
+	case rowrun.CellOther:
+		r.unknown[r.unknownName(name)] = unknownTypeMismatch
+	case rowrun.CellUnknown:
+		r.unknown[r.unknownName(name)] = rowrun.StateOf(row, col).String()
 	}
 }
 
@@ -533,6 +528,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 		times = editTime(raw, v)
 		peerRaw(v, raw)
 		fwdRaw(v, raw)
+		tailRaw(v, raw)
 		atts = mediaSummary(v, tab, top, raw)
 		readTrailer(b, v, top, raw)
 	}
@@ -561,6 +557,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	msg.Participants, msg.ParticipantsUnknown = participantsOf(v, hasTop, state, dir, d, raw)
 
 	r.readSideBlobs(row, c)
+	r.readRepliesData(row, c, tab, bud)
 	r.readReplyData(row, c, tab, bud)
 	if e == nil && putReinserts {
 		// the typed pass (ruling T2): the recovered row's own key against the live rows of its own table, never a join

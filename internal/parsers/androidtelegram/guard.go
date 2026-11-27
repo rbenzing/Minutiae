@@ -177,7 +177,7 @@ const (
 // blob_states and the warnings list them.
 func countedTables() []string { return []string{tableMessages, tableMessagesV2, tableUsers} }
 
-func blobColumns() []string { return []string{colData, colReplyData} }
+func blobColumns() []string { return []string{colData, colReplyData, colRepliesData} }
 
 // countingEmitter counts what a mapping cannot warn about (4I4-P9, B9; restated from androidcalendar/guard.go, F29):
 // a mapper cannot warn and still emit its record, so the blob states per <table>.<col>, the top constructors of the

@@ -38,13 +38,16 @@ func undecodedState(s string) bool {
 
 // mappedFields are the top-level fields of a Message the record reads (spec 8.4: raw.<col>_undecided lists those
 // that lie after a stop). They are the Task 5 oracle's MESSAGE_MAPPED (plan ruling T5 c1: the oracle's choice on
-// this detail stands unless amended): out and id are read (direction, raw.id); entities, the blob's forwards and
-// post_author are not read by any record field. A function, not the plan's package variable: a parser holds no
+// this detail stands unless amended): out and id are read (direction, raw.id); plan 4I4b adds the fourteen tail
+// fields after ttl_period (tailRaw), which no record field reads. A function, not the plan's package variable: a parser holds no
 // mutable package state (P5, as encChatsColumns).
 func mappedFields() []string {
 	return []string{
 		"out", "id", "from_id", "peer_id", "fwd_from", "via_bot_id", "reply_to", "date", "message", "media", "action",
 		"views", "edit_date", "grouped_id", "ttl_period",
+		"forwards", "post_author", "replies", "reactions", "restriction_reason", "quick_reply_shortcut_id", "effect", "factcheck",
+		"report_delivery_until_date", "paid_message_stars", "suggested_post", "schedule_repeat_period", "summary_from_language",
+		"entities",
 	}
 }
 
@@ -90,6 +93,7 @@ func hexID(id uint32) string { return fmt.Sprintf("0x%08x", id) }
 func decodeBlob(raw map[string]any, col string, b []byte, typ string, tab tl.Table, bud tl.Budget) (view, string) {
 	r := tl.Decode(b, typ, tab, bud)
 	v := newView(r)
+	v.tab = tab
 	state := stateOf(r.Stop)
 	raw[col+"_state"] = state
 	raw[col+"_len"] = int64(len(b))
