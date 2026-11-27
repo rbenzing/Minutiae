@@ -1386,12 +1386,13 @@ func tgStr(b, s []byte) []byte {
 }
 
 // tgMessage is one TL_message blob: flags (from_id when from != 0, entities, out, and by the message id the media mix
-// of plan 4I4b Q17: id%10 < 3 a photo, id%10 == 3 a document, id%10 == 4 reactions), flags2 0, id, [from_id], peer_id,
-// date, the text, [media], one bold entity over its first four bytes, [reactions], then the app-local trailer (spec
-// 8.8): one string, the attach path. A dialog uid below 0 is a basic group (TL_peerChat of -uid), else a user dialog
+// of plan 4I4b Q17: id%10 < 3 a photo, id%10 == 3 a document, id%10 == 4 reactions; plan 4I4c Q16 adds id%20 == 5 a
+// reply markup and id%100 == 6 a poll), flags2 0, id, [from_id], peer_id, date, the text, [media], [reply markup], one
+// bold entity over its first four bytes, [reactions], then the app-local trailer (spec 8.8): one string, the attach
+// path. A dialog uid below 0 is a basic group (TL_peerChat of -uid), else a user dialog
 // (TL_peerUser).
 func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []byte {
-	const bitOut, bitEntities, bitFromID, bitMedia, bitReactions = 1 << 1, 1 << 7, 1 << 8, 1 << 9, 1 << 20
+	const bitOut, bitMarkup, bitEntities, bitFromID, bitMedia, bitReactions = 1 << 1, 1 << 6, 1 << 7, 1 << 8, 1 << 9, 1 << 20
 	flags := uint32(bitEntities)
 	mix := id % 10
 	switch {
@@ -1399,6 +1400,13 @@ func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []b
 		flags |= bitMedia
 	case mix == 4:
 		flags |= bitReactions
+	}
+	poll, markup := id%100 == 6, id%20 == 5
+	if poll {
+		flags |= bitMedia
+	}
+	if markup {
+		flags |= bitMarkup
 	}
 	if out {
 		flags |= bitOut
@@ -1423,6 +1431,12 @@ func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []b
 		b = tgPhotoMedia(b, int64(id), date)
 	case mix == 3:
 		b = tgDocumentMedia(b, int64(id), date)
+	}
+	if poll {
+		b = tgPollMedia(b, int64(id))
+	}
+	if markup {
+		b = tgInlineMarkup(b)
 	}
 	b = tgLE32(tgLE32(b, 0x1cb5c415), 1)
 	b = tgLE32(tgLE32(tgLE32(b, 0xbd610bc9), 0), 4)
@@ -1468,6 +1482,39 @@ func tgDocumentMedia(b []byte, id int64, date int32) []byte {
 	b = tgStr(tgLE32(b, 0x15590068), fmt.Appendf(nil, "doc%d.pdf", id))
 	b = tgLE32(tgLE32(tgLE32(b, 0x6c37c15c), 800), 600)
 	return tgLE32(b, 0x11b58939)
+}
+
+// tgTextWithEntities appends a TL_textWithEntities (0x751f3146) of s with an empty entity vector.
+func tgTextWithEntities(b, s []byte) []byte {
+	return tgLE32(tgLE32(tgStr(tgLE32(b, 0x751f3146), s), 0x1cb5c415), 0)
+}
+
+// tgInlineMarkup appends a TL_replyInlineMarkup (0xb2b15770, flags 0) of one 0x19420af6 row of four buttons: two
+// TL_keyboardButtonUrl_layer228 (0xd80c25ec, flags 0, text, url) and two TL_keyboardButtonCallback_layer228
+// (0xe62bc960, flags 0, text, 8 bytes of data).
+func tgInlineMarkup(b []byte) []byte {
+	b = tgLE32(tgLE32(tgLE32(tgLE32(tgLE32(b, 0xb2b15770), 0), 0x1cb5c415), 1), 0x19420af6)
+	b = tgLE32(tgLE32(b, 0x1cb5c415), 4)
+	for i := range 2 {
+		b = tgStr(tgStr(tgLE32(tgLE32(b, 0xd80c25ec), 0), fmt.Appendf(nil, "Link %d", i)), fmt.Appendf(nil, "fixture.invalid/l%d", i))
+	}
+	for i := range 2 {
+		b = tgStr(tgStr(tgLE32(tgLE32(b, 0xe62bc960), 0), fmt.Appendf(nil, "Go %d", i)), []byte{1, 2, 3, 4, 5, 6, 7, byte(i)})
+	}
+	return b
+}
+
+// tgPollMedia appends a TL_messageMediaPoll (0x773f4e66, flags 0) of a TL_poll (0x966e2dbf: id, flags 0, a question,
+// four TL_pollAnswer (0x4b7d786a, flags 0, text, a 1-byte option), hash) and a TL_pollResults (0xba7bb15e, flags 0).
+func tgPollMedia(b []byte, id int64) []byte {
+	b = tgLE64(tgLE32(tgLE32(tgLE32(b, 0x773f4e66), 0), 0x966e2dbf), id)
+	b = tgTextWithEntities(tgLE32(b, 0), []byte("Which one?"))
+	b = tgLE32(tgLE32(b, 0x1cb5c415), 4)
+	for i := range 4 {
+		b = tgTextWithEntities(tgLE32(tgLE32(b, 0x4b7d786a), 0), fmt.Appendf(nil, "Answer %d", i))
+		b = tgStr(b, []byte{byte(i)})
+	}
+	return tgLE32(tgLE32(tgLE64(b, id*3), 0xba7bb15e), 0)
 }
 
 // tgUser is a TL_user blob with a first name and a phone; tgChat a TL_chat blob with a title.
@@ -1578,6 +1625,7 @@ type stateCheckWriter struct {
 	countWriter
 	undecided, budget int64
 	notDecoded        int64 // message records whose raw.data_state is not "decoded"
+	markups, polls    int64 // message records that state raw.reply_markup, raw.poll (plan 4I4c Q16)
 	named             int64 // attachments with a name
 	types             map[string]int64
 }
@@ -1593,6 +1641,12 @@ func (w *stateCheckWriter) Add(ctx context.Context, r records.Record) error {
 		}
 		if r.Type == "message" && raw["data_state"] != "decoded" {
 			w.notDecoded++
+		}
+		if _, has := raw["reply_markup"]; has && r.Type == "message" {
+			w.markups++
+		}
+		if _, has := raw["poll"]; has && r.Type == "message" {
+			w.polls++
 		}
 		for k, v := range raw {
 			if strings.HasSuffix(k, "_state") && v == "budget" {
@@ -1676,7 +1730,7 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 	fillResult(&res, sum, wall, rss, ok)
 	res.Streamed = streamedOf(t, c)
 	writeResult(t, e, res)
-	t.Logf("telegram-decode: records by type %v, undecided joins %d, budget states %d, not decoded %d, named attachments %d", w.types, w.undecided, w.budget, w.notDecoded, w.named)
+	t.Logf("telegram-decode: records by type %v, undecided joins %d, budget states %d, not decoded %d, named attachments %d, reply markups %d, polls %d", w.types, w.undecided, w.budget, w.notDecoded, w.named, w.markups, w.polls)
 	if len(sum.Jobs) != 1 {
 		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
 	}
@@ -1697,6 +1751,12 @@ func telegramDecodeRun(t *testing.T, e scaleEnv) {
 	}
 	if want := (g.Rows["messages_v2"] + 7) / 10; w.named != want { // the document of every id with id%10 == 3 names its file
 		t.Errorf("%d attachments with a name, want %d (one per document message)", w.named, want)
+	}
+	if want := (g.Rows["messages_v2"] + 15) / 20; w.markups != want { // every id with id%20 == 5 carries a reply markup
+		t.Errorf("%d records state raw.reply_markup, want %d (plan 4I4c Q16)", w.markups, want)
+	}
+	if want := (g.Rows["messages_v2"] + 94) / 100; w.polls != want { // every id with id%100 == 6 carries a poll
+		t.Errorf("%d records state raw.poll, want %d (plan 4I4c Q16)", w.polls, want)
 	}
 	checkRSS(t, res) // the file plus the peak resident set within 2 GiB; skips where the platform cannot read it
 }
