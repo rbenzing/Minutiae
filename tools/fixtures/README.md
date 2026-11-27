@@ -3460,8 +3460,11 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   `tgnet/NativeByteBuffer.java`, `tgnet/Vector.java`, `tgnet/TLObject.java`, `ui/Stories/MessageMediaStoryFull.java`,
   `ui/Stories/MessageMediaStoryFull_old.java`, `messenger/MessagesStorage.java`, `messenger/DatabaseMigrationHelper.java`,
   `messenger/MessagesController.java`, `messenger/MessageObject.java`, `messenger/DialogObject.java`,
-  `messenger/SecretChatHelper.java` and, at A-HEAD, `messenger/LocaleController.java` (their SHA-256 are in
-  `CROSSCHECK.md`; no other `tgnet/tl/*.java` defines a class of the pinned types). The script
+  `messenger/SecretChatHelper.java`, `messenger/LocaleController.java`, `ui/Cells/ChatMessageCell.java` (the
+  `edit_date` route, plan 4I4b ruling B3), every `tgnet/tl/*.java` and `tgnet/tl/legacy/*.java` of the pin (listed with
+  the repository's contents API, directory listings only) and, at A-HEAD, `tgnet/VectorLegacy.java` (their SHA-256 are
+  in `CROSSCHECK.md`; plan 4I4 fetched LocaleController at A-HEAD only and no other `tgnet/tl` file). The table holds
+  535 rows (plan 4I4b Task 1). The script
   `tools/fixtures/telegram_tl_facts.py` reads the sources as untrusted text with regular expressions (it never runs,
   imports or opens a path from them) and has these modes (`<scratch>` is `.claude/scratch/<plan>-<task>-<role>/`):
 
@@ -3470,9 +3473,12 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   py -3 -I tools/fixtures/telegram_tl_facts.py --emit <src>/<pin> --pin <pin> \
       --absent-from tools/fixtures/schemas/telegram-android/constructors.tsv > <scratch>/absent-<pin>.tsv
   py -3 -I tools/fixtures/telegram_tl_facts.py --check tools/fixtures/schemas/telegram-android/constructors.tsv \
-      --pin <pin> <src>/<pin> --commit <commit> --write-report <scratch>/<pin>.md
+      --pin A-HEAD <src>/A-HEAD --commit <commit> --write-report <scratch>/A-HEAD.md
+  py -3 -I tools/fixtures/telegram_tl_facts.py --check tools/fixtures/schemas/telegram-android/constructors.tsv \
+      --pin <older pin> <src>/<older pin> --head <src>/A-HEAD --commit <commit> --write-report <scratch>/<pin>.md
   py -3 -I tools/fixtures/telegram_tl_facts.py --assemble tools/fixtures/schemas/telegram-android \
       <scratch>/A-HEAD.md <scratch>/A-11.4.2.md <scratch>/release-8.1.1_2431.md <scratch>/release-5.14.0_1851.md       --ddl <scratch>/master.md <scratch>/release-11.4.2-5469.md <scratch>/release-8.1.1_2431-ddl.md       <scratch>/release-5.14.0_1851-ddl.md
+  py -3 -I tools/fixtures/telegram_tl_facts.py --hand tools/fixtures/schemas/telegram-android <scratch>/hand.md
   py -3 -I tools/fixtures/telegram_tl_facts.py --go internal/parsers/androidtelegram/tables.go \
       tools/fixtures/schemas/telegram-android/constructors.tsv
   ```
@@ -3482,7 +3488,13 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   (`MANUAL`), which is completed by hand. `--check` verifies every row pinned at that pin (`verified`, `MISMATCH` or
   `MANUAL, read by hand at <file>:<line>` with its reason: the builder reads that row there), at A-HEAD that every ID
   each type's switch reads is a row, and at an older pin that every ID the pinned types' switches read is a row
-  (`in-table` or `missing`); it exits 1 on any `MISMATCH` or `missing`. Each report names the SHA-256 of the
+  (`in-table` or `missing`); it exits 1 on any `MISMATCH` or `missing`. Plan 4I4b Task 1: at A-HEAD it also checks the
+  closure (every object type a `full` or `prefix` row names is a type of the table, design D3); an older pin needs
+  `--head` and its report ends with the body comparison (every row the pin reads, what it reads there against its
+  A-HEAD reading: `equal`, `equal on the wire` with the field names that differ, `compatible widening`, a pin conflict
+  of an opaque row, or `membership-only` where the reduction cannot read it; any other `CONFLICT` exits 1). `--hand`
+  writes a hand-read notes file (its first line the section heading) into `CROSSCHECK.md`, replacing the section of
+  that heading or appending it last; run it after `--assemble`, whose output it extends. Each report names the SHA-256 of the
   `constructors.tsv` and `facts.tsv` it checked, which the test recomputes, so any edit of either file needs the four
   runs again. `--assemble` writes `schemas/telegram-android/CROSSCHECK.md` (the fixed text in the script, the four
   reports, the docs cross-check, one row per `facts.tsv` row and, after `--ddl`, the section "# DDL cross-check

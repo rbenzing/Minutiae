@@ -357,10 +357,11 @@ def self_test():
     check("vector past end", s["kind"] == "truncated" and s["offset"] == len(ent))
     old = le(0x22EB6ABA) + le(1) + le(2) + le(0x9DB1BC6D) + le(3) + le(0x12345678)
     check("bad bool", decode(old, "Message")["stop"]["kind"] == "malformed")
-    # TL_messageMediaDice is opaque in the table: the decode stops at it with its id
+    # TL_messageMediaUnsupported_old is opaque in the table: the decode stops at it with its id (TL_messageMediaDice,
+    # the example until plan 4I4b, is full since 4I4b Task 1)
     head = le(0x7600B9D3) + le(1 << 9) + le(0) + le(7) + peer_user + le(1) + b"\x00\x00\x00\x00"
-    s = decode(head + le(0x08CBEC07), "Message")["stop"]
-    check("opaque", s["kind"] == "opaque" and s["path"] == "media" and s["id"] == 0x08CBEC07)
+    s = decode(head + le(0x29632A36), "Message")["stop"]
+    check("opaque", s["kind"] == "opaque" and s["path"] == "media" and s["id"] == 0x29632A36)
     # TL_messageMediaEmpty reads no field: it is full with an empty field list and read whole (ruling M3)
     media = head + le(0x3DED6320)
     r = decode(media, "Message")

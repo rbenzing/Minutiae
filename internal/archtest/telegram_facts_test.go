@@ -33,11 +33,31 @@ var telegramPins = map[string]string{
 // plus two A-11.4.2 IDs (TL_channel_layer167_2, _3); PhoneCallDiscardReason: 5 plus the release-5.14.0_1851
 // AllowGroupCall; MessageMedia: 50 TLRPC classes plus the two app-local story classes the A-HEAD switch reads
 // (0xc79aee1d, 0xc79aee1f, opaque); MessageReplyHeader and MessageEntity: every constructor A-HEAD reads (T3).
+// Plan 4I4b Task 1 (design D1, D3, rulings R2, B2, B7, B9): every ID the A-HEAD switch of a type a full or prefix
+// row names is a row (the closure), MessageAction included (116); the media sub-objects, the tail objects and the
+// closure types; 535 rows in all (ruling T1d: the emitted counts).
 var telegramTypeCounts = map[string]int{
-	"Message": 49, "Peer": 6, "MessageFwdHeader": 7, "MessageAction": 1, "PhoneCallDiscardReason": 6,
+	"Message": 49, "Peer": 6, "MessageFwdHeader": 7, "MessageAction": 116, "PhoneCallDiscardReason": 6,
 	"MessageMedia": 52, "User": 29, "Chat": 39, "GeoPoint": 4, "MessageReplyHeader": 9, "MessageEntity": 28,
 	"Photo": 8, "Document": 10, "WebPage": 12,
+	"PhotoSize": 9, "VideoSize": 5, "DocumentAttribute": 17, "FileLocation": 5, "InputStickerSet": 12,
+	"TL_maskCoords": 1, "Video": 6, "Audio": 5, "MessageReplies": 2, "MessageReactions": 4, "ReactionCount": 2,
+	"Reaction": 4, "MessagePeerReaction": 4, "MessageReactor": 2, "RestrictionReason": 1, "TL_factCheck": 1,
+	"TL_textWithEntities": 1, "SuggestedPost": 1, "TL_stars.StarsAmount": 2, "TL_messages_emojiGameOutcome": 1,
+	"WebPageAttribute": 9, "Poll": 6, "PollResults": 6, "ReplyMarkup": 8, "InputUser": 6, "TL_iv.RichText": 32,
+	"TL_iv.Page": 7, "TL_iv.RichMessage": 1,
 }
+
+// telegramOpaqueCounts are the opaque rows per type (plan 4I4b Task 1; D1, R3, B2, B9); a type not listed has none.
+// The closure types are opaque except a class that reads nothing (rule M3); an ID the pins read two ways is opaque
+// (R3, T1b: 0x6fb250d1, 0x85849473, 0x332ba9ed, 0x48a30254).
+var telegramOpaqueCounts = map[string]int{
+	"MessageMedia": 20, "MessageAction": 103, "WebPage": 1, "WebPageAttribute": 6, "ReactionCount": 1, "InputUser": 4,
+	"TL_iv.RichText": 31, "Poll": 6, "PollResults": 6, "ReplyMarkup": 8, "TL_iv.Page": 7, "TL_iv.RichMessage": 1,
+}
+
+// telegramPrefixCounts are the prefix rows per type (spec Q2, T6); a type not listed has none.
+var telegramPrefixCounts = map[string]int{"User": 25, "Chat": 32}
 
 // telegramRequiredIDs are IDs every later task relies on, with the class the recon names (recon §3.2-§3.6).
 var telegramRequiredIDs = map[string]string{
@@ -61,6 +81,21 @@ var telegramRequiredIDs = map[string]string{
 	"0xbad0e5bb": "TL_peerChat_layer131",
 	"0xbddde532": "TL_peerChannel_layer131",
 	"0x55555558": "TL_documentEncrypted",
+	// plan 4I4b Task 1 (design §7, recon §2): the file name attribute, the 5.14.0-era media path, the tail objects
+	"0x15590068": "TL_documentAttributeFilename",
+	"0x695150d7": "TL_messageMediaPhoto_layer223",
+	"0x9cb070d7": "TL_messageMediaDocument_layer159",
+	"0xd07504a5": "TL_photo_layer115",
+	"0x9ba29cc1": "TL_document_layer113",
+	"0x77bfb61b": "TL_photoSize_layer127",
+	"0x091d11eb": "TL_fileLocation_layer97",
+	"0x55555554": "TL_fileEncryptedLocation",
+	"0x55555556": "TL_documentEncrypted_old",
+	"0x6fb250d1": "TL_reactionCount_layer144",
+	"0xa3d1cb80": "TL_reactionCount",
+	"0x0a339f0b": "TL_messageReactions",
+	"0x83d60fc2": "TL_messageReplies",
+	"0x0e8e37e5": "SuggestedPost",
 }
 
 // telegramFactKeys are the fixed facts.tsv keys (Task 1), each with the pins it must be stated at.
@@ -70,7 +105,7 @@ var telegramFactKeys = map[string][]string{
 	"write_verb.messages.put":     {"release-5.14.0_1851"},
 	"write_verb.messages.edit":    {"release-5.14.0_1851"},
 	"unit.call_duration":          {"A-HEAD"},
-	"unit.edit_date":              {"A-HEAD"},
+	"unit.edit_date":              {"A-HEAD", "A-11.4.2", "release-8.1.1_2431", "release-5.14.0_1851"},
 	"unit.blob_times":             {"A-HEAD"},
 	"predicate.pre84_secret_uid":  {"A-HEAD"},
 	"predicate.pre84_channel_mid": {"A-HEAD"},
@@ -94,6 +129,8 @@ var (
 	tgFieldRE    = regexp.MustCompile(`^(` + tgName + `)(?:=F2?\.[0-9]+|:(#|i32|i64|dbl|bool|bytes|str|secret|` +
 		`(id32|id64)@(user|chat|channel|unknown)|vec<i32>|vec<i64>|vec<` + tgType + `>|` + tgType + `))(\]?)$`)
 	tgWrapperValues = []string{"user", "chat", "channel", "unknown"}
+	// A field type StarsAmount not qualified by its outer class (ruling B7).
+	tgBareStarsRE = regexp.MustCompile(`(^|[^.\w])StarsAmount\b`)
 )
 
 // tgField is one field token of a constructors.tsv row: its name, kind (empty for a flag-only true) and, for an
@@ -167,6 +204,9 @@ func tgTSV(t *testing.T, name, src, header string) [][]string {
 // keeps its presence, spec §8.5); every inline id (T5) has its wrapper.* fact and every wrapper.* fact its token;
 // CROSSCHECK.md reports every row verified (or read by hand), every ID of the three older pins in the table, and
 // nothing missing or mismatched; no file holds a URL (GPLv2 facts only, cited by repository and commit).
+// Plan 4I4b Task 1 (design D1, D3-D6, D9; rulings R3, B2-B4, B7, B9, B11, T1a-T1d): the closed table's counts per
+// type and body, the pin conflicts as opaque rows and the only CONFLICT verdicts, the D5 field type, the B7 spelling,
+// unit.edit_date seconds at all four pins, the compatible widening of 0xe89c45b2 and the hand-read section.
 func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	dir := calendarSchemaDir(t, "telegram-android")
 	consSrc := calendarReadFile(t, filepath.Join(dir, "constructors.tsv"))
@@ -177,7 +217,7 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	facts := tgTSV(t, "facts.tsv", factsSrc, telegramFactsHeader)
 
 	seen := map[string]bool{}
-	counts := map[string]int{}
+	counts, opaque, prefix := map[string]int{}, map[string]int{}, map[string]int{}
 	// inline[class] lists "<field>=<class>" for every inline id token of that constructor class.
 	inline := map[string][]string{}
 	for _, r := range cons {
@@ -191,6 +231,16 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		}
 		seen[id] = true
 		counts[typ]++
+		switch body {
+		case "opaque":
+			opaque[typ]++
+		case "prefix":
+			prefix[typ]++
+		}
+		// ruling B7: the type spelling is the field's (TL_stars.StarsAmount) everywhere
+		if typ == "StarsAmount" || tgBareStarsRE.MatchString(fields) {
+			t.Errorf("%s: StarsAmount is spelled without TL_stars. (ruling B7)", row)
+		}
 		if _, ok := telegramTypeCounts[typ]; !ok {
 			t.Errorf("%s: type %q is not one of the pinned types (telegramTypeCounts)", row, typ)
 		}
@@ -230,6 +280,14 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 			t.Errorf("type %s: %d rows, want %d", typ, counts[typ], n)
 		}
 	}
+	for typ := range telegramTypeCounts {
+		if opaque[typ] != telegramOpaqueCounts[typ] {
+			t.Errorf("type %s: %d opaque rows, want %d (plan 4I4b Task 1, D1)", typ, opaque[typ], telegramOpaqueCounts[typ])
+		}
+		if prefix[typ] != telegramPrefixCounts[typ] {
+			t.Errorf("type %s: %d prefix rows, want %d (spec Q2, T6)", typ, prefix[typ], telegramPrefixCounts[typ])
+		}
+	}
 	byID := map[string][]string{}
 	for _, r := range cons {
 		byID[r[1]] = r
@@ -243,9 +301,36 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	}
 	// coordinator ruling M3 (Task 5 review): a constructor that reads no field is read whole, so it is full with an
 	// empty field list, never opaque
-	for _, id := range []string{"0x3ded6320", "0x9f84f49e", "0x85849473"} {
+	// (plan 4I4b Task 1, rulings B9 and B2: the closure classes and the MessageAction classes that read nothing).
+	m3 := []string{
+		"0x3ded6320", "0x9f84f49e", "0xb98886cf", "0xf7c1b13f", "0xdc3d824f",
+		"0x01baa035", "0x4792929b", "0x55555550", "0x55555557", "0x94bd38ed", "0x95e3fbef",
+		"0x9fbab604", "0xb6aef7b0", "0xc1d2f1c6", "0xe7e75f97", "0xebbca3cb", "0xf3f25f76",
+	}
+	for _, id := range m3 {
 		if r, ok := byID[id]; !ok || r[3] != "full" || r[6] != "" {
 			t.Errorf("constructor %s: %v, want a full row with an empty field list (ruling M3)", id, r)
+		}
+	}
+
+	// rulings R3 and T1b: an ID the pinned app versions read two ways is opaque; the table never picks one reading.
+	// 0x85849473 was a full row in 4I4 (the older pins read flags and cached_page_views for it, A-HEAD nothing).
+	for _, id := range []string{"0x6fb250d1", "0x85849473", "0x332ba9ed", "0x48a30254"} {
+		if r, ok := byID[id]; !ok || r[3] != "opaque" {
+			t.Errorf("constructor %s: %v, want an opaque row (rulings R3, T1b; design D4)", id, r)
+		}
+	}
+	// design D5, ruling R4: a field typed by a class with no deserializer of its own names the switch's type.
+	unbracket := strings.NewReplacer("[", " ", "]", " ")
+	for _, id := range []string{"0x7a800e0a", "0xd3d28540"} {
+		if r, ok := byID[id]; !ok || !slices.Contains(strings.Fields(unbracket.Replace(r[6])), "reactions:MessageReactions") {
+			t.Errorf("constructor %s: %v, want the field reactions:MessageReactions (design D5)", id, r)
+		}
+	}
+	for _, r := range cons {
+		if strings.Contains(r[6], ":TL_messageReactions") || strings.Contains(r[6], "<TL_messageReactions>") {
+			t.Errorf("%s %s %s: a field is typed TL_messageReactions; the type is MessageReactions (design D5)",
+				r[0], r[1], r[2])
 		}
 	}
 
@@ -268,6 +353,10 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		case strings.HasPrefix(key, "unit."):
 			if value != "seconds" && value != "unestablished" {
 				t.Errorf("fact %s: %q is not seconds or unestablished (T6, Q3)", key, value)
+			}
+			// ruling B3: the edit_date route is seconds at every pin
+			if key == "unit.edit_date" && value != "seconds" {
+				t.Errorf("fact %s at %s: %q, want seconds (ruling B3, design D9)", key, pin, value)
 			}
 		case key == "cast.encrypted_chat_id":
 			if value != "int32" && value != "uint32" {
@@ -360,6 +449,54 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		row := "| " + r[0] + " | " + r[2] + " | " + r[3] + " | " + r[1] + " |"
 		if !strings.Contains(report, row) {
 			t.Errorf("CROSSCHECK.md has no row %q for the fact", row)
+		}
+	}
+
+	// Plan 4I4b Task 1 (design D6, rulings B4, T1a, T1b, 4I4b-P7): every body CONFLICT of the older-pin comparison is
+	// a pin conflict on an opaque row, exactly the IDs each pin reads another way; field names never make one (T1a).
+	wantConflicts := map[string][]string{
+		"A-11.4.2":            {"0x332ba9ed", "0x48a30254", "0x85849473"},
+		"release-8.1.1_2431":  {"0x48a30254", "0x6fb250d1", "0x85849473"},
+		"release-5.14.0_1851": {"0x48a30254", "0x6fb250d1"},
+	}
+	gotConflicts := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\| ([^|]+) \| [^|]+ \| (0x[0-9a-f]{8}) \| CONFLICT[^|]*\|.*$`).
+		FindAllStringSubmatch(report, -1) {
+		gotConflicts[m[1]] = append(gotConflicts[m[1]], m[2])
+		if !strings.Contains(m[0], "| CONFLICT (opaque; pin conflict: ") || byID[m[2]] == nil || byID[m[2]][3] != "opaque" {
+			t.Errorf("CROSSCHECK.md holds a CONFLICT that is not a pin conflict on an opaque row (ruling T1b): %q", m[0])
+		}
+	}
+	if n := strings.Count(report, "| CONFLICT"); n != 8 {
+		t.Errorf("CROSSCHECK.md holds %d CONFLICT verdicts, want 8 (ruling T1b)", n)
+	}
+	for pin, ids := range wantConflicts {
+		slices.Sort(gotConflicts[pin])
+		if !slices.Equal(gotConflicts[pin], ids) {
+			t.Errorf("CROSSCHECK.md pin conflicts at %s: %v, want %v (rulings R3, T1b)", pin, gotConflicts[pin], ids)
+		}
+	}
+	// ruling T1c: TL_webPage keeps the A-HEAD reading of its attributes as a compatible widening at the two pins that
+	// read them by the single class TL_webPageAttributeTheme.
+	for _, pin := range []string{"release-8.1.1_2431", "release-5.14.0_1851"} {
+		if !regexp.MustCompile(`(?m)^\| ` + regexp.QuoteMeta(pin) + ` \| WebPage \| 0xe89c45b2 \| compatible widening \(`).
+			MatchString(report) {
+			t.Errorf("CROSSCHECK.md has no compatible widening of 0xe89c45b2 at %s (ruling T1c)", pin)
+		}
+	}
+	// ruling B11: the hand-read rows of Task 1, one row each in their section.
+	const handHead = "## Hand-read rows, first read (plan 4I4b Task 1)\n"
+	if i := strings.Index(report, handHead); i < 0 {
+		t.Errorf("CROSSCHECK.md has no section %q", strings.TrimSpace(handHead))
+	} else {
+		section := report[i+len(handHead):]
+		if j := strings.Index(section, "\n#"); j >= 0 {
+			section = section[:j]
+		}
+		for _, id := range []string{"0xa3d1cb80", "0x51b67eff", "0x932844fa", "0xfa64e172"} {
+			if n := len(regexp.MustCompile(`(?m)^\| `+id+` \|`).FindAllString(section, -1)); n != 1 {
+				t.Errorf("CROSSCHECK.md hand-read section: %d rows for %s, want 1 (ruling B11)", n, id)
+			}
 		}
 	}
 

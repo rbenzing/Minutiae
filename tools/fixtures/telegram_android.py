@@ -476,6 +476,7 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
 
     # the date column (spec 10)
     time = None
+    times = {}  # Times of the record (plan 4I4b Task 1: edited)
     date = r.get("date")
     if (r.get("rowid"), "date") in nan or not (date is None or is_int(date)):
         unknown[table + ".date"] = "type-mismatch"
@@ -569,7 +570,15 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                 fwd["saved_from_peer"] = sa
             raw["fwd"] = fwd
         if b.val("edit_date") is not None:
-            raw["edit_date"], raw["edit_date_unit"] = b.val("edit_date"), "unestablished"
+            # plan 4I4b Task 1 (rulings R5, B3, design D9): edit_date is Unix seconds at all four pins (facts.tsv
+            # unit.edit_date); the date-status rule of the date column: 0 or -1 is a sentinel, outside 1970-2100 invalid
+            ed = b.val("edit_date")
+            raw["edit_date"], raw["edit_date_unit"] = ed, "seconds"
+            st = C.classify(ed, "s")
+            if st == "valid":
+                times["edited"] = C.iso(ed, "s")
+            else:
+                raw["edit_date_status"] = st
         bdate = b.val("date")
         if bdate is not None:
             raw["date"] = bdate
@@ -860,7 +869,8 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
     p["raw"] = raw
     cp = parts[0]["address"] if parts else ""
     channel = "telegram secret" if dclass == "secret" else "telegram"
-    return record(table, r, "message", time, None, body, message_summary(channel, direction, cp, text), p, remote, file)
+    return record(table, r, "message", time, None, body, message_summary(channel, direction, cp, text), p, remote, file,
+                  times)
 
 
 def map_media(b, media, attachments, raw):
@@ -1046,12 +1056,14 @@ def map_call(table, r, raw, b, direction, dclass, uid, time, remote, file):
     else:
         raw["address_state"] = "not-user-dialog"
     p["raw"] = raw
-    return record(table, r, "call", time, time_end, None, call_summary(direction, outcome, p.get("address", "")), p, remote, file)
+    return record(table, r, "call", time, time_end, None, call_summary(direction, outcome, p.get("address", "")), p, remote, file,
+                  {})
 
 
-def record(table, r, typ, time, time_end, body, summary, payload, remote, file):
+def record(table, r, typ, time, time_end, body, summary, payload, remote, file, times):
     return {"table": table, "rowid": r["rowid"], "file": file, "type": typ, "source_path": remote, "time": time,
-            "time_end": time_end, "times": {}, "deleted": False, "summary": summary, "body": body or None, "payload": payload}
+            "time_end": time_end, "times": times, "deleted": False, "summary": summary, "body": body or None,
+            "payload": payload}
 
 
 # ---------------------------------------------------------------- the contact mapping (spec 8.9)
@@ -1134,7 +1146,7 @@ def map_user(r, env, remote, file):
         raw["unknown_columns"] = unknown
     p["raw"] = raw
     body = "\n".join(x for x in (display, phones[0] if phones else None, username, about) if x)
-    rec = record("users", r, "contact", None, None, body, contact_summary(display, phones, ims), p, remote, file)
+    rec = record("users", r, "contact", None, None, body, contact_summary(display, phones, ims), p, remote, file, {})
     rec["_warn"] = not (display or phones or username)
     return rec
 
@@ -1363,7 +1375,7 @@ def core_messages():
         "_": "TL_messageMediaVenue", "geo": geo(52.52), "title": "Office", "address": "1 Main St", "provider": "", "venue_id": "", "venue_type": ""})))
     R[28] = row(28, 124, ANN, enc(tlmsg(124, 28, "", frm=pu(ANN), media={"_": "TL_messageMediaWebPage", "webpage": {
         "_": "TL_webPage", "id": 9003, "url": "https://example.test/a", "display_url": "example.test/a", "hash": 0}})))
-    R[29] = row(29, 125, ANN, enc(tlmsg(125, 29, "", frm=pu(ANN), media={"_": "TL_messageMediaDice", "_body": b"\x03\x00\x00\x00\x02\xf0\x9f\x8e\xb2\x00"})))
+    R[29] = row(29, 125, ANN, enc(tlmsg(125, 29, "", frm=pu(ANN), media={"_raw": u32le(0x08CBEC07) + b"\x03\x00\x00\x00\x02\xf0\x9f\x8e\xb2\x00"})))
     R[30] = row(30, 126, ANN, enc(tlmsg(126, 30, "Reply", frm=pu(ANN), reply_to={"_": "TL_messageReplyHeader", "reply_to_msg_id": 101})),
                 replydata=R[1]["data"], reply_to_message_id=101)
     bold_url = [{"_": "TL_messageEntityBold", "offset": 0, "length": 4}, {"_": "TL_messageEntityUrl", "offset": 5, "length": 4}]
@@ -1513,7 +1525,9 @@ def mandatory(r, typ, i, text):
         elif k == "GeoPoint":
             v[name] = {"_": "TL_geoPointEmpty"}
         elif k == "WebPage":
-            v[name] = {"_": "TL_webPageEmpty"}
+            # the bare ID, as written while TL_webPageEmpty was opaque (plan 4I4b Task 1: it is full now; Task 4
+            # rewrites the layers rows)
+            v[name] = {"_raw": u32le(0x211A1788)}
         else:
             v[name] = {"_raw": u32le(0x0BAD0100)}
     return v

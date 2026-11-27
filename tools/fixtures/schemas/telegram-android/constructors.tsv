@@ -20,7 +20,7 @@ Message	0x58ae39c9	TL_message_layer123	full	A-HEAD	TL_legacy_message.java:2947	f
 Message	0x5ba66c13	TL_message_old7	full	A-HEAD	TLRPC.java:60050	flags:# unread=F.0 out=F.1 mentioned=F.4 media_unread=F.5 id:i32 [F.8: from_id:id32@user] peer_id:Peer [F.2: fwd_from.from_id:Peer fwd_from.date:i32] [F.3: reply_to.reply_to_msg_id:i32] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32]
 Message	0x7600b9d3	TL_message	full	A-HEAD	TLRPC.java:60187	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 from_scheduled=F.18 legacy=F.19 edit_hide=F.21 pinned=F.24 noforwards=F.26 invert_media=F.27 flags2:# offline=F2.1 video_processing_pending=F2.4 paid_suggested_post_stars=F2.8 paid_suggested_post_ton=F2.9 id:i32 [F.8: from_id:Peer] [F.29: from_boosts_applied:i32] [F2.12: from_rank:str] peer_id:Peer [F.28: saved_peer_id:Peer] [F.2: fwd_from:MessageFwdHeader] [F.11: via_bot_id:i64] [F2.0: via_business_bot_id:i64] [F2.19: guestchat_via_from:Peer] [F.3: reply_to:MessageReplyHeader] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32] [F.10: forwards:i32] [F.23: replies:MessageReplies] [F.15: edit_date:i32] [F.16: post_author:str] [F.17: grouped_id:i64] [F.20: reactions:MessageReactions] [F.22: restriction_reason:vec<RestrictionReason>] [F.25: ttl_period:i32] [F.30: quick_reply_shortcut_id:i32] [F2.2: effect:i64] [F2.3: factcheck:TL_factCheck] [F2.5: report_delivery_until_date:i32] [F2.6: paid_message_stars:i64] [F2.7: suggested_post:SuggestedPost] [F2.10: schedule_repeat_period:i32] [F2.11: summary_from_language:str] [F2.13: rich_message:TL_iv.RichMessage]
 Message	0x76bec211	TL_message_layer173	full	A-HEAD	TL_legacy_message.java:2379	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 from_scheduled=F.18 legacy=F.19 edit_hide=F.21 pinned=F.24 noforwards=F.26 invert_media=F.27 id:i32 [F.8: from_id:Peer] peer_id:Peer [F.28: saved_peer_id:Peer] [F.2: fwd_from:MessageFwdHeader] [F.11: via_bot_id:i64] [F.3: reply_to:MessageReplyHeader] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32] [F.10: forwards:i32] [F.23: replies:MessageReplies] [F.15: edit_date:i32] [F.16: post_author:str] [F.17: grouped_id:i64] [F.20: reactions:MessageReactions] [F.22: restriction_reason:vec<RestrictionReason>] [F.25: ttl_period:i32]
-Message	0x7a800e0a	TL_messageService	full	A-HEAD	TLRPC.java:61311	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 legacy=F.19 reactions_are_possible=F.9 id:i32 [F.8: from_id:Peer] peer_id:Peer [F.28: saved_peer_id:Peer] [F.3: reply_to:MessageReplyHeader] date:i32 action:MessageAction [F.20: reactions:TL_messageReactions] [F.25: ttl_period:i32]
+Message	0x7a800e0a	TL_messageService	full	A-HEAD	TLRPC.java:61311	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 legacy=F.19 reactions_are_possible=F.9 id:i32 [F.8: from_id:Peer] peer_id:Peer [F.28: saved_peer_id:Peer] [F.3: reply_to:MessageReplyHeader] date:i32 action:MessageAction [F.20: reactions:MessageReactions] [F.25: ttl_period:i32]
 Message	0x83e5de54	TL_messageEmpty_layer122	full	A-HEAD	TLRPC.java:59680	id:i32
 Message	0x85d6cbe2	TL_message_layer135	full	A-HEAD	TL_legacy_message.java:2675	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 from_scheduled=F.18 legacy=F.19 edit_hide=F.21 pinned=F.24 noforwards=F.26 id:i32 [F.8: from_id:Peer] peer_id:Peer [F.2: fwd_from:MessageFwdHeader] [F.11: via_bot_id:i64] [F.3: reply_to:MessageReplyHeader] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32] [F.10: forwards:i32] [F.23: replies:MessageReplies] [F.15: edit_date:i32] [F.16: post_author:str] [F.17: grouped_id:i64] [F.22: restriction_reason:vec<RestrictionReason>] [F.25: ttl_period:i32]
 Message	0x90a6ca84	TL_messageEmpty	full	A-HEAD	TLRPC.java:59694	flags:# id:i32 [F.0: peer_id:Peer]
@@ -44,7 +44,7 @@ Message	0xc06b9607	TL_messageService_layer48	full	A-HEAD	TLRPC.java:60805	flags:
 Message	0xc09be45f	TL_message_layer68	full	A-HEAD	TLRPC.java:59851	flags:# unread=F.0 out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 with_my_score=F.30 id:i32 [F.8: from_id:id32@user] peer_id:Peer [F.2: fwd_from:MessageFwdHeader] [F.11: via_bot_id:i32] [F.3: reply_to.reply_to_msg_id:i32] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32] [F.15: edit_date:i32]
 Message	0xc3060325	TL_message_old4	full	A-HEAD	TLRPC.java:60848	flags:# unread=F.0 out=F.1 mentioned=F.4 media_unread=F.5 id:i32 from_id:id32@user peer_id:Peer [F.2: fwd_from.from_id:id32@user fwd_from.date:i32] [F.3: reply_to.reply_to_msg_id:i32] date:i32 message:str media:MessageMedia [F.6: reply_markup:ReplyMarkup]
 Message	0xc992e15c	TL_message_layer47	full	A-HEAD	TLRPC.java:59952	flags:# unread=F.0 out=F.1 mentioned=F.4 media_unread=F.5 id:i32 [F.8: from_id:id32@user] peer_id:Peer [F.2: fwd_from.from_id:Peer fwd_from.date:i32] [F.11: via_bot_id:i32] [F.3: reply_to.reply_to_msg_id:i32] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32]
-Message	0xd3d28540	TL_messageService_layer204	full	A-HEAD	TLRPC.java:61376	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 legacy=F.19 reactions_are_possible=F.9 id:i32 [F.8: from_id:Peer] peer_id:Peer [F.3: reply_to:MessageReplyHeader] date:i32 action:MessageAction [F.20: reactions:TL_messageReactions] [F.25: ttl_period:i32]
+Message	0xd3d28540	TL_messageService_layer204	full	A-HEAD	TLRPC.java:61376	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 legacy=F.19 reactions_are_possible=F.9 id:i32 [F.8: from_id:Peer] peer_id:Peer [F.3: reply_to:MessageReplyHeader] date:i32 action:MessageAction [F.20: reactions:MessageReactions] [F.25: ttl_period:i32]
 Message	0xeabcdd4d	TL_message_layer205	full	A-HEAD	TL_legacy_message.java:1128	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 from_scheduled=F.18 legacy=F.19 edit_hide=F.21 pinned=F.24 noforwards=F.26 invert_media=F.27 flags2:# offline=F2.1 video_processing_pending=F2.4 id:i32 [F.8: from_id:Peer] [F.29: from_boosts_applied:i32] peer_id:Peer [F.28: saved_peer_id:Peer] [F.2: fwd_from:MessageFwdHeader] [F.11: via_bot_id:i64] [F2.0: via_business_bot_id:i64] [F.3: reply_to:MessageReplyHeader] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32] [F.10: forwards:i32] [F.23: replies:MessageReplies] [F.15: edit_date:i32] [F.16: post_author:str] [F.17: grouped_id:i64] [F.20: reactions:MessageReactions] [F.22: restriction_reason:vec<RestrictionReason>] [F.25: ttl_period:i32] [F.30: quick_reply_shortcut_id:i32] [F2.2: effect:i64] [F2.3: factcheck:TL_factCheck] [F2.5: report_delivery_until_date:i32] [F2.6: paid_message_stars:i64]
 Message	0xf07814c8	TL_message_old5	full	A-HEAD	TLRPC.java:60736	flags:# unread=F.0 out=F.1 mentioned=F.4 media_unread=F.5 id:i32 from_id:id32@user peer_id:Peer [F.2: fwd_from.from_id:id32@user fwd_from.date:i32] [F.3: reply_to.reply_to_msg_id:i32] date:i32 message:str media:MessageMedia [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>]
 Message	0xf52e6b7f	TL_message_layer118	full	A-HEAD	TL_legacy_message.java:3076	flags:# out=F.1 mentioned=F.4 media_unread=F.5 silent=F.13 post=F.14 from_scheduled=F.18 legacy=F.19 edit_hide=F.21 id:i32 [F.8: from_id:id32@user] peer_id:Peer [F.2: fwd_from:MessageFwdHeader] [F.11: via_bot_id:i32] [F.3: reply_to.reply_to_msg_id:i32] date:i32 message:str [F.9: media:MessageMedia] [F.6: reply_markup:ReplyMarkup] [F.7: entities:vec<MessageEntity>] [F.10: views:i32] [F.10: forwards:i32] [F.15: edit_date:i32] [F.16: post_author:str] [F.17: grouped_id:i64] [F.22: restriction_reason:vec<RestrictionReason>]
@@ -98,99 +98,214 @@ MessageEntity	0xdc7b1140	TL_messageEntityMentionName	full	A-HEAD	TLRPC.java:3307
 MessageEntity	0xf1ccaaac	TL_messageEntityBlockquote	full	A-HEAD	TLRPC.java:32916	flags:# collapsed=F.0 offset:i32 length:i32
 MessageEntity	0xfa04579d	TL_messageEntityMention	full	A-HEAD	TLRPC.java:32680	offset:i32 length:i32
 MessageEntity	0xfdabbfcd	TL_messageEntityTonAddress	full	A-HEAD	TLRPC.java:33019	offset:i32 length:i32
+MessageAction	0x01baa035	TL_messageActionPhoneNumberRequest	full	A-HEAD	TLRPC.java:25763	
+MessageAction	0x031224c3	TL_messageActionChatJoinedByLink	opaque	A-HEAD	TLRPC.java:25877	
+MessageAction	0x08557637	TL_messageActionStarGift_layer195	opaque	A-HEAD	TLRPC.java:67803	
+MessageAction	0x0d999256	TL_messageActionTopicCreate	opaque	A-HEAD	TLRPC.java:26221	
+MessageAction	0x15cefd00	TL_messageActionChatAddUser	opaque	A-HEAD	TLRPC.java:25691	
+MessageAction	0x16605e3e	TL_messageActionManagedBotCreated	opaque	A-HEAD	TLRPC.java:64899	
+MessageAction	0x26077b99	TL_messageActionStarGiftUnique_layer197	opaque	A-HEAD	TLRPC.java:68543	
+MessageAction	0x2a9fadc5	TL_messageActionGiveawayResults_layer186	opaque	A-HEAD	TLRPC.java:67301	
+MessageAction	0x2c8f2a25	TL_messageActionSuggestBirthday	opaque	A-HEAD	TLRPC.java:25746	
+MessageAction	0x2e3ae60e	TL_messageActionStarGiftUnique_layer210	opaque	A-HEAD	TLRPC.java:68425	
+MessageAction	0x2ffe2f7a	TL_messageActionConferenceCall	opaque	A-HEAD	TLRPC.java:67873	
+MessageAction	0x31518e9b	TL_messageActionRequestedPeer	opaque	A-HEAD	TLRPC.java:64991	
+MessageAction	0x31c48347	TL_messageActionGiftCode	opaque	A-HEAD	TLRPC.java:65827	
+MessageAction	0x332ba9ed	TL_messageActionGiveawayLaunch_layer186	opaque	A-HEAD	TLRPC.java:67263	
+MessageAction	0x34f762f3	TL_messageActionStarGiftUnique_layer214	opaque	A-HEAD	TLRPC.java:68354	
+MessageAction	0x399674dc	TL_messageActionPollDeleteAnswer	opaque	A-HEAD	TLRPC.java:25335	
+MessageAction	0x3c134d7b	TL_messageActionSetMessagesTTL	opaque	A-HEAD	TLRPC.java:26077	
+MessageAction	0x3e2793ba	TL_messageActionNoForwardsRequest	opaque	A-HEAD	TLRPC.java:64876	
+MessageAction	0x40699cd0	TL_messageActionPaymentSent_layer140	opaque	A-HEAD	TLRPC.java:26320	
+MessageAction	0x41b3e202	TL_messageActionPaymentRefunded	opaque	A-HEAD	TLRPC.java:25380	
+MessageAction	0x45d5b021	TL_messageActionGiftStars	opaque	A-HEAD	TLRPC.java:25409	
+MessageAction	0x4717e8a4	TL_messageActionStarGift_layer211	opaque	A-HEAD	TLRPC.java:67679	
+MessageAction	0x4792929b	TL_messageActionScreenshotTaken	full	A-HEAD	TLRPC.java:25738	
+MessageAction	0x47dd8079	TL_messageActionWebViewDataSentMe	opaque	A-HEAD	TLRPC.java:25954	
+MessageAction	0x488a7337	TL_messageActionChatAddUser_layer131	opaque	A-HEAD	TLRPC.java:25905	
+MessageAction	0x48e91302	TL_messageActionGiftPremium	opaque	A-HEAD	TLRPC.java:26407	
+MessageAction	0x4a8bfe80	TL_messageActionChatJoinedViaCommunity	opaque	A-HEAD	TLRPC.java:65009	
+MessageAction	0x502f92f7	TL_messageActionInviteToGroupCall	opaque	A-HEAD	TLRPC.java:25561	
+MessageAction	0x5060a3f4	TL_messageActionSetChatWallPaper	opaque	A-HEAD	TLRPC.java:26000	
+MessageAction	0x51bdb021	TL_messageActionChatMigrateTo_layer131	opaque	A-HEAD	TLRPC.java:25704	
+MessageAction	0x55555550	TL_messageActionUserJoined	full	A-HEAD	TLRPC.java:26022	
+MessageAction	0x55555551	TL_messageActionUserUpdatedPhoto	opaque	A-HEAD	TLRPC.java:26030	
+MessageAction	0x55555552	TL_messageActionTTLChange	opaque	A-HEAD	TLRPC.java:26064	
+MessageAction	0x55555557	TL_messageActionCreatedBroadcastList	full	A-HEAD	TLRPC.java:25931	
+MessageAction	0x555555f5	TL_messageActionLoginUnknownLocation	opaque	A-HEAD	TLRPC.java:25305	
+MessageAction	0x555555f7	TL_messageEncryptedAction	opaque	A-HEAD	TLRPC.java:25505	
+MessageAction	0x56d03994	TL_messageActionGiftCode_layer216	opaque	A-HEAD	TLRPC.java:65883	
+MessageAction	0x57de635e	TL_messageActionSuggestProfilePhoto	opaque	A-HEAD	TLRPC.java:64845	
+MessageAction	0x5d20bae8	TL_messageActionChangeCommunity	opaque	A-HEAD	TLRPC.java:68322	
+MessageAction	0x5e3cfc4b	TL_messageActionChatAddUser_old	opaque	A-HEAD	TLRPC.java:26051	
+MessageAction	0x678c2e09	TL_messageActionGiftCode_layer189	opaque	A-HEAD	TLRPC.java:65933	
+MessageAction	0x69b8c4bf	TL_messageActionWalletTonConnectRequest	opaque	A-HEAD	TLRPC.java:26505	
+MessageAction	0x69f916f8	TL_messageActionSuggestedPostRefund	opaque	A-HEAD	TLRPC.java:25364	
+MessageAction	0x6c6274fa	TL_messageActionGiftPremium_layer216	opaque	A-HEAD	TLRPC.java:26443	
+MessageAction	0x73ada76b	TL_messageActionStarGiftPurchaseOfferDeclined	opaque	A-HEAD	TLRPC.java:68296	
+MessageAction	0x76b9f11a	TL_messageActionInviteToGroupCall_layer131	opaque	A-HEAD	TLRPC.java:25939	
+MessageAction	0x774278d4	TL_messageActionStarGiftPurchaseOffer	opaque	A-HEAD	TLRPC.java:68264	
+MessageAction	0x7a0d7f42	TL_messageActionGroupCall	opaque	A-HEAD	TLRPC.java:25591	
+MessageAction	0x7e1c1187	TL_messageActionStarGiftUnique	opaque	A-HEAD	TLRPC.java:67972	
+MessageAction	0x7fcb13a8	TL_messageActionChatEditPhoto	opaque	A-HEAD	TLRPC.java:25725	
 MessageAction	0x80e11a7f	TL_messageActionPhoneCall	full	A-HEAD	TLRPC.java:26192	flags:# video=F.2 call_id:i64 [F.0: reason:PhoneCallDiscardReason] [F.1: duration:i32]
+MessageAction	0x84b88578	TL_messageActionPaidMessagesPrice	opaque	A-HEAD	TLRPC.java:67837	
+MessageAction	0x87e2f155	TL_messageActionGiveawayResults	opaque	A-HEAD	TLRPC.java:67276	
+MessageAction	0x8f31b327	TL_messageActionPaymentSentMe_layer193	opaque	A-HEAD	TLRPC.java:26621	
+MessageAction	0x92a72876	TL_messageActionGameScore	opaque	A-HEAD	TLRPC.java:26392	
+MessageAction	0x9329ea33	TL_messageActionGramTransfer	opaque	A-HEAD	TLRPC.java:65024	
+MessageAction	0x94bd38ed	TL_messageActionPinMessage	full	A-HEAD	TLRPC.java:26155	
+MessageAction	0x95728543	TL_messageActionStarGiftUnique_layer221	opaque	A-HEAD	TLRPC.java:68183	
+MessageAction	0x95d2ac92	TL_messageActionChannelCreate	opaque	A-HEAD	TLRPC.java:26127	
+MessageAction	0x95ddcf69	TL_messageActionSuggestedPostSuccess	opaque	A-HEAD	TLRPC.java:25350	
+MessageAction	0x95e3fbef	TL_messageActionChatDeletePhoto	full	A-HEAD	TLRPC.java:26184	
+MessageAction	0x96163f56	TL_messageActionPaymentSent_layer193	opaque	A-HEAD	TLRPC.java:26293	
+MessageAction	0x98e0d697	TL_messageActionGeoProximityReached	opaque	A-HEAD	TLRPC.java:26163	
+MessageAction	0x9bb3ef44	TL_messageActionStarGift_layer192	opaque	A-HEAD	TLRPC.java:67349	
+MessageAction	0x9da1cd6c	TL_messageActionPollAppendAnswer	opaque	A-HEAD	TLRPC.java:25320	
+MessageAction	0x9fbab604	TL_messageActionHistoryClear	full	A-HEAD	TLRPC.java:25717	
+MessageAction	0xa43f30cc	TL_messageActionChatDeleteUser	opaque	A-HEAD	TLRPC.java:25663	
+MessageAction	0xa6638b9a	TL_messageActionChatCreate_layer131	opaque	A-HEAD	TLRPC.java:25546	
+MessageAction	0xa80f51e4	TL_messageActionGiveawayLaunch	opaque	A-HEAD	TLRPC.java:67240	
+MessageAction	0xa8a3c699	TL_messageActionGiftTon	opaque	A-HEAD	TLRPC.java:25476	
+MessageAction	0xaa1afbfd	TL_messageActionSetMessagesTTL_layer149	opaque	A-HEAD	TLRPC.java:26101	
+MessageAction	0xaa786345	TL_messageActionSetChatTheme_layer213	opaque	A-HEAD	TLRPC.java:25612	
+MessageAction	0xabe9affe	TL_messageActionBotAllowed_layer153	opaque	A-HEAD	TLRPC.java:26369	
+MessageAction	0xac1f1fcd	TL_messageActionPaidMessagesRefunded	opaque	A-HEAD	TLRPC.java:67952	
+MessageAction	0xacdfcb81	TL_messageActionStarGiftUnique_layer202	opaque	A-HEAD	TLRPC.java:68493	
+MessageAction	0xb00c47a2	TL_messageActionPrizeStars	opaque	A-HEAD	TLRPC.java:67317	
+MessageAction	0xb055eaee	TL_messageActionChannelMigrateFrom_layer131	opaque	A-HEAD	TLRPC.java:25890	
+MessageAction	0xb07ed085	TL_messageActionNewCreatorPending	opaque	A-HEAD	TLRPC.java:25461	
+MessageAction	0xb18a431c	TL_messageActionTopicEdit_layer149	opaque	A-HEAD	TLRPC.java:25825	
+MessageAction	0xb2ae9b0c	TL_messageActionChatDeleteUser_layer131	opaque	A-HEAD	TLRPC.java:25918	
+MessageAction	0xb3a07661	TL_messageActionGroupCallScheduled	opaque	A-HEAD	TLRPC.java:26658	
+MessageAction	0xb4c38cb5	TL_messageActionWebViewDataSent	opaque	A-HEAD	TLRPC.java:25972	
+MessageAction	0xb5a1ce5a	TL_messageActionChatEditTitle	opaque	A-HEAD	TLRPC.java:26247	
+MessageAction	0xb6aef7b0	TL_messageActionEmpty	full	A-HEAD	TLRPC.java:26384	
+MessageAction	0xb91bbd3a	TL_messageActionSetChatTheme	opaque	A-HEAD	TLRPC.java:25676	
+MessageAction	0xbc44a927	TL_messageActionSetChatWallPaper_layer166	opaque	A-HEAD	TLRPC.java:25987	
+MessageAction	0xbcd71419	TL_messageActionPaidMessagesPrice_layer203	opaque	A-HEAD	TLRPC.java:67856	
+MessageAction	0xbd47cbad	TL_messageActionChatCreate	opaque	A-HEAD	TLRPC.java:25531	
+MessageAction	0xbf7d6572	TL_messageActionNoForwardsToggle	opaque	A-HEAD	TLRPC.java:64858	
+MessageAction	0xc0787d6d	TL_messageActionSetSameChatWallPaper	opaque	A-HEAD	TLRPC.java:25771	
+MessageAction	0xc0944820	TL_messageActionTopicEdit	opaque	A-HEAD	TLRPC.java:25784	
+MessageAction	0xc1d2f1c6	TL_messageActionNoPaidMessagesTokenUsed	full	A-HEAD	TLRPC.java:68343	
+MessageAction	0xc516d679	TL_messageActionBotAllowed	opaque	A-HEAD	TLRPC.java:26335	
+MessageAction	0xc624b16e	TL_messageActionPaymentSent	opaque	A-HEAD	TLRPC.java:26260	
+MessageAction	0xc7edbc83	TL_messageActionTodoAppendTasks	opaque	A-HEAD	TLRPC.java:67935	
+MessageAction	0xc83d6aec	TL_messageActionGiftPremium_layer189	opaque	A-HEAD	TLRPC.java:26477	
+MessageAction	0xcc02aa6d	TL_messageActionBoostApply	opaque	A-HEAD	TLRPC.java:26557	
+MessageAction	0xcc7c5c89	TL_messageActionTodoCompletions	opaque	A-HEAD	TLRPC.java:67915	
+MessageAction	0xd2cfdb0e	TL_messageActionGiftCode_layer167	opaque	A-HEAD	TLRPC.java:65985	
+MessageAction	0xd8f4f0a7	TL_messageActionStarGift_layer197	opaque	A-HEAD	TLRPC.java:67749	
+MessageAction	0xd95c6154	TL_messageActionSecureValuesSent	opaque	A-HEAD	TLRPC.java:26140	
+MessageAction	0xdb596550	TL_messageActionStarGift_layer219	opaque	A-HEAD	TLRPC.java:67502	
+MessageAction	0xe1037f92	TL_messageActionChatMigrateTo	opaque	A-HEAD	TLRPC.java:25864	
+MessageAction	0xe188503b	TL_messageActionChangeCreator	opaque	A-HEAD	TLRPC.java:25446	
+MessageAction	0xe6c31522	TL_messageActionStarGiftUnique_layer228	opaque	A-HEAD	TLRPC.java:68094	
+MessageAction	0xe7e75f97	TL_messageActionAttachMenuBotAllowed	full	A-HEAD	TLRPC.java:64959	
+MessageAction	0xea2c31d3	TL_messageActionStarGift	opaque	A-HEAD	TLRPC.java:67379	
+MessageAction	0xea3948e9	TL_messageActionChannelMigrateFrom	opaque	A-HEAD	TLRPC.java:25576	
+MessageAction	0xebbca3cb	TL_messageActionChatJoinedByRequest	full	A-HEAD	TLRPC.java:25856	
+MessageAction	0xee7a1596	TL_messageActionSuggestedPostApproval	opaque	A-HEAD	TLRPC.java:64914	
+MessageAction	0xf24de7fa	TL_messageActionStarGift_layer217	opaque	A-HEAD	TLRPC.java:67595	
+MessageAction	0xf3f25f76	TL_messageActionContactSignUp	full	A-HEAD	TLRPC.java:26043	
+MessageAction	0xf89cf5e8	TL_messageActionChatJoinedByLink_layer131	opaque	A-HEAD	TLRPC.java:26114	
+MessageAction	0xfae69f56	TL_messageActionCustomAction	opaque	A-HEAD	TLRPC.java:25518	
+MessageAction	0xfe77345d	TL_messageActionRequestedPeer_layer168	opaque	A-HEAD	TLRPC.java:64970	
+MessageAction	0xffa00ccc	TL_messageActionPaymentSentMe	opaque	A-HEAD	TLRPC.java:26572	
 PhoneCallDiscardReason	0x57adc690	TL_phoneCallDiscardReasonHangup	full	A-HEAD	TLRPC.java:20934	
 PhoneCallDiscardReason	0x85e42301	TL_phoneCallDiscardReasonMissed	full	A-HEAD	TLRPC.java:20950	
 PhoneCallDiscardReason	0x9fbbf1f7	TL_phoneCallDiscardReasonMigrateConferenceCall	full	A-HEAD	TLRPC.java:20966	slug:str
 PhoneCallDiscardReason	0xafe2b839	TL_phoneCallDiscardReasonAllowGroupCall	full	release-5.14.0_1851	TLRPC.java:12808	encrypted_key:secret
 PhoneCallDiscardReason	0xe095c1a0	TL_phoneCallDiscardReasonDisconnect	full	A-HEAD	TLRPC.java:20958	
 PhoneCallDiscardReason	0xfaf7e8c9	TL_phoneCallDiscardReasonBusy	full	A-HEAD	TLRPC.java:20942	
-MessageMedia	0x08cbec07	TL_messageMediaDice	opaque	A-HEAD	TLRPC.java:8203	
+MessageMedia	0x08cbec07	TL_messageMediaDice	full	A-HEAD	TLRPC.java:8203	flags:# value:i32 emoticon:str [F.0: game_outcome:TL_messages_emojiGameOutcome]
 MessageMedia	0x2238f214	TL_messageMediaWidget	opaque	A-HEAD	TLRPC.java:66788	
 MessageMedia	0x29632a36	TL_messageMediaUnsupported_old	opaque	A-HEAD	TLRPC.java:7269	
 MessageMedia	0x2ec0533f	TL_messageMediaVenue	full	A-HEAD	TLRPC.java:7491	geo:GeoPoint title:str address:str provider:str venue_id:str venue_type:str
-MessageMedia	0x2fda2204	TL_messageMediaDocument_old	opaque	A-HEAD	TLRPC.java:7804	
-MessageMedia	0x3d8ce53d	TL_messageMediaPhoto_layer68	opaque	A-HEAD	TLRPC.java:8108	
+MessageMedia	0x2fda2204	TL_messageMediaDocument_old	full	A-HEAD	TLRPC.java:7804	document:Document
+MessageMedia	0x3d8ce53d	TL_messageMediaPhoto_layer68	full	A-HEAD	TLRPC.java:8108	photo:Photo captionLegacy:str
 MessageMedia	0x3ded6320	TL_messageMediaEmpty	full	A-HEAD	TLRPC.java:7483	
-MessageMedia	0x3f7ee58b	TL_messageMediaDice_layer220	opaque	A-HEAD	TLRPC.java:8230	
+MessageMedia	0x3f7ee58b	TL_messageMediaDice_layer220	full	A-HEAD	TLRPC.java:8230	value:i32 emoticon:str
 MessageMedia	0x4bd6e798	TL_messageMediaPoll_layer223	opaque	A-HEAD	TLRPC.java:7926	
-MessageMedia	0x4cf4d72d	TL_messageMediaDocument_layer187	opaque	A-HEAD	TLRPC.java:7698	
+MessageMedia	0x4cf4d72d	TL_messageMediaDocument_layer187	full	A-HEAD	TLRPC.java:7698	flags:# nopremium=F.3 spoiler=F.4 video=F.6 round=F.7 voice=F.8 [F.0: document:Document] [F.5: alt_documents:Document] [F.2: ttl_seconds:i32]
 MessageMedia	0x52d8ccd9	TL_messageMediaDocument	full	A-HEAD	TLRPC.java:7554	flags:# nopremium=F.3 spoiler=F.4 video=F.6 round=F.7 voice=F.8 live_photo=F.11 [F.0: document:Document] [F.5: alt_documents:vec<Document>] [F.9: video_cover:Photo] [F.10: video_timestamp:i32] [F.2: ttl_seconds:i32]
 MessageMedia	0x56e0d474	TL_messageMediaGeo	full	A-HEAD	TLRPC.java:8258	geo:GeoPoint
 MessageMedia	0x58260664	TL_messageMediaGiveaway_layer167	opaque	A-HEAD	TLRPC.java:66720	
-MessageMedia	0x5bcf1675	TL_messageMediaVideo_layer45	opaque	A-HEAD	TLRPC.java:8123	
-MessageMedia	0x5e7d2f39	TL_messageMediaContact_layer81	opaque	A-HEAD	TLRPC.java:8089	
-MessageMedia	0x638fe46b	TL_messageMediaDice_layer111	opaque	A-HEAD	TLRPC.java:8245	
+MessageMedia	0x5bcf1675	TL_messageMediaVideo_layer45	full	A-HEAD	TLRPC.java:8123	video_unused:Video captionLegacy:str
+MessageMedia	0x5e7d2f39	TL_messageMediaContact_layer81	full	A-HEAD	TLRPC.java:8089	phone_number:str first_name:str last_name:str user_id:i32
+MessageMedia	0x638fe46b	TL_messageMediaDice_layer111	full	A-HEAD	TLRPC.java:8245	value:i32
 MessageMedia	0x68cb6283	TL_messageMediaStory	opaque	A-HEAD	TLRPC.java:65742	
-MessageMedia	0x695150d7	TL_messageMediaPhoto_layer223	opaque	A-HEAD	TLRPC.java:7869	
+MessageMedia	0x695150d7	TL_messageMediaPhoto_layer223	full	A-HEAD	TLRPC.java:7869	flags:# spoiler=F.3 [F.0: photo:Photo] [F.2: ttl_seconds:i32]
 MessageMedia	0x70322949	TL_messageMediaContact	full	A-HEAD	TLRPC.java:8159	phone_number:str first_name:str last_name:str vcard:str user_id:i64
 MessageMedia	0x773f4e66	TL_messageMediaPoll	full	A-HEAD	TLRPC.java:7898	flags:# poll:Poll results:PollResults [F.0: attached_media:MessageMedia]
-MessageMedia	0x7912b71f	TL_messageMediaVenue_layer71	opaque	A-HEAD	TLRPC.java:7520	
-MessageMedia	0x7c3c2609	TL_messageMediaGeoLive_layer119	opaque	A-HEAD	TLRPC.java:8061	
-MessageMedia	0x7c4414d3	TL_messageMediaDocument_layer74	opaque	A-HEAD	TLRPC.java:7771	
+MessageMedia	0x7912b71f	TL_messageMediaVenue_layer71	full	A-HEAD	TLRPC.java:7520	geo:GeoPoint title:str address:str provider:str venue_id:str
+MessageMedia	0x7c3c2609	TL_messageMediaGeoLive_layer119	full	A-HEAD	TLRPC.java:8061	geo:GeoPoint period:i32
+MessageMedia	0x7c4414d3	TL_messageMediaDocument_layer74	full	A-HEAD	TLRPC.java:7771	flags:# [F.0: document:Document] [F.1: captionLegacy:str] [F.2: ttl_seconds:i32]
 MessageMedia	0x84551347	TL_messageMediaInvoice_layer145	opaque	A-HEAD	TLRPC.java:7434	
 MessageMedia	0x8a53b014	TL_messageMediaToDo	opaque	A-HEAD	TLRPC.java:66764	
-MessageMedia	0x9cb070d7	TL_messageMediaDocument_layer159	opaque	A-HEAD	TLRPC.java:7739	
+MessageMedia	0x9cb070d7	TL_messageMediaDocument_layer159	full	A-HEAD	TLRPC.java:7739	flags:# nopremium=F.3 spoiler=F.4 [F.0: document:Document] [F.2: ttl_seconds:i32]
 MessageMedia	0x9f84f49e	TL_messageMediaUnsupported	full	A-HEAD	TLRPC.java:7475	
-MessageMedia	0xa2d24290	TL_messageMediaVideo_old	opaque	A-HEAD	TLRPC.java:7541	
-MessageMedia	0xa32dd600	TL_messageMediaWebPage_layer165	opaque	A-HEAD	TLRPC.java:8294	
+MessageMedia	0xa2d24290	TL_messageMediaVideo_old	full	A-HEAD	TLRPC.java:7541	video_unused:Video
+MessageMedia	0xa32dd600	TL_messageMediaWebPage_layer165	full	A-HEAD	TLRPC.java:8294	webpage:WebPage
 MessageMedia	0xa831bf37	TL_messageMediaWidget_layer233	opaque	A-HEAD	TLRPC.java:66851	
 MessageMedia	0xa8852491	TL_messageMediaPaidMedia	opaque	A-HEAD	TLRPC.java:66749	
 MessageMedia	0xaa073beb	TL_messageMediaGiveaway	opaque	A-HEAD	TLRPC.java:66626	
-MessageMedia	0xb5223b0f	TL_messageMediaPhoto_layer74	opaque	A-HEAD	TLRPC.java:7941	
+MessageMedia	0xb5223b0f	TL_messageMediaPhoto_layer74	full	A-HEAD	TLRPC.java:7941	flags:# [F.0: photo:Photo] [F.1: captionLegacy:str] [F.2: ttl_seconds:i32]
 MessageMedia	0xb7ed7b0d	TL_messageMediaWidget_old	opaque	A-HEAD	TLRPC.java:66876	
 MessageMedia	0xb940c666	TL_messageMediaGeoLive	full	A-HEAD	TLRPC.java:8032	flags:# geo:GeoPoint [F.0: heading:i32] period:i32 [F.1: proximity_notification_radius:i32]
 MessageMedia	0xc6991068	TL_messageMediaGiveawayResults_layer186	opaque	A-HEAD	TLRPC.java:66583	
-MessageMedia	0xc6b68300	TL_messageMediaAudio_layer45	opaque	A-HEAD	TLRPC.java:7282	
+MessageMedia	0xc6b68300	TL_messageMediaAudio_layer45	full	A-HEAD	TLRPC.java:7282	audio_unused:Audio
 MessageMedia	0xc79aee1d	MessageMediaStoryFull	opaque	A-HEAD	MessageMediaStoryFull.java:11	
 MessageMedia	0xc79aee1f	MessageMediaStoryFull_old	opaque	A-HEAD	MessageMediaStoryFull_old.java:9	
-MessageMedia	0xc8c45a2a	TL_messageMediaPhoto_old	opaque	A-HEAD	TLRPC.java:7295	
+MessageMedia	0xc8c45a2a	TL_messageMediaPhoto_old	full	A-HEAD	TLRPC.java:7295	photo:Photo
 MessageMedia	0xca5cab89	TL_messageMediaVideoStream	opaque	A-HEAD	TLRPC.java:8180	
 MessageMedia	0xcbb20d88	TL_messageMediaStory_layer162	opaque	A-HEAD	TLRPC.java:65767	
-MessageMedia	0xcbf24940	TL_messageMediaContact_layer131	opaque	A-HEAD	TLRPC.java:8138	
+MessageMedia	0xcbf24940	TL_messageMediaContact_layer131	full	A-HEAD	TLRPC.java:8138	phone_number:str first_name:str last_name:str vcard:str user_id:i32
 MessageMedia	0xceaa3ea1	TL_messageMediaGiveawayResults	opaque	A-HEAD	TLRPC.java:66517	
 MessageMedia	0xdaad85b0	TL_messageMediaGiveaway_layer186	opaque	A-HEAD	TLRPC.java:66683	
-MessageMedia	0xdbbdf614	TL_messageMediaDocument_layer197_2	opaque	A-HEAD	TLRPC.java:7610	
-MessageMedia	0xdd570bd5	TL_messageMediaDocument_layer197	opaque	A-HEAD	TLRPC.java:7657	
+MessageMedia	0xdbbdf614	TL_messageMediaDocument_layer197_2	full	A-HEAD	TLRPC.java:7610	flags:# nopremium=F.3 spoiler=F.4 video=F.6 round=F.7 voice=F.8 [F.0: document:Document] [F.5: alt_documents:vec<Document>] [F.9: video_cover:Photo] [F.2: ttl_seconds:i32]
+MessageMedia	0xdd570bd5	TL_messageMediaDocument_layer197	full	A-HEAD	TLRPC.java:7657	flags:# nopremium=F.3 spoiler=F.4 video=F.6 round=F.7 voice=F.8 [F.0: document:Document] [F.5: alt_documents:vec<Document>] [F.2: ttl_seconds:i32]
 MessageMedia	0xddf10c3b	TL_messageMediaWebPage	full	A-HEAD	TLRPC.java:8271	flags:# force_large_media=F.0 force_small_media=F.1 manual=F.3 safe=F.4 webpage:WebPage
 MessageMedia	0xe216eb63	TL_messageMediaPhoto	full	A-HEAD	TLRPC.java:7832	flags:# spoiler=F.3 live_photo=F.4 [F.0: photo:Photo] [F.2: ttl_seconds:i32] [F.4: document:Document]
-MessageMedia	0xf3e02ea8	TL_messageMediaDocument_layer68	opaque	A-HEAD	TLRPC.java:7817	
+MessageMedia	0xf3e02ea8	TL_messageMediaDocument_layer68	full	A-HEAD	TLRPC.java:7817	document:Document captionLegacy:str
 MessageMedia	0xf6a548d3	TL_messageMediaInvoice	opaque	A-HEAD	TLRPC.java:7386	
 MessageMedia	0xfdb19008	TL_messageMediaGame	opaque	A-HEAD	TLRPC.java:8076	
-Photo	0x22b56751	TL_photo_old	opaque	A-HEAD	TLRPC.java:33275	
+Photo	0x22b56751	TL_photo_old	full	A-HEAD	TLRPC.java:33275	id:i64 access_hash:i64 user_id:i32 date:i32 caption:str geo:GeoPoint sizes:vec<PhotoSize>
 Photo	0x2331b22d	TL_photoEmpty	full	A-HEAD	TLRPC.java:33262	id:i64
-Photo	0x9288dd29	TL_photo_layer82	opaque	A-HEAD	TLRPC.java:33360	
-Photo	0x9c477dd8	TL_photo_layer97	opaque	A-HEAD	TLRPC.java:33195	
-Photo	0xc3838076	TL_photo_old2	opaque	A-HEAD	TLRPC.java:33239	
-Photo	0xcded42fe	TL_photo_layer55	opaque	A-HEAD	TLRPC.java:33220	
-Photo	0xd07504a5	TL_photo_layer115	opaque	A-HEAD	TLRPC.java:33300	
+Photo	0x9288dd29	TL_photo_layer82	full	A-HEAD	TLRPC.java:33360	flags:# has_stickers=F.0 id:i64 access_hash:i64 date:i32 sizes:vec<PhotoSize>
+Photo	0x9c477dd8	TL_photo_layer97	full	A-HEAD	TLRPC.java:33195	flags:# has_stickers=F.0 id:i64 access_hash:i64 file_reference:secret date:i32 sizes:vec<PhotoSize>
+Photo	0xc3838076	TL_photo_old2	full	A-HEAD	TLRPC.java:33239	id:i64 access_hash:i64 user_id:i32 date:i32 geo:GeoPoint sizes:vec<PhotoSize>
+Photo	0xcded42fe	TL_photo_layer55	full	A-HEAD	TLRPC.java:33220	id:i64 access_hash:i64 date:i32 sizes:vec<PhotoSize>
+Photo	0xd07504a5	TL_photo_layer115	full	A-HEAD	TLRPC.java:33300	flags:# has_stickers=F.0 id:i64 access_hash:i64 file_reference:secret date:i32 sizes:vec<PhotoSize> dc_id:i32
 Photo	0xfb197a65	TL_photo	full	A-HEAD	TLRPC.java:33327	flags:# has_stickers=F.0 id:i64 access_hash:i64 file_reference:secret date:i32 sizes:vec<PhotoSize> [F.1: video_sizes:vec<VideoSize>] dc_id:i32
-Document	0x1e87342b	TL_document_layer142	opaque	A-HEAD	TLRPC.java:29229	
-Document	0x36f8c871	TL_documentEmpty	opaque	A-HEAD	TLRPC.java:29334	
-Document	0x55555556	TL_documentEncrypted_old	opaque	A-HEAD	TLRPC.java:29155	
+Document	0x1e87342b	TL_document_layer142	full	A-HEAD	TLRPC.java:29229	flags:# id:i64 access_hash:i64 file_reference:secret date:i32 mime_type:str size:i32 [F.0: thumbs:vec<PhotoSize>] [F.1: video_thumbs:vec<VideoSize>] dc_id:i32 attributes:vec<DocumentAttribute>
+Document	0x36f8c871	TL_documentEmpty	full	A-HEAD	TLRPC.java:29334	id:i64
+Document	0x55555556	TL_documentEncrypted_old	full	A-HEAD	TLRPC.java:29155	id:i64 access_hash:i64 user_id:i32 date:i32 file_name:str mime_type:str size:i32 thumbs:PhotoSize dc_id:i32 key:secret iv:secret
 Document	0x55555558	TL_documentEncrypted	full	A-HEAD	TLRPC.java:29347	id:i64 access_hash:i64 date:i32 mime_type:str size:i32 thumbs:PhotoSize dc_id:i32 attributes:vec<DocumentAttribute> key:secret iv:secret
-Document	0x59534e4c	TL_document_layer92	opaque	A-HEAD	TLRPC.java:29097	
-Document	0x87232bc7	TL_document_layer82	opaque	A-HEAD	TLRPC.java:29126	
+Document	0x59534e4c	TL_document_layer92	full	A-HEAD	TLRPC.java:29097	id:i64 access_hash:i64 file_reference:secret date:i32 mime_type:str size:i32 thumbs:PhotoSize dc_id:i32 attributes:vec<DocumentAttribute>
+Document	0x87232bc7	TL_document_layer82	full	A-HEAD	TLRPC.java:29126	id:i64 access_hash:i64 date:i32 mime_type:str size:i32 thumbs:PhotoSize dc_id:i32 _discarded_7:i32 attributes:vec<DocumentAttribute>
 Document	0x8fd4c4d8	TL_document	full	A-HEAD	TLRPC.java:29188	flags:# id:i64 access_hash:i64 file_reference:secret date:i32 mime_type:str size:i64 [F.0: thumbs:vec<PhotoSize>] [F.1: video_thumbs:vec<VideoSize>] dc_id:i32 attributes:vec<DocumentAttribute>
-Document	0x9ba29cc1	TL_document_layer113	opaque	A-HEAD	TLRPC.java:29270	
-Document	0x9efc6326	TL_document_old	opaque	A-HEAD	TLRPC.java:29305	
-Document	0xf9a39f4f	TL_document_layer53	opaque	A-HEAD	TLRPC.java:29378	
+Document	0x9ba29cc1	TL_document_layer113	full	A-HEAD	TLRPC.java:29270	flags:# id:i64 access_hash:i64 file_reference:secret date:i32 mime_type:str size:i32 [F.0: thumbs:vec<PhotoSize>] dc_id:i32 attributes:vec<DocumentAttribute>
+Document	0x9efc6326	TL_document_old	full	A-HEAD	TLRPC.java:29305	id:i64 access_hash:i64 user_id:i32 date:i32 file_name:str mime_type:str size:i32 thumbs:PhotoSize dc_id:i32
+Document	0xf9a39f4f	TL_document_layer53	full	A-HEAD	TLRPC.java:29378	id:i64 access_hash:i64 date:i32 mime_type:str size:i32 thumbs:PhotoSize dc_id:i32 attributes:vec<DocumentAttribute>
 GeoPoint	0x0296f104	TL_geoPoint_layer119	full	A-HEAD	TLRPC.java:5081	_long:dbl lat:dbl access_hash:i64
 GeoPoint	0x1117dd5f	TL_geoPointEmpty	full	A-HEAD	TLRPC.java:5113	
 GeoPoint	0x2049d70c	TL_geoPoint_layer81	full	A-HEAD	TLRPC.java:5098	_long:dbl lat:dbl
 GeoPoint	0xb2a2f663	TL_geoPoint	full	A-HEAD	TLRPC.java:5121	flags:# _long:dbl lat:dbl access_hash:i64 [F.0: accuracy_radius:i32]
-WebPage	0x211a1788	TL_webPageEmpty	opaque	A-HEAD	TLRPC.java:20333	
-WebPage	0x5f07b4bc	TL_webPage_layer104	opaque	A-HEAD	TLRPC.java:20149	
-WebPage	0x7311ca11	TL_webPageNotModified	opaque	A-HEAD	TLRPC.java:20431	
-WebPage	0x85849473	TL_webPageNotModified_layer110	full	A-HEAD	TLRPC.java:20418	
-WebPage	0xa31ea0b5	TL_webPage_old	opaque	A-HEAD	TLRPC.java:20248	
-WebPage	0xb0d13e47	TL_webPagePending	opaque	A-HEAD	TLRPC.java:20395	
-WebPage	0xc586da1c	TL_webPagePending_layer165	opaque	A-HEAD	TLRPC.java:20380	
-WebPage	0xca820ed7	TL_webPage_layer58	opaque	A-HEAD	TLRPC.java:20452	
-WebPage	0xd41a5167	TL_webPageUrlPending	opaque	A-HEAD	TLRPC.java:20367	
+WebPage	0x211a1788	TL_webPageEmpty	full	A-HEAD	TLRPC.java:20333	flags:# id:i64 [F.0: url:str]
+WebPage	0x5f07b4bc	TL_webPage_layer104	full	A-HEAD	TLRPC.java:20149	flags:# id:i64 url:str display_url:str hash:i32 [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document] [F.10: cached_page:TL_iv.Page]
+WebPage	0x7311ca11	TL_webPageNotModified	full	A-HEAD	TLRPC.java:20431	flags:# [F.0: cached_page_views:i32]
+WebPage	0x85849473	TL_webPageNotModified_layer110	opaque	A-HEAD	TLRPC.java:20418	
+WebPage	0xa31ea0b5	TL_webPage_old	full	A-HEAD	TLRPC.java:20248	flags:# id:i64 url:str display_url:str [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str]
+WebPage	0xb0d13e47	TL_webPagePending	full	A-HEAD	TLRPC.java:20395	flags:# id:i64 [F.0: url:str] date:i32
+WebPage	0xc586da1c	TL_webPagePending_layer165	full	A-HEAD	TLRPC.java:20380	id:i64 date:i32
+WebPage	0xca820ed7	TL_webPage_layer58	full	A-HEAD	TLRPC.java:20452	flags:# id:i64 url:str display_url:str [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document]
+WebPage	0xd41a5167	TL_webPageUrlPending	full	A-HEAD	TLRPC.java:20367	url:str
 WebPage	0xe89c45b2	TL_webPage	full	A-HEAD	TLRPC.java:19932	flags:# has_large_media=F.13 video_cover_photo=F.14 id:i64 url:str display_url:str hash:i32 [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document] [F.10: cached_page:TL_iv.Page] [F.12: attributes:vec<WebPageAttribute>]
-WebPage	0xeb1477e8	TL_webPageEmpty_layer165	opaque	A-HEAD	TLRPC.java:20354	
-WebPage	0xfa64e172	TL_webPage_layer107	opaque	A-HEAD	TLRPC.java:20041	
+WebPage	0xeb1477e8	TL_webPageEmpty_layer165	full	A-HEAD	TLRPC.java:20354	id:i64
+WebPage	0xfa64e172	TL_webPage_layer107	full	A-HEAD	TLRPC.java:20041	flags:# id:i64 url:str display_url:str hash:i32 [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document] [F.11: documents:vec<Document>] [F.10: cached_page:TL_iv.Page]
 User	0x020b1422	TL_user_layer216	prefix	A-HEAD	TLRPC.java:22479	flags:# self=F.10 contact=F.11 mutual_contact=F.12 deleted=F.13 bot=F.14 bot_chat_history=F.15 bot_nochats=F.16 verified=F.17 restricted=F.18 min=F.20 bot_inline_geo=F.21 support=F.23 scam=F.24 apply_min_photo=F.25 fake=F.26 bot_attach_menu=F.27 premium=F.28 attach_menu_enabled=F.29 flags2:# bot_can_edit=F2.1 close_friend=F2.2 stories_hidden=F2.3 stories_unavailable=F2.4 contact_require_premium=F2.10 bot_business=F2.11 bot_has_main_app=F2.13 bot_forum_view=F2.16 id:i64 [F.0: access_hash:i64] [F.1: first_name:str] [F.2: last_name:str] [F.3: username:str] [F.4: phone:str]
 User	0x075cf7a8	TL_userForeign_old2	prefix	A-HEAD	TLRPC.java:24461	id:i32 first_name:str last_name:str username:str
 User	0x1c60e608	TL_userSelf_old3	prefix	A-HEAD	TLRPC.java:24356	id:i32 first_name:str last_name:str username:str phone:str
@@ -259,3 +374,163 @@ Chat	0xfb0ccc41	TL_chatForbidden_old	prefix	A-HEAD	TLRPC.java:39794	id:i32 title
 Chat	0xfd3cdab8	TL_communityForbidden	full	A-HEAD	TLRPC.java:40682	flags:# id:i64 [F.13: access_hash:i64] title:str
 Chat	0xfe4478bd	TL_channel_layer195	prefix	A-HEAD	TLRPC.java:41273	flags:# creator=F.0 left=F.2 broadcast=F.5 verified=F.7 megagroup=F.8 restricted=F.9 signatures=F.11 min=F.12 scam=F.19 has_link=F.20 has_geo=F.21 slowmode_enabled=F.22 call_active=F.23 call_not_empty=F.24 fake=F.25 gigagroup=F.26 noforwards=F.27 join_to_send=F.28 join_request=F.29 forum=F.30 flags2:# stories_hidden=F2.1 stories_hidden_min=F2.2 stories_unavailable=F2.3 signature_profiles=F2.12 id:i64 [F.13: access_hash:i64] title:str [F.6: username:str]
 Chat	0xfe685355	TL_channel_layer216	prefix	A-HEAD	TLRPC.java:40756	flags:# creator=F.0 left=F.2 broadcast=F.5 verified=F.7 megagroup=F.8 restricted=F.9 signatures=F.11 min=F.12 scam=F.19 has_link=F.20 has_geo=F.21 slowmode_enabled=F.22 call_active=F.23 call_not_empty=F.24 fake=F.25 gigagroup=F.26 noforwards=F.27 join_to_send=F.28 join_request=F.29 forum=F.30 flags2:# stories_hidden=F2.1 stories_hidden_min=F2.2 stories_unavailable=F2.3 signature_profiles=F2.12 autotranslation=F2.15 broadcast_messages_allowed=F2.16 monoforum=F2.17 forum_tabs=F2.19 id:i64 [F.13: access_hash:i64] title:str [F.6: username:str]
+PhotoSize	0x021e1ad6	TL_photoCachedSize	full	A-HEAD	TLRPC.java:44569	type:str w:i32 h:i32 bytes:bytes
+PhotoSize	0x0e17e23c	TL_photoSizeEmpty	full	A-HEAD	TLRPC.java:44516	type:str
+PhotoSize	0x5aa86a51	TL_photoSizeProgressive_layer127	full	A-HEAD	TLRPC.java:44471	type:str location:FileLocation w:i32 h:i32 sizes:vec<i32>
+PhotoSize	0x75c78e60	TL_photoSize	full	A-HEAD	TLRPC.java:44550	type:str w:i32 h:i32 size:i32
+PhotoSize	0x77bfb61b	TL_photoSize_layer127	full	A-HEAD	TLRPC.java:44495	type:str location:FileLocation w:i32 h:i32 size:i32
+PhotoSize	0xd8214d41	TL_photoPathSize	full	A-HEAD	TLRPC.java:58903	type:str bytes:bytes
+PhotoSize	0xe0b0bc2e	TL_photoStrippedSize	full	A-HEAD	TLRPC.java:44455	type:str bytes:bytes
+PhotoSize	0xe9a734fa	TL_photoCachedSize_layer127	full	A-HEAD	TLRPC.java:44529	type:str location:FileLocation w:i32 h:i32 bytes:bytes
+PhotoSize	0xfa3efb95	TL_photoSizeProgressive	full	A-HEAD	TLRPC.java:44588	type:str w:i32 h:i32 sizes:vec<i32>
+VideoSize	0x0da082fe	TL_videoSizeStickerMarkup	full	A-HEAD	TLRPC.java:19032	stickerset:InputStickerSet sticker_id:i64 background_colors:vec<i32>
+VideoSize	0x435bb987	TL_videoSize_layer115	full	A-HEAD	TLRPC.java:19105	type:str location:FileLocation w:i32 h:i32 size:i32
+VideoSize	0xde33b094	TL_videoSize	full	A-HEAD	TLRPC.java:19155	flags:# type:str w:i32 h:i32 size:i32 [F.0: video_start_ts:dbl]
+VideoSize	0xe831c556	TL_videoSize_layer127	full	A-HEAD	TLRPC.java:19126	flags:# type:str location:FileLocation w:i32 h:i32 size:i32 [F.0: video_start_ts:dbl]
+VideoSize	0xf85c413c	TL_videoSizeEmojiMarkup	full	A-HEAD	TLRPC.java:19015	emoji_id:i64 background_colors:vec<i32>
+DocumentAttribute	0x051448e5	TL_documentAttributeAudio_old	full	A-HEAD	TLRPC.java:1645	duration:i32
+DocumentAttribute	0x0ef02ce6	TL_documentAttributeVideo_layer159	full	A-HEAD	TLRPC.java:1815	flags:# round_message=F.0 supports_streaming=F.1 duration:i32 w:i32 h:i32
+DocumentAttribute	0x11b58939	TL_documentAttributeAnimated	full	A-HEAD	TLRPC.java:1683	
+DocumentAttribute	0x15590068	TL_documentAttributeFilename	full	A-HEAD	TLRPC.java:1691	file_name:str
+DocumentAttribute	0x17399fad	TL_documentAttributeVideo_layer187	full	A-HEAD	TLRPC.java:1747	flags:# round_message=F.0 supports_streaming=F.1 nosound=F.3 duration:dbl w:i32 h:i32 [F.2: preload_prefix_size:i32] [F.4: video_start_ts:dbl]
+DocumentAttribute	0x3a556302	TL_documentAttributeSticker_layer55	full	A-HEAD	TLRPC.java:1630	alt:str stickerset:InputStickerSet
+DocumentAttribute	0x43c57c48	TL_documentAttributeVideo	full	A-HEAD	TLRPC.java:1704	flags:# round_message=F.0 supports_streaming=F.1 nosound=F.3 duration:dbl w:i32 h:i32 [F.2: preload_prefix_size:i32] [F.4: video_start_ts:dbl] [F.5: video_codec:str]
+DocumentAttribute	0x5910cccb	TL_documentAttributeVideo_layer65	full	A-HEAD	TLRPC.java:1838	duration:i32 w:i32 h:i32
+DocumentAttribute	0x6319d612	TL_documentAttributeSticker	full	A-HEAD	TLRPC.java:1658	flags:# mask=F.1 alt:str stickerset:InputStickerSet [F.0: mask_coords:TL_maskCoords]
+DocumentAttribute	0x6c37c15c	TL_documentAttributeImageSize	full	A-HEAD	TLRPC.java:1904	w:i32 h:i32
+DocumentAttribute	0x9801d2f7	TL_documentAttributeHasStickers	full	A-HEAD	TLRPC.java:1883	
+DocumentAttribute	0x9852f9c6	TL_documentAttributeAudio	full	A-HEAD	TLRPC.java:1919	flags:# voice=F.10 duration:i32 [F.0: title:str] [F.1: performer:str] [F.2: waveform:bytes]
+DocumentAttribute	0x994c9882	TL_documentAttributeSticker_old2	full	A-HEAD	TLRPC.java:1891	alt:str
+DocumentAttribute	0xd38ff1c2	TL_documentAttributeVideo_layer184	full	A-HEAD	TLRPC.java:1784	flags:# round_message=F.0 supports_streaming=F.1 nosound=F.3 duration:dbl w:i32 h:i32 [F.2: preload_prefix_size:i32]
+DocumentAttribute	0xded218e0	TL_documentAttributeAudio_layer45	full	A-HEAD	TLRPC.java:1855	duration:i32 title:str performer:str
+DocumentAttribute	0xfb0a5727	TL_documentAttributeSticker_old	full	A-HEAD	TLRPC.java:1872	
+DocumentAttribute	0xfd149899	TL_documentAttributeCustomEmoji	full	A-HEAD	TLRPC.java:1954	flags:# free=F.0 text_color=F.1 alt:str stickerset:InputStickerSet
+FileLocation	0x091d11eb	TL_fileLocation_layer97	full	A-HEAD	TLRPC.java:44288	dc_id:i32 volume_id:i64 local_id:i32 secret:i64 file_reference:secret
+FileLocation	0x53d69076	TL_fileLocation_layer82	full	A-HEAD	TLRPC.java:44269	dc_id:i32 volume_id:i64 local_id:i32 secret:i64
+FileLocation	0x55555554	TL_fileEncryptedLocation	full	A-HEAD	TLRPC.java:44324	dc_id:i32 volume_id:i64 local_id:i32 secret:i64 key:secret iv:secret
+FileLocation	0x7c596b46	TL_fileLocationUnavailable	full	A-HEAD	TLRPC.java:44252	volume_id:i64 local_id:i32 secret:i64
+FileLocation	0xbc7fc6cd	TL_fileLocationToBeDeprecated	full	A-HEAD	TLRPC.java:44309	volume_id:i64 local_id:i32
+InputStickerSet	0x028703c8	TL_inputStickerSetAnimatedEmoji	full	A-HEAD	TLRPC.java:30823	
+InputStickerSet	0x04c4d4ce	TL_inputStickerSetEmojiGenericAnimations	full	A-HEAD	TLRPC.java:30831	
+InputStickerSet	0x1cf671a0	TL_inputStickerSetTonGifts	full	A-HEAD	TLRPC.java:30737	
+InputStickerSet	0x29d0f5ee	TL_inputStickerSetEmojiDefaultStatuses	full	A-HEAD	TLRPC.java:30753	
+InputStickerSet	0x44c1f8e9	TL_inputStickerSetEmojiDefaultTopicIcons	full	A-HEAD	TLRPC.java:30839	
+InputStickerSet	0x49748553	TL_inputStickerSetEmojiChannelDefaultStatuses	full	A-HEAD	TLRPC.java:30745	
+InputStickerSet	0x79e21a53	TL_inputStickerSetDice_layer111	full	A-HEAD	TLRPC.java:30776	
+InputStickerSet	0x861cc8a0	TL_inputStickerSetShortName	full	A-HEAD	TLRPC.java:30810	short_name:str
+InputStickerSet	0x9de7a269	TL_inputStickerSetID	full	A-HEAD	TLRPC.java:30795	id:i64 access_hash:i64
+InputStickerSet	0xc88b3b02	TL_inputStickerSetPremiumGifts	full	A-HEAD	TLRPC.java:30729	
+InputStickerSet	0xe67f520e	TL_inputStickerSetDice	full	A-HEAD	TLRPC.java:30761	emoticon:str
+InputStickerSet	0xffb62b95	TL_inputStickerSetEmpty	full	A-HEAD	TLRPC.java:30787	
+TL_maskCoords	0xaed6dbb2	TL_maskCoords	full	A-HEAD	TLRPC.java:29623	n:i32 x:dbl y:dbl zoom:dbl
+Video	0x388fa391	TL_video_old2	full	A-HEAD	TLRPC.java:27814	id:i64 access_hash:i64 user_id:i32 date:i32 caption:str duration:i32 mime_type:str size:i32 thumb:PhotoSize dc_id:i32 w:i32 h:i32
+Video	0x55555553	TL_videoEncrypted	full	A-HEAD	TLRPC.java:27744	id:i64 access_hash:i64 user_id:i32 date:i32 caption:str duration:i32 size:i32 thumb:PhotoSize dc_id:i32 w:i32 h:i32 key:secret iv:secret
+Video	0x5a04a49f	TL_video_old	full	A-HEAD	TLRPC.java:27781	id:i64 access_hash:i64 user_id:i32 date:i32 caption:str duration:i32 size:i32 thumb:PhotoSize dc_id:i32 w:i32 h:i32
+Video	0xc10658a8	TL_videoEmpty_layer45	full	A-HEAD	TLRPC.java:27849	id:i64
+Video	0xee9f4a4d	TL_video_old3	full	A-HEAD	TLRPC.java:27682	id:i64 access_hash:i64 user_id:i32 date:i32 duration:i32 size:i32 thumb:PhotoSize dc_id:i32 w:i32 h:i32
+Video	0xf72887d3	TL_video_layer45	full	A-HEAD	TLRPC.java:27713	id:i64 access_hash:i64 date:i32 duration:i32 mime_type:str size:i32 thumb:PhotoSize dc_id:i32 w:i32 h:i32
+Audio	0x427425e7	TL_audio_old	full	A-HEAD	TLRPC.java:9704	id:i64 access_hash:i64 user_id:i32 date:i32 duration:i32 size:i32 dc_id:i32
+Audio	0x555555f6	TL_audioEncrypted	full	A-HEAD	TLRPC.java:9729	id:i64 access_hash:i64 user_id:i32 date:i32 duration:i32 size:i32 dc_id:i32 key:secret iv:secret
+Audio	0x586988d8	TL_audioEmpty_layer45	full	A-HEAD	TLRPC.java:9666	id:i64
+Audio	0xc7ac6496	TL_audio_old2	full	A-HEAD	TLRPC.java:9758	id:i64 access_hash:i64 user_id:i32 date:i32 duration:i32 mime_type:str size:i32 dc_id:i32
+Audio	0xf9e35055	TL_audio_layer45	full	A-HEAD	TLRPC.java:9679	id:i64 access_hash:i64 date:i32 duration:i32 mime_type:str size:i32 dc_id:i32
+MessageReplies	0x4128faac	TL_messageReplies_layer131	full	A-HEAD	TLRPC.java:9976	flags:# comments=F.0 replies:i32 replies_pts:i32 [F.1: recent_repliers:vec<Peer>] [F.0: channel_id:i32] [F.2: max_id:i32] [F.3: read_max_id:i32]
+MessageReplies	0x83d60fc2	TL_messageReplies	full	A-HEAD	TLRPC.java:10019	flags:# comments=F.0 replies:i32 replies_pts:i32 [F.1: recent_repliers:vec<Peer>] [F.0: channel_id:i64] [F.2: max_id:i32] [F.3: read_max_id:i32]
+MessageReactions	0x087b6e36	TL_messageReactionsOld	full	A-HEAD	TLRPC.java:27588	flags:# min=F.0 can_see_list=F.2 results:vec<ReactionCount> [F.1: recent_reactions:vec<MessagePeerReaction>]
+MessageReactions	0x0a339f0b	TL_messageReactions	full	A-HEAD	TLRPC.java:27428	flags:# min=F.0 can_see_list=F.2 reactions_as_tags=F.3 results:vec<ReactionCount> [F.1: recent_reactions:vec<MessagePeerReaction>] [F.4: top_reactors:vec<MessageReactor>]
+MessageReactions	0x4f2b9479	TL_messageReactions_layer185	full	A-HEAD	TLRPC.java:27461	flags:# min=F.0 can_see_list=F.2 reactions_as_tags=F.3 results:vec<ReactionCount> [F.1: recent_reactions:vec<MessagePeerReaction>]
+MessageReactions	0xb87a24d1	TL_messageReactions_layer137	full	A-HEAD	TLRPC.java:27623	flags:# min=F.0 results:vec<ReactionCount>
+Reaction	0x1b2286b8	TL_reactionEmoji	full	A-HEAD	TLRPC.java:51781	emoticon:str
+Reaction	0x523da4eb	TL_reactionPaid	full	A-HEAD	TLRPC.java:51773	
+Reaction	0x79f5d419	TL_reactionEmpty	full	A-HEAD	TLRPC.java:51765	
+Reaction	0x8935fc73	TL_reactionCustomEmoji	full	A-HEAD	TLRPC.java:51750	document_id:i64
+MessagePeerReaction	0x51b67eff	TL_messagePeerReaction_layer144	full	A-HEAD	TLRPC.java:2679	flags:# big=F.0 unread=F.1 peer_id:Peer reaction.emoticon:str
+MessagePeerReaction	0x8c79b63c	TL_messagePeerReaction	full	A-HEAD	TLRPC.java:2635	flags:# big=F.0 unread=F.1 peer_id:Peer date:i32 reaction:Reaction
+MessagePeerReaction	0x932844fa	TL_messagePeerReaction_layer137	full	A-HEAD	TLRPC.java:2704	peer_id:id64@user reaction.emoticon:str
+MessagePeerReaction	0xb156fe9c	TL_messagePeerReaction_layer154	full	A-HEAD	TLRPC.java:2658	flags:# big=F.0 unread=F.1 peer_id:Peer reaction:Reaction
+MessageReactor	0x4ba3a95a	TL_messageReactor	full	A-HEAD	TLRPC.java:27350	flags:# top=F.0 my=F.1 anonymous=F.2 [F.3: peer_id:Peer] count:i32
+MessageReactor	0xef00d448	TL_messageReactor_old	full	A-HEAD	TLRPC.java:27377	flags:# top=F.0 my=F.1 peer_id:Peer count:i32
+RestrictionReason	0xd072acb4	TL_reastrictionReason	full	A-HEAD	TLRPC.java:42864	platform:str reason:str text:str
+TL_factCheck	0xb89bfccf	TL_factCheck	full	A-HEAD	TLRPC.java:69998	flags:# need_check=F.0 [F.1: country:str text:TL_textWithEntities] hash:i64
+TL_textWithEntities	0x751f3146	TL_textWithEntities	full	A-HEAD	TLRPC.java:45022	text:str entities:vec<MessageEntity>
+SuggestedPost	0x0e8e37e5	SuggestedPost	full	A-HEAD	TLRPC.java:70661	flags:# accepted=F.1 rejected=F.2 [F.3: price:TL_stars.StarsAmount] [F.0: schedule_date:i32]
+TL_stars.StarsAmount	0x74aee3e0	TL_starsTonAmount	full	A-HEAD	TL_stars.java:2545	amount:i64
+TL_stars.StarsAmount	0xbbb6b4a3	TL_starsAmount	full	A-HEAD	TL_stars.java:2563	amount:i64 nanos:i32
+TL_messages_emojiGameOutcome	0xda2ad647	TL_messages_emojiGameOutcome	full	A-HEAD	TLRPC.java:71378	seed:bytes stake_ton_amount:i64 ton_amount:i64
+ReactionCount	0x6fb250d1	TL_reactionCount_layer144	opaque	A-HEAD	TLRPC.java:45165	
+ReactionCount	0xa3d1cb80	TL_reactionCount	full	A-HEAD	TLRPC.java:45142	flags:# chosen=F.0 [F.0: chosen_order:i32] reaction:Reaction count:i32
+WebPageAttribute	0x01c641c2	TL_webPageAttributeStarGiftAuction	opaque	A-HEAD	TLRPC.java:10389	
+WebPageAttribute	0x034986ab	TL_webPageAttributeStarGiftAuction_layer219	opaque	A-HEAD	TLRPC.java:10441	
+WebPageAttribute	0x2e94c3e7	TL_webPageAttributeStory	opaque	A-HEAD	TLRPC.java:10464	
+WebPageAttribute	0x31cad303	TL_webPageAttributeStarGiftCollection	full	A-HEAD	TLRPC.java:10515	icons:vec<Document>
+WebPageAttribute	0x50cc03d3	TL_webPageAttributeStickerSet	full	A-HEAD	TLRPC.java:10491	flags:# emojis=F.0 text_color=F.1 stickers:vec<Document>
+WebPageAttribute	0x54b56617	TL_webPageAttributeTheme	opaque	A-HEAD	TLRPC.java:10575	
+WebPageAttribute	0x7781fe18	TL_webPageAttributeAiComposeTone	full	A-HEAD	TLRPC.java:10424	emoji_id:i64
+WebPageAttribute	0x939a4671	TL_webPageAttributeStory_layer162	opaque	A-HEAD	TLRPC.java:10545	
+WebPageAttribute	0xcf6f6db8	TL_webPageAttributeUniqueStarGift	opaque	A-HEAD	TLRPC.java:10530	
+Poll	0x58747131	TL_poll_layer223	opaque	A-HEAD	TLRPC.java:34428	
+Poll	0x86e18161	TL_poll_layer178	opaque	A-HEAD	TLRPC.java:34475	
+Poll	0x966e2dbf	TL_poll	opaque	A-HEAD	TLRPC.java:34318	
+Poll	0xaf746786	TL_poll_toDelete	opaque	A-HEAD	TLRPC.java:34515	
+Poll	0xb8425be9	TL_poll_layer224	opaque	A-HEAD	TLRPC.java:34377	
+Poll	0xd5529d06	TL_poll_layer111	opaque	A-HEAD	TLRPC.java:34549	
+PollResults	0x5755785a	TL_pollResults_layer108	opaque	A-HEAD	TLRPC.java:4235	
+PollResults	0x7adf2420	TL_pollResults_layer223	opaque	A-HEAD	TLRPC.java:4392	
+PollResults	0xba7bb15e	TL_pollResults	opaque	A-HEAD	TLRPC.java:4336	
+PollResults	0xbadcc1a3	TL_pollResults_layer131	opaque	A-HEAD	TLRPC.java:4295	
+PollResults	0xc87024a2	TL_pollResults_layer111	opaque	A-HEAD	TLRPC.java:4262	
+PollResults	0xdcb82ea3	TL_pollResults_layer158	opaque	A-HEAD	TLRPC.java:4437	
+ReplyMarkup	0x3502758c	TL_replyKeyboardMarkup_layer129	opaque	A-HEAD	TLRPC.java:10279	
+ReplyMarkup	0x48a30254	TL_replyInlineMarkup_layer228	opaque	A-HEAD	TLRPC.java:10353	
+ReplyMarkup	0x58f7fcb6	TL_replyInlineMarkup_layer228_old	opaque	A-HEAD	TLRPC.java:10336	
+ReplyMarkup	0x85dd99d1	TL_replyKeyboardMarkup	opaque	A-HEAD	TLRPC.java:10208	
+ReplyMarkup	0x86b40b08	TL_replyKeyboardForceReply	opaque	A-HEAD	TLRPC.java:10256	
+ReplyMarkup	0xa03e5b85	TL_replyKeyboardHide	opaque	A-HEAD	TLRPC.java:10241	
+ReplyMarkup	0xb2b15770	TL_replyInlineMarkup	opaque	A-HEAD	TLRPC.java:10317	
+ReplyMarkup	0xf4108aa0	TL_replyKeyboardForceReply_layer129	opaque	A-HEAD	TLRPC.java:10300	
+InputUser	0x1da448e2	TL_inputUserFromMessage	opaque	A-HEAD	TLRPC.java:18959	
+InputUser	0x2d117597	TL_inputUserFromMessage_layer132	opaque	A-HEAD	TLRPC.java:18994	
+InputUser	0xb98886cf	TL_inputUserEmpty	full	A-HEAD	TLRPC.java:18951	
+InputUser	0xd8292816	TL_inputUser_layer132	opaque	A-HEAD	TLRPC.java:18979	
+InputUser	0xf21158c6	TL_inputUser	opaque	A-HEAD	TLRPC.java:18936	
+InputUser	0xf7c1b13f	TL_inputUserSelf	full	A-HEAD	TLRPC.java:18928	
+TL_iv.RichText	0x01a9fbfc	textMentionName	opaque	A-HEAD	TL_iv.java:718	
+TL_iv.RichText	0x02ff29d3	textBotCommand	opaque	A-HEAD	TL_iv.java:634	
+TL_iv.RichText	0x034b8621	textMarked	opaque	A-HEAD	TL_iv.java:490	
+TL_iv.RichText	0x081ccf4f	textImage	opaque	A-HEAD	TL_iv.java:518	
+TL_iv.RichText	0x1ccb966a	textPhone	opaque	A-HEAD	TL_iv.java:502	
+TL_iv.RichText	0x24c26789	textAutoPhone	opaque	A-HEAD	TL_iv.java:690	
+TL_iv.RichText	0x35553762	textAnchor	opaque	A-HEAD	TL_iv.java:539	
+TL_iv.RichText	0x3c2884c1	textUrl	opaque	A-HEAD	TL_iv.java:424	
+TL_iv.RichText	0x3cd2a36a	textTonAddress	opaque	A-HEAD	TL_iv.java:834	
+TL_iv.RichText	0x4c2a5d62	textSpoiler	opaque	A-HEAD	TL_iv.java:592	
+TL_iv.RichText	0x519524ea	textHashtag	opaque	A-HEAD	TL_iv.java:620	
+TL_iv.RichText	0x6724abc4	textBold	opaque	A-HEAD	TL_iv.java:364	
+TL_iv.RichText	0x6c3f19b9	textFixed	opaque	A-HEAD	TL_iv.java:412	
+TL_iv.RichText	0x744694e0	textPlain	opaque	A-HEAD	TL_iv.java:350	
+TL_iv.RichText	0x7b9e1801	textCashtag	opaque	A-HEAD	TL_iv.java:648	
+TL_iv.RichText	0x7e6260d7	textConcat	opaque	A-HEAD	TL_iv.java:454	
+TL_iv.RichText	0x9686cb50	textDiff	opaque	A-HEAD	TL_iv.java:775	
+TL_iv.RichText	0x9bf8bb95	textStrike	opaque	A-HEAD	TL_iv.java:400	
+TL_iv.RichText	0x9d2eac97	textMath	opaque	A-HEAD	TL_iv.java:554	
+TL_iv.RichText	0xa26156c0	textCustomEmoji	opaque	A-HEAD	TL_iv.java:573	
+TL_iv.RichText	0xa5b45e2b	textDate	opaque	A-HEAD	TL_iv.java:736	
+TL_iv.RichText	0xac6a83aa	textAutoUrl	opaque	A-HEAD	TL_iv.java:662	
+TL_iv.RichText	0xafc79cd6	textButton	opaque	A-HEAD	TL_iv.java:794	
+TL_iv.RichText	0xb956812d	textBankCard	opaque	A-HEAD	TL_iv.java:704	
+TL_iv.RichText	0xc12622c4	textUnderline	opaque	A-HEAD	TL_iv.java:388	
+TL_iv.RichText	0xc556a45d	textAutoEmail	opaque	A-HEAD	TL_iv.java:676	
+TL_iv.RichText	0xc7fb5e01	textSuperscript	opaque	A-HEAD	TL_iv.java:478	
+TL_iv.RichText	0xcd24cf44	textMention	opaque	A-HEAD	TL_iv.java:606	
+TL_iv.RichText	0xd912a59c	textItalic	opaque	A-HEAD	TL_iv.java:376	
+TL_iv.RichText	0xdc3d824f	textEmpty	full	A-HEAD	TL_iv.java:343	
+TL_iv.RichText	0xde5a0dd6	textEmail	opaque	A-HEAD	TL_iv.java:440	
+TL_iv.RichText	0xed6a8504	textSubscript	opaque	A-HEAD	TL_iv.java:466	
+TL_iv.Page	0x556ec7aa	TL_pageFull_layer82	opaque	A-HEAD	TL_iv.java:162	
+TL_iv.Page	0x8dee6c44	TL_pagePart_layer67	opaque	A-HEAD	TL_iv.java:145	
+TL_iv.Page	0x8e3f9ebe	TL_pagePart_layer82	opaque	A-HEAD	TL_iv.java:128	
+TL_iv.Page	0x98657f0d	TL_page	opaque	A-HEAD	TL_iv.java:48	
+TL_iv.Page	0xae891bec	TL_page_layer110	opaque	A-HEAD	TL_iv.java:80	
+TL_iv.Page	0xd7a19d69	TL_pageFull_layer67	opaque	A-HEAD	TL_iv.java:178	
+TL_iv.Page	0xf199a0a8	TL_page_layer88	opaque	A-HEAD	TL_iv.java:104	
+TL_iv.RichMessage	0xbaf39d8b	RichMessage	opaque	A-HEAD	TL_iv.java:195	

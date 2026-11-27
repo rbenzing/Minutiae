@@ -2,8 +2,9 @@
 
     py -3 -I tools/fixtures/telegram_tl_facts.py --emit <srcdir> [--pin <name>] [--absent-from <constructors.tsv>]
     py -3 -I tools/fixtures/telegram_tl_facts.py --check <constructors.tsv> --pin <name> <srcdir>
-        [--commit SHA] [--write-report FILE]
+        [--head <A-HEAD srcdir>] [--commit SHA] [--write-report FILE]
     py -3 -I tools/fixtures/telegram_tl_facts.py --assemble <schemasdir> <report.md>... [--ddl <ddl-report.md>...]
+    py -3 -I tools/fixtures/telegram_tl_facts.py --hand <schemasdir> <notes.md>
     py -3 -I tools/fixtures/telegram_tl_facts.py --go <tables.go> <constructors.tsv>
 
 <srcdir> holds the app source fetched at one pinned commit, under the repository's paths below
@@ -31,8 +32,16 @@ rows on stderr; the rows' body follows the selection of plan 4I4 Task 1 (SELECTI
 --absent-from it prints only the IDs that table lacks (the rows of IDs an older pin reads and A-HEAD no
 longer does). --check compares a constructors.tsv with the sources of one pin: every row pinned there is
 `verified`, `MISMATCH` or `MANUAL`; at A-HEAD every ID each type's switch reads must be a row (else
-`missing`; MessageAction holds the phone-call action only); at an older pin it reports membership, every
-ID of the pinned types' switches `in-table` or `missing`. Exit status 1 on any MISMATCH or missing. Each
+`missing`) and every object type a full or prefix row names must be a type of the selection (the closure, plan
+4I4b design D3: else `missing (type <T> named by <class>)`); at an older pin (which needs --head, the A-HEAD
+sources) it reports membership, every ID of the pinned types' switches `in-table` or `missing`, then the body
+comparison of plan 4I4b (design D6, ruling B4): every row whose ID the pin's switch reads, its body reduced at
+that pin against its A-HEAD reading, `equal`, `CONFLICT` or `membership-only` (the reduction cannot read it there);
+a CONFLICT passes only for an ID of PIN_CONFLICTS on an opaque row. Types are spelled as the table spells them at
+every pin (design D5: a class with no deserializer of its own names the type whose switch reads it, `owner`; an
+`Outer.Name` type is `Name` at a pin without `Outer.java`). Exit status 1 on any MISMATCH, missing or counted
+CONFLICT. --hand writes a hand-read section (the notes file, its first line the heading) into CROSSCHECK.md,
+replacing the section under that heading, else appending it last (4I4b-P7). Each
 report names the SHA-256 of the constructors.tsv and facts.tsv it checked. A MANUAL row is reported as
 "MANUAL, read by hand at <file>:<line>" with its reason: the builder reads it there. --assemble writes
 <schemasdir>/CROSSCHECK.md from the fixed text below, the reports in the order given, and facts.tsv.
@@ -58,27 +67,80 @@ HEADER = "type\tid\tclass\tbody\tpin\tsource\tfields"
 #   some-full:   the listed classes full, every other constructor of the switch opaque, except one whose readParams
 #                reads nothing: it is read whole, so it is full with an empty field list (Task 5 review ruling M3).
 #   prefix:      every constructor up to its last needed field (spec Q2, T6), full when that is the body.
+#
+# Plan 4I4b Task 1 (design D1, D3, rulings R2, B2, B9): every type a full or prefix row names is in the selection (the
+# closure), so every ID its A-HEAD switch reads is a row; a closure type the parser does not read is `some-full` with
+# no class (every row opaque, except a class that reads nothing, rule M3). MessageAction is `some-full` like any other
+# type: every action the switch reads is a row (B2).
 SELECTION = [
     ("Message", "all-full", None),
     ("Peer", "all-full", None),
     ("MessageFwdHeader", "all-full", None),
     ("MessageReplyHeader", "all-full", None),
     ("MessageEntity", "all-full", None),
-    ("MessageAction", "only", {0x80E11A7F}),
+    ("MessageAction", "some-full", {"TL_messageActionPhoneCall"}),
     ("PhoneCallDiscardReason", "all-full", None),
     ("MessageMedia", "some-full", {
         "TL_messageMediaPhoto", "TL_messageMediaDocument", "TL_messageMediaGeo", "TL_messageMediaGeoLive",
-        "TL_messageMediaContact", "TL_messageMediaVenue", "TL_messageMediaWebPage", "TL_messageMediaPoll"}),
-    ("Photo", "some-full", {"TL_photo", "TL_photoEmpty"}),
-    ("Document", "some-full", {"TL_document", "TL_documentEncrypted"}),
+        "TL_messageMediaContact", "TL_messageMediaVenue", "TL_messageMediaWebPage", "TL_messageMediaPoll",
+        # plan 4I4b (recon §3.2): the media containers of every layer
+        "TL_messageMediaDice", "TL_messageMediaDocument_old", "TL_messageMediaPhoto_layer68",
+        "TL_messageMediaDice_layer220", "TL_messageMediaDocument_layer187", "TL_messageMediaVideo_layer45",
+        "TL_messageMediaContact_layer81", "TL_messageMediaDice_layer111", "TL_messageMediaPhoto_layer223",
+        "TL_messageMediaVenue_layer71", "TL_messageMediaGeoLive_layer119", "TL_messageMediaDocument_layer74",
+        "TL_messageMediaDocument_layer159", "TL_messageMediaVideo_old", "TL_messageMediaWebPage_layer165",
+        "TL_messageMediaPhoto_layer74", "TL_messageMediaAudio_layer45", "TL_messageMediaPhoto_old",
+        "TL_messageMediaContact_layer131", "TL_messageMediaDocument_layer197_2", "TL_messageMediaDocument_layer197",
+        "TL_messageMediaDocument_layer68"}),
+    ("Photo", "all-full", None),
+    ("Document", "all-full", None),
     ("GeoPoint", "all-full", None),
-    ("WebPage", "some-full", {"TL_webPage"}),
+    ("WebPage", "all-full", None),
     ("User", "prefix", {"id", "first_name", "last_name", "username", "phone"}),
     ("Chat", "prefix", {"id", "title", "username"}),
+    # plan 4I4b: the media sub-objects and the tail objects (recon §3.1, §3.3)
+    ("PhotoSize", "all-full", None),
+    ("VideoSize", "all-full", None),
+    ("DocumentAttribute", "all-full", None),
+    ("FileLocation", "all-full", None),
+    ("InputStickerSet", "all-full", None),
+    ("TL_maskCoords", "all-full", None),
+    ("Video", "all-full", None),
+    ("Audio", "all-full", None),
+    ("MessageReplies", "all-full", None),
+    ("MessageReactions", "all-full", None),
+    ("Reaction", "all-full", None),
+    ("MessagePeerReaction", "all-full", None),
+    ("MessageReactor", "all-full", None),
+    ("RestrictionReason", "all-full", None),
+    ("TL_factCheck", "all-full", None),
+    ("TL_textWithEntities", "all-full", None),
+    ("SuggestedPost", "all-full", None),
+    ("TL_stars.StarsAmount", "all-full", None),
+    ("TL_messages_emojiGameOutcome", "all-full", None),
+    # 0x6fb250d1 is read two ways across the pins (ruling R3): opaque
+    ("ReactionCount", "some-full", {"TL_reactionCount"}),
+    ("WebPageAttribute", "some-full", {
+        "TL_webPageAttributeStickerSet", "TL_webPageAttributeStarGiftCollection", "TL_webPageAttributeAiComposeTone"}),
+    # the closure types the parser does not read (design D3): opaque, except a class that reads nothing (M3)
+    ("Poll", "some-full", set()),
+    ("PollResults", "some-full", set()),
+    ("ReplyMarkup", "some-full", set()),
+    ("InputUser", "some-full", set()),
+    ("TL_iv.RichText", "some-full", set()),
+    ("TL_iv.Page", "some-full", set()),
+    ("TL_iv.RichMessage", "some-full", set()),
 ]
-# At an older pin, membership covers every switch ID of each type, except MessageAction, of which the table
-# holds the phone-call action only: there only the classes of that family are checked.
-MEMBERSHIP_FAMILY = {"MessageAction": "TL_messageActionPhoneCall"}
+# The IDs pinned app versions read two ways (recon §4.2, design D4, ruling R3; coordinator ruling T1b generalises it):
+# each row is opaque whatever the selection says, so the table never picks one reading; its older-pin body CONFLICT is
+# reported with both readings and passes, but only on an opaque row (4I4b-P7). 0x85849473 and 0x332ba9ed: the older
+# classes have no readParams of their own and inherit their parent's (flags and a flag-gated field), A-HEAD overrides
+# it with an empty one; 0x48a30254: the rows' element type differs (recon §4.3).
+PIN_CONFLICTS = {0x6FB250D1, 0x85849473, 0x332BA9ED, 0x48A30254}
+# Ruling T1c (compatible widening): an older pin reads a vector's elements by one self-checking class, A-HEAD by the
+# switch of a type that holds that class's ID. {older class: (A-HEAD type, ID)}: the older reading is the A-HEAD one
+# when the ID's body is the same at that pin and at A-HEAD (checked by body_check at every pin).
+WIDENINGS = {"TL_webPageAttributeTheme": ("WebPageAttribute", 0x54B56617)}
 SECRET_LEAVES = {"key", "iv", "file_reference", "encrypted_key"}
 PEER_CLASS = {"TL_peerUser": "user", "TL_peerChat": "chat", "TL_peerChannel": "channel"}
 TARGET_CLASS = {"user_id": "user", "chat_id": "chat", "channel_id": "channel"}
@@ -136,6 +198,25 @@ in scratch only and are not in the repository; each is pinned below by commit an
 `TMessagesProj/src/main/java/org/telegram/`). Fetched 2026-11-20 by plain HTTP, one file at a time, with a generic user
 agent. Sources are untrusted text: the script reads them with regular expressions and never runs them. Facts only (IDs,
 class names, field order, flag bits, `file:line`): no code is copied.
+
+Plan 4I4b (Task 1, fetched again 2026-11-26 the same way, every file with the SHA-256 the per-pin tables below give):
+the fetch adds every `tgnet/tl/*.java` and `tgnet/tl/legacy/*.java` of each pin, `ui/Cells/ChatMessageCell.java` and
+`messenger/LocaleController.java` at every pin (the `edit_date` route of `facts.tsv`, ruling B3) and
+`tgnet/VectorLegacy.java` at A-HEAD; the 4I4 statements below about the files fetched hold for 4I4 only. The table grows
+to the closure (design D3, rulings R2, B2): every object type a `full` or `prefix` row names is a type of the table,
+every ID its A-HEAD switch reads is a row, MessageAction included, and the A-HEAD `--check` reports it. A field typed by
+a class with no deserializer of its own names the type whose switch reads it (design D5: `reactions:MessageReactions`
+in `TL_messageService` and `_layer204`, `TLRPC.java:27398` and `27428`), and a type nested in another file is
+`Outer.Name` (`TL_iv.Page`, `TL_stars.StarsAmount`), `Name` at a pin without that file. Each older pin's report ends
+with the body comparison (design D6, rulings B4, T1a): what each row reads there against its A-HEAD reading; field
+names that differ on one wire shape are informational. An ID the pins read two ways is `opaque` and its pin conflict
+names both readings (rulings R3, T1b): `0x6fb250d1` (a string at release-5.14.0_1851 and release-8.1.1_2431, a boxed
+Reaction at A-HEAD), `0x85849473` and `0x332ba9ed` (the older classes inherit their parent's reader, A-HEAD reads
+nothing; `0x85849473` was a `full` row in 4I4, corrected here), `0x48a30254` (the rows' element type). `TL_webPage`
+`0xe89c45b2` keeps the A-HEAD `vec<WebPageAttribute>`: where an older pin reads the attributes by the single class
+`TL_webPageAttributeTheme`, that class's ID `0x54b56617` reads the same fields at that pin and at A-HEAD (a compatible
+widening, ruling T1c; its `settings:ThemeSettings` element `0x9c14984a` is read by hand at A-HEAD and not compared). The
+hand-read rows of plan 4I4b are in their own section at the end of this file.
 
 ## Pins
 
@@ -274,6 +355,7 @@ class JavaClass:
         self.fname, self.line, self.name, self.extends, self.outer = fname, line, name, extends, outer
         self.end = None
         self.constructor = None
+        self.deser = False  # declares a static TLdeserialize or fromConstructor of its own (design D5)
         self.methods = []  # (signature line, first body line index, last body line index)
 
 
@@ -282,6 +364,7 @@ def index_file(fname, lines):
     classes, stack, depth = [], [], 0
     class_re = re.compile(r"\bclass\s+(\w+)(?:\s*<[^>]*>)?(?:\s+extends\s+([\w.]+))?[^{;]*\{")
     cons_re = re.compile(r"\bstatic\s+(?:final\s+)?int\s+constructor\s*=\s*(0x[0-9a-fA-F]+)\s*;")
+    deser_re = re.compile(r"\bstatic\s+[\w.<>]+\s+(?:TLdeserialize|fromConstructor)\s*\(")
     meth_re = re.compile(r"\bvoid\s+readParams\(\s*\w+\s+stream\s*,\s*boolean\s+exception\s*(,[^)]*)?\)\s*\{")
     open_methods = []
     for i, line in enumerate(lines):
@@ -296,6 +379,8 @@ def index_file(fname, lines):
             cm = cons_re.search(line)
             if cm and cur.constructor is None and depth == stack[-1][1] + 1:
                 cur.constructor = int(cm.group(1), 16)
+            if deser_re.search(line) and depth == stack[-1][1] + 1:
+                cur.deser = True
             mm = meth_re.search(line)
             if mm and depth == stack[-1][1] + 1:
                 open_methods.append((cur, i, depth, mm.group(1) is not None))
@@ -331,20 +416,71 @@ class Source:
         for c in self.classes:
             self.by_name.setdefault(c.name, []).append(c)
 
-    def resolve(self, ref):
-        """A class named by a switch: `Name` (TLRPC first) or `Outer.Name`."""
+    def resolve(self, ref, near=None):
+        """A class named by a switch or a field: `Name` (the file `near` first, then TLRPC) or `Outer.Name`
+        (`TLRPC.Name` is `Name`)."""
         parts = ref.split(".")
+        if len(parts) > 1 and parts[0] == "TLRPC":
+            parts = parts[1:]
         cands = self.by_name.get(parts[-1], [])
         if len(parts) > 1:
             cands = [c for c in cands if c.outer is not None and c.outer.name == parts[-2]]
         else:
+            here = [c for c in cands if near is not None and c.fname == near]
             tl = [c for c in cands if c.fname == "TLRPC.java"]
-            cands = tl or cands
+            cands = here or tl or cands
         return cands[0] if len(cands) == 1 else None
 
-    def base(self, typ):
-        cands = [c for c in self.by_name.get(typ, []) if c.fname == "TLRPC.java" and c.extends == "TLObject"]
+    @staticmethod
+    def spell(c):
+        """A class as a field names it: `Name` for a class of TLRPC.java, `Outer.Name` for one nested elsewhere."""
+        return c.name if c.outer is None or c.outer.name == "TLRPC" else c.outer.name + "." + c.name
+
+    def _top(self, name, outer=None):
+        """The class `name` (nested in `outer` when given) that extends TLObject, TLRPC.java first, or None."""
+        cands = [c for c in self.by_name.get(name, []) if c.extends in ("TLObject", "TLRPC.TLObject")]
+        if outer is not None:
+            cands = [c for c in cands if c.outer is not None and c.outer.name == outer]
+        else:
+            cands = [c for c in cands if c.fname == "TLRPC.java"] or cands
         return cands[0] if len(cands) == 1 else None
+
+    def _names(self, typ):
+        """(outer, name) lookups of a type at this pin: `Outer.Name` drops its outer prefix at a pin without the file
+        `Outer.java` (TL_iv.Page is Page in TLRPC.java at A-11.4.2 and older)."""
+        parts = typ.split(".")
+        if len(parts) == 1:
+            return None, typ
+        if parts[0] + ".java" in self.files:
+            return parts[0], parts[1]
+        return None, parts[1]
+
+    def base(self, typ):
+        """The class of the type: the class `typ` extending TLObject (in every loaded file)."""
+        outer, name = self._names(typ)
+        return self._top(name, outer)
+
+    def type_class(self, typ):
+        """The class that reads the type at this pin: its base, else the single class TL_<lowerFirst(name)>."""
+        b = self.base(typ)
+        if b is not None:
+            return b
+        outer, name = self._names(typ)
+        one = self._top("TL_" + name[0].lower() + name[1:], outer)
+        return one if one is not None and one.constructor is not None else None
+
+    def owner(self, name, near=None):
+        """Design D5: the class whose static TLdeserialize/fromConstructor a call on `name` reaches (Java static
+        methods are inherited through `extends`), spelled as a field names it; None when it cannot be resolved."""
+        c, seen = self.resolve(name, near), set()
+        while c is not None and id(c) not in seen:
+            seen.add(id(c))
+            if c.deser:
+                return self.spell(c)
+            if not c.extends or c.extends in ("TLObject", "TLRPC.TLObject"):
+                return None
+            c = self.resolve(c.extends, c.fname)
+        return None
 
     def switch(self, typ):
         """[(id, case line, class)] of the type's constructor switch, or None when the type is not defined."""
@@ -352,9 +488,8 @@ class Source:
         if b is None:
             # a type with one constructor and no base class (MessageReplyHeader at release-8.1.1_2431: the
             # class TL_messageReplyHeader extends TLObject and checks its own constructor)
-            one = [c for c in self.by_name.get("TL_" + typ[0].lower() + typ[1:], [])
-                   if c.fname == "TLRPC.java" and c.extends == "TLObject" and c.constructor is not None]
-            return [(one[0].constructor, one[0].line, one[0])] if len(one) == 1 else None
+            one = self.type_class(typ)
+            return [(one.constructor, one.line, one)] if one is not None else None
         lines = self.files[b.fname]
         start = None
         for i in range(b.line - 1, b.end):
@@ -362,7 +497,8 @@ class Source:
                 start = i
                 break
         if start is None:
-            return None
+            # a self-checking class (SuggestedPost, TL_factCheck): it reads its own constructor only
+            return [(b.constructor, b.line, b)] if b.constructor is not None else None
         out, labels, depth = [], [], 0
         for i in range(start, b.end):
             line = lines[i].strip()
@@ -373,13 +509,13 @@ class Source:
                     labels.append((int(lab, 16), i + 1))
                 else:
                     cm = re.fullmatch(r"([\w.]+)\.constructor", lab)
-                    c = self.resolve(cm.group(1)) if cm else None
+                    c = self.resolve(cm.group(1), b.fname) if cm else None
                     if c is None or c.constructor is None:
                         raise SystemExit("unresolved case label at %s:%d" % (b.fname, i + 1))
                     labels.append((c.constructor, i + 1))
             m = re.search(r"(?:return|result\s*=)\s*new\s+([\w.]+)\s*\(", line)
             if m and labels:
-                c = self.resolve(m.group(1))
+                c = self.resolve(m.group(1), b.fname)
                 if c is None:
                     raise SystemExit("unresolved class %s at %s:%d" % (m.group(1), b.fname, i + 1))
                 out += [(cid, ln, c) for cid, ln in labels]
@@ -420,10 +556,10 @@ def body_of(src, c):
     if not plain:
         # no readParams: the body is empty when the class extends its TL type's base directly (TLObject's
         # readParams reads nothing), else it is the parent's
-        parent = src.resolve(c.extends or "")
+        parent = src.resolve(c.extends or "", c.fname)
         if parent is None:
             raise Manual("%s:%d" % (c.fname, c.line), "no readParams and no parent found")
-        if parent.extends == "TLObject":
+        if parent.extends in ("TLObject", "TLRPC.TLObject"):
             return None
         return body_of(src, parent)
     first, last, _ = plain[0]
@@ -684,28 +820,120 @@ def row_source(src, typ, cid, case_line, c):
     """A row cites its class line; an alias case label (an ID that is not the class's constant) cites the label."""
     if cid == c.constructor:
         return "%s:%d" % (c.fname, c.line)
-    return "%s:%d" % (src.base(typ).fname, case_line)
+    return "%s:%d" % (src.type_class(typ).fname, case_line)
+
+
+def pin_types(src):
+    """Design D5, ruling B4: {pin spelling: table spelling} of every SELECTION type at this pin. The type's own class
+    (its base, or its single class: TL_messageReactions, TL_poll, TL_reactionCount at the old pins; Page for TL_iv.Page
+    where TL_iv.java does not exist) and every class whose TLdeserialize call reaches that class (`owner`), so a field
+    typed TL_messageReactions names MessageReactions."""
+    names = {}
+    for typ, _, _ in SELECTION:
+        c = src.type_class(typ)
+        if c is not None:
+            names.setdefault(src.spell(c), typ)
+    for c in src.classes:
+        if src.spell(c) in names:
+            continue
+        o = src.owner(src.spell(c), c.fname)
+        if o is not None and o in names:
+            names[src.spell(c)] = names[o]
+    return names
+
+
+def compare_names(src):
+    """Ruling B4: {spelling: comparison name} of every class at this pin, for the older-pin body comparison. A class
+    names the type whose deserializer a call on it reaches (design D5, `owner`); a type of the table is spelled as the
+    table spells it (pin_types); any other type by its class name without an outer prefix, a self-checking single class
+    TL_<lowerFirst(T)> of a pin without a type T as T (the single-class rule of `type_class`)."""
+    table = pin_types(src)
+    names = {}
+    for c in src.classes:
+        o = src.owner(src.spell(c), c.fname)
+        oc = src.resolve(o, c.fname) if o is not None else None
+        oc = oc or c
+        key = table.get(src.spell(oc))
+        if key is None:
+            key = oc.name
+            m = re.fullmatch(r"TL_([a-z])(\w*)", key)
+            if m and src.base(m.group(1).upper() + m.group(2)) is None:
+                key = m.group(1).upper() + m.group(2)
+        for spelling in (src.spell(c), c.name):
+            if spelling == c.name and src.resolve(c.name) is not c:
+                continue  # a bare name another class answers to first
+            names.setdefault(spelling, key)
+    names.update(table)
+    return names
+
+
+def map_token(tok, names):
+    """One field token with its object type spelled as the table spells it (`names` from pin_types)."""
+    close = tok.endswith("]")
+    t = tok[:-1] if close else tok
+    if ":" in t and not t.startswith("["):
+        n, k = t.split(":", 1)
+        if k.startswith("vec<") and k.endswith(">") and k[4:-1] in names:
+            k = "vec<%s>" % names[k[4:-1]]
+        elif k in names:
+            k = names[k]
+        t = n + ":" + k
+    return t + ("]" if close else "")
+
+
+def map_items(items, names):
+    """Reduced items with every object type spelled as the table spells it (design D5)."""
+    return [" ".join(map_token(t, names) for t in it.split()) for it in items]
+
+
+def normalize(items, names):
+    """Design D6, ruling B4: a body as the older-pin comparison sees it: flag-only trues (`name=F.n`, no bytes) dropped,
+    the `mType.` holder stripped, `question.text` read as `question`, the object types spelled as the table spells
+    them. A gate left empty is dropped."""
+    out = []
+    for it in items:
+        toks = []
+        for t in it.split():
+            t = map_token(t, names)
+            gate_open = re.fullmatch(r"\[F2?\.\d+:", t)
+            close = t.endswith("]") and not gate_open
+            body = t[:-1] if close else t
+            if not gate_open:
+                if re.fullmatch(NAME + r"=F2?\.\d+", body):
+                    if close and toks:
+                        toks[-1] += "]"
+                    continue
+                body = body.replace("mType.", "")
+                body = re.sub(r"^question\.text:", "question:", body)
+            toks.append(body + ("]" if close else ""))
+        if toks and re.fullmatch(r"\[F2?\.\d+:\]", toks[-1]):
+            toks.pop()
+        # a gate whose fields were all dropped: "[F.n:" followed by its closing bracket only
+        joined = " ".join(toks)
+        joined = re.sub(r"\[F2?\.\d+:\]", "", joined).strip()
+        if joined:
+            out.append(joined)
+    return out
 
 
 def build_rows(src, pin, skip=None):
     """The table rows the selection asks for at this pin (IDs in `skip` left out), and the MANUAL notes."""
     rows, manual = [], []
+    names = pin_types(src)
     for typ, mode, arg in SELECTION:
         sw = src.switch(typ)
         if sw is None:
             manual.append("%s: no switch at this pin" % typ)
             continue
         for cid, case_line, c in sorted(sw, key=lambda e: e[0]):
-            if mode == "only" and cid not in arg:
-                continue
             if skip is not None and cid in skip:
                 continue
             body, fields = "full", ""
-            if mode == "some-full" and c.name not in arg and not reads_nothing(src, c):
+            if cid in PIN_CONFLICTS or (mode == "some-full" and c.name not in arg and not reads_nothing(src, c)):
                 body = "opaque"
             else:
                 try:
-                    items = reduce_class(src, c)
+                    items = map_items(reduce_class(src, c), names)
                 except Manual as e:
                     manual.append("%s 0x%08x %s: MANUAL at %s: %s" % (typ, cid, c.name, e.where, e.why))
                     body, items = ("prefix" if mode == "prefix" else "full"), ["MANUAL"]
@@ -756,7 +984,7 @@ def load_tsv(path):
     return [l.split("\t") for l in lines[1:]]
 
 
-def verify_row(src, r, ids):
+def verify_row(src, r, ids, names):
     """The verdict of one table row against the source of its own pin (a MANUAL verdict comes with its reason)."""
     cid = int(r[1], 16)
     if cid not in ids:
@@ -769,14 +997,15 @@ def verify_row(src, r, ids):
         return "MISMATCH (source %s)" % source
     mode = {t: m for t, m, _ in SELECTION}[r[0]]
     arg = {t: a for t, _, a in SELECTION}[r[0]]
-    if (mode == "some-full" and c.name not in arg and not reads_nothing(src, c)) != (r[3] == "opaque"):
+    if (cid in PIN_CONFLICTS or (mode == "some-full" and c.name not in arg and not reads_nothing(src, c))) != (
+            r[3] == "opaque"):
         return "MISMATCH (body %s against the selection)" % r[3]
     if r[3] == "opaque":
         return "verified"
     if r[3] == "prefix" and mode != "prefix":
         return "MISMATCH (a prefix row of a type the selection reads in full)"
     try:
-        items = reduce_class(src, c)
+        items = map_items(reduce_class(src, c), names)
     except Manual as e:
         # the builder reads the row by hand at this line (plan 4I4 Task 1); the reason goes in the note
         return "MANUAL, read by hand at %s" % e.where, e.why
@@ -790,9 +1019,157 @@ def verify_row(src, r, ids):
     return "verified"
 
 
-def check(tsv, pin, srcdir, commit):
-    """The report of one pin and the number of MISMATCH and missing verdicts in it."""
+SCALAR_KINDS = {"#", "i32", "i64", "dbl", "bool", "bytes", "str", "secret", "vec<i32>", "vec<i64>", "vec<str>",
+                "vec<bytes>"}
+
+
+def named_types(fields):
+    """The object types a fields column names (a field `name:Type` or `name:vec<Type>`)."""
+    out = []
+    for tok in fields.split():
+        t = tok.rstrip("]")
+        if t.startswith("[") or ":" not in t:
+            continue
+        k = t.split(":", 1)[1]
+        if k in SCALAR_KINDS or re.fullmatch(r"id(32|64)@\w+", k):
+            continue
+        out.append(k[4:-1] if k.startswith("vec<") and k.endswith(">") else k)
+    return out
+
+
+def closure(table):
+    """Design D3, ruling R2: (type, class) of every object type a full or prefix row names that is not a SELECTION
+    type; the table is closed when this is empty."""
+    types = {t for t, _, _ in SELECTION}
+    return sorted({(k, r[2]) for r in table if r[3] != "opaque" for k in named_types(r[6]) if k not in types})
+
+
+def wire_shape(items):
+    """Ruling T1a: what a body reads, field names set aside: the gates, the flags words and each field's wire type (an
+    inline id as its width)."""
+    out = []
+    for it in items:
+        toks = []
+        for t in it.split():
+            close = t.endswith("]") and not re.fullmatch(r"\[F2?\.\d+:", t)
+            b = t[:-1] if close else t
+            if ":" in b and not b.startswith("["):
+                k = b.split(":", 1)[1]
+                b = re.sub(r"^id(32|64)@.*$", lambda m: "i" + m.group(1), k)
+            toks.append(b + ("]" if close else ""))
+        out.append(" ".join(toks))
+    return out
+
+
+def name_differences(older, ref):
+    """The field tokens two bodies of one wire shape spell differently (`older / ref`), for the informational note."""
+    a = " ".join(older).split()
+    b = " ".join(ref).split()
+    return ["%s / %s" % (x.rstrip("]"), y.rstrip("]")) for x, y in zip(a, b) if x != y]
+
+
+def class_of_id(src, cid):
+    """The class whose constructor constant is cid at this pin (unique), or None."""
+    cs = [c for c in src.classes if c.constructor == cid]
+    return cs[0] if len(cs) == 1 else None
+
+
+def widen(src, head, raw, names, hnames):
+    """Ruling T1c: the older reading with each WIDENINGS element class read as its A-HEAD type, when that class's ID has
+    the same wire shape at this pin and at A-HEAD: (items, notes); notes is empty when nothing was widened."""
+    notes, out = [], raw
+    for cls, (typ, wid) in WIDENINGS.items():
+        widened = map_items(out, {cls: typ})
+        if widened == out:
+            continue
+        oc, hc = class_of_id(src, wid), class_of_id(head, wid)
+        try:
+            same = (oc is not None and hc is not None and
+                    wire_shape(normalize(reduce_class(src, oc), names)) ==
+                    wire_shape(normalize(reduce_class(head, hc), hnames)))
+        except Manual:
+            same = False
+        if same:
+            out = widened
+            notes.append("vec<%s> read as vec<%s>: 0x%08x %s reads the same at %s:%d and at %s:%d" % (
+                cls, typ, wid, cls, oc.fname, oc.line, hc.fname, hc.line))
+    return out, notes
+
+
+def body_check(table, src, head, pin):
+    """Design D6, ruling B4, 4I4b-P7, rulings T1a-T1c: the body of every row whose ID this pin's switch reads, compared
+    with its A-HEAD reading by what is read (normalised at each pin by `normalize`, then `wire_shape`): (report lines,
+    number of CONFLICT verdicts that count as bad). Field names that differ on one wire shape are informational
+    (`equal on the wire`); an older vector element class of WIDENINGS whose ID reads the same is a `compatible
+    widening`. The A-HEAD reading is the reduced body at A-HEAD, or the row's own fields when A-HEAD does not read the
+    ID or the row is read by hand there. A row the reduction cannot read at this pin is membership-only."""
+    names, hnames = compare_names(src), compare_names(head)
+    lines = ["Body comparison with A-HEAD: every row of `constructors.tsv` whose ID the switch of its type reads at "
+             "this pin, what its body reads at this pin against its A-HEAD reading (field order, flag bits and wire "
+             "types; flag-only trues, `mType.` holders and field names set aside, object types named by the "
+             "deserializer a call reaches, ruling T1a). `equal on the wire` lists the field names that differ "
+             "(informational); `membership-only` names the line the reduction cannot read.", "",
+             "| Pin | Type | ID | Verdict | Class at this pin |", "|---|---|---|---|---|"]
+    bad = compared = membership = 0
+    for typ, _, _ in SELECTION:
+        sw = {cid: (ln, c) for cid, ln, c in (src.switch(typ) or [])}
+        hsw = {cid: (ln, c) for cid, ln, c in (head.switch(typ) or [])}
+        for r in [r for r in table if r[0] == typ]:
+            cid = int(r[1], 16)
+            if cid not in sw:
+                continue
+            ln, c = sw[cid]
+            at = "%s (%s:%d)" % (c.name, c.fname, c.line)
+            ref, ref_at, ref_manual = None, None, None
+            if cid in hsw:
+                hc = hsw[cid][1]
+                ref_at = "%s:%d" % (hc.fname, hc.line)
+                try:
+                    ref = normalize(reduce_class(head, hc), hnames)
+                except Manual as e:
+                    ref_manual = e.where
+            from_row = False
+            if ref is None and r[3] != "opaque" and "MANUAL" not in r[6]:
+                ref, ref_at, from_row = normalize(split_items(r[6]), hnames), "%s@%s" % (r[5], r[4]), True
+            try:
+                raw = reduce_class(src, c)
+            except Manual as e:
+                membership += 1
+                lines.append("| %s | %s | %s | membership-only (MANUAL at %s) | %s |" % (pin, typ, r[1], e.where, at))
+                continue
+            if ref is None:
+                membership += 1
+                lines.append("| %s | %s | %s | membership-only (MANUAL at %s) | %s |" % (
+                    pin, typ, r[1], ref_manual or r[5], at))
+                continue
+            compared += 1
+            older = normalize(raw, names)
+            wide, notes = widen(src, head, raw, names, hnames)
+            wider = normalize(wide, names)
+            if from_row and r[3] == "prefix":
+                older, wider = older[:len(ref)], wider[:len(ref)]
+            if wire_shape(older) == wire_shape(ref):
+                diff = name_differences(older, ref)
+                verdict = "equal" if not diff else "equal on the wire (names differ: %s)" % "; ".join(diff)
+            elif notes and wire_shape(wider) == wire_shape(ref):
+                verdict = "compatible widening (%s)" % "; ".join(notes)
+            elif cid in PIN_CONFLICTS and r[3] == "opaque":
+                verdict = "CONFLICT (opaque; pin conflict: %s at %s:%d, %s at %s)" % (
+                    " ".join(older) or "nothing", c.fname, c.line, " ".join(ref) or "nothing", ref_at)
+            else:
+                verdict = "CONFLICT (%s at %s:%d, %s at %s)" % (
+                    " ".join(older) or "nothing", c.fname, c.line, " ".join(ref) or "nothing", ref_at)
+                bad += 1
+            lines.append("| %s | %s | %s | %s | %s |" % (pin, typ, r[1], verdict, at))
+    lines += ["", "Compared %d rows; membership-only %d" % (compared, membership)]
+    return lines, bad
+
+
+def check(tsv, pin, srcdir, commit, head=None):
+    """The report of one pin and the number of MISMATCH, missing and CONFLICT verdicts in it (at an older pin `head`
+    is the A-HEAD source directory of the body comparison)."""
     src = Source(srcdir)
+    names = pin_types(src)
     table = load_tsv(tsv)
     by_id = {int(r[1], 16): r for r in table}
     switches = {typ: (src.switch(typ) or []) for typ, _, _ in SELECTION}
@@ -812,7 +1189,7 @@ def check(tsv, pin, srcdir, commit):
     for typ, _, _ in SELECTION:
         ids = {cid: (ln, c) for cid, ln, c in switches[typ]}
         for r in [r for r in own if r[0] == typ]:
-            verdict, note = verify_row(src, r, ids), ""
+            verdict, note = verify_row(src, r, ids, names), ""
             if isinstance(verdict, tuple):
                 verdict, note = verdict
             if verdict.startswith("MISMATCH"):
@@ -822,12 +1199,9 @@ def check(tsv, pin, srcdir, commit):
         out.append("| - | - | - | no row is pinned here | - | - |")
     out.append("")
     if pin == "A-HEAD":
-        out += ["Completeness: every ID the switch of each type reads at this pin is a row (MessageAction: the "
-                "phone-call action only, by design).", "",
+        out += ["Completeness: every ID the switch of each type reads at this pin is a row.", "",
                 "| Type | IDs the switch reads | Rows pinned here | Verdict |", "|---|---|---|---|"]
-        for typ, mode, _ in SELECTION:
-            if mode == "only":
-                continue
+        for typ, _, _ in SELECTION:
             ids = {cid: (ln, c) for cid, ln, c in switches[typ]}
             absent = sorted(cid for cid in ids if cid not in by_id or by_id[cid][0] != typ)
             for cid in absent:
@@ -835,25 +1209,58 @@ def check(tsv, pin, srcdir, commit):
                 out.append("| %s | 0x%08x | %s | missing |" % (typ, cid, ids[cid][1].name))
             out.append("| %s | %d | %d | %s |" % (typ, len(ids), len([r for r in own if r[0] == typ]),
                                                   "complete" if not absent else "incomplete"))
+        # design D3: every type a full or prefix row names is a type of the table
+        out += ["", "Closure: every object type a `full` or `prefix` row names is a type of the table (design D3).", ""]
+        gaps = closure(table)
+        for typ, cls in gaps:
+            bad += 1
+            out.append("- missing (type %s named by %s)" % (typ, cls))
+        if not gaps:
+            out.append("Closed: %d types, none named outside them." % len(SELECTION))
     else:
-        out += ["Membership: every ID the pinned types' switches read at this pin is a row of `constructors.tsv` "
-                "(MessageAction: the `TL_messageActionPhoneCall` family only).", "",
+        out += ["Membership: every ID the pinned types' switches read at this pin is a row of `constructors.tsv`.", "",
                 "| Pin | Type | ID | Verdict | Class at this pin |", "|---|---|---|---|---|"]
         for typ, _, _ in SELECTION:
             if src.switch(typ) is None:
                 out.append("| %s | %s | - | type not defined at this pin | - |" % (pin, typ))
                 continue
-            fam = MEMBERSHIP_FAMILY.get(typ)
             for cid, ln, c in sorted(switches[typ], key=lambda e: e[0]):
-                if fam and not c.name.startswith(fam):
-                    continue
                 ok = cid in by_id and by_id[cid][0] == typ
                 if not ok:
                     bad += 1
                 out.append("| %s | %s | 0x%08x | %s | %s (%s:%d) |" % (
                     pin, typ, cid, "in-table" if ok else "missing", c.name, c.fname, c.line))
+        if head is not None:
+            lines, nbad = body_check(table, src, Source(head), pin)
+            out += [""] + lines
+            bad += nbad
     out.append("")
     return "\n".join(out) + "\n", bad
+
+
+def hand(schemas, notes):
+    """4I4b-P7: write the hand-read section of `notes` (its first line is the heading) into CROSSCHECK.md, replacing the
+    section under the same heading (up to the next heading of its level or above), else appending it last."""
+    with open(notes, encoding="utf-8") as fh:
+        text = fh.read().rstrip("\n")
+    heading = text.split("\n", 1)[0]
+    level = len(heading) - len(heading.lstrip("#"))
+    if level == 0 or not heading.startswith("#" * level + " "):
+        raise SystemExit("%s: the first line is not a heading" % notes)
+    path = os.path.join(schemas, "CROSSCHECK.md")
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().rstrip("\n").split("\n")
+    section = text.split("\n")
+    if heading in lines:
+        i = lines.index(heading)
+        j = i + 1
+        while j < len(lines) and not re.match(r"^#{1,%d} " % level, lines[j]):
+            j += 1
+        new = lines[:i] + section + ([""] if j < len(lines) else []) + lines[j:]
+    else:
+        new = lines + [""] + section
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(new).rstrip("\n") + "\n")
 
 
 DDL_INTRO = """# DDL cross-check (plan 4I4)
@@ -1027,16 +1434,21 @@ def main(argv):
     if args and args[0] == "--check":
         del args[0]
         pin, commit, report_path = take(args, "--pin"), take(args, "--commit"), take(args, "--write-report")
-        if len(args) != 2 or pin not in PINS:
+        head = take(args, "--head")
+        # 4I4b-P7: an older pin is checked with the A-HEAD sources beside it (the body comparison)
+        if len(args) != 2 or pin not in PINS or (pin != "A-HEAD") != (head is not None):
             raise SystemExit(__doc__)
-        report, bad = check(args[0], pin, args[1], commit)
+        report, bad = check(args[0], pin, args[1], commit, head)
         if report_path:
             with open(report_path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(report)
         else:
             sys.stdout.write(report)
-        sys.stderr.write("%s: %d MISMATCH or missing\n" % (pin, bad))
+        sys.stderr.write("%s: %d MISMATCH, missing or CONFLICT\n" % (pin, bad))
         return 1 if bad else 0
+    if args and args[0] == "--hand" and len(args) == 3:
+        hand(args[1], args[2])
+        return 0
     if args and args[0] == "--go" and len(args) == 3:
         text = go_table(load_tsv(args[2]))
         with open(args[1], "w", encoding="utf-8", newline="\n") as fh:
