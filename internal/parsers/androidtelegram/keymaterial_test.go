@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -106,6 +107,8 @@ func keyInt64s(t *testing.T) (required, searched map[string]uint64) {
 			required["i64:"+m[1]] = secretI64Base + n
 		}
 	}
+	// 1..4000 covers every rowid-numbered credential: the generator asserts 1701 + len(todo) <= 2001 (layers_rows, so a
+	// layers rowid is at most 2000) and its secret_i64 arguments at layers rows stay <= 2000 (final-review item 4)
 	for n := uint64(1); n <= 4000; n++ {
 		if _, ok := required["i64:"+strconv.FormatUint(n, 10)]; !ok {
 			searched["i64:"+strconv.FormatUint(n, 10)] = secretI64Base + n
@@ -328,8 +331,14 @@ func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
 	typed := map[string]map[string][]byte{"telegram-deleted": fixtureFiles(t, "telegram-deleted"), "go-built-wal": secretRowsInWAL(t)}
 	for name, files := range typed {
 		t.Run("typed-pass/"+name, func(t *testing.T) {
-			if held := f.labels(string(files["wal"])); len(held) == 0 {
+			held := f.labels(string(files["wal"]))
+			if len(held) == 0 {
 				t.Fatalf("%s: the WAL holds no key pattern: the check proves nothing", name)
+			}
+			// final-review ruling F3 (R7): the deleted 4I4b document's int64 credentials lie in telegram-deleted's WAL,
+			// so the typed pass's int64 search below is backed
+			if name == "telegram-deleted" && !slices.ContainsFunc(slices.Collect(maps.Keys(held)), func(l string) bool { return strings.HasPrefix(l, "i64:") }) {
+				t.Errorf("%s: the WAL holds no i64: credential (%v): the typed pass's int64 check proves nothing", name, held)
 			}
 			res := typedRun(t, files)
 			secret := 0

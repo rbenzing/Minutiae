@@ -19,7 +19,7 @@ func TestNoNameStateSeparatesEmptyFromUnprintable(t *testing.T) {
 		{[]byte{}, nameEmpty},
 		{[]byte{0}, nameUnprintable},
 		{[]byte("\xff\xfe"), nameUnprintable},
-		{[]byte("a"), nameUnprintable},
+		// no printable name here: noNameState is called only after cleaning gave "" (final-review item 1)
 	} {
 		if got := noNameState(c.stored); got != c.want {
 			t.Errorf("noNameState(%q) = %q, want %q", c.stored, got, c.want)

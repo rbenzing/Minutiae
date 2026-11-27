@@ -7,7 +7,7 @@ package androidtelegram_test
 var fixturePins = map[string]string{
 	"telegram-both.db":              "0ace29cb15c7c11bc69fd5272af7a1fe4c7d546481b0c727e600397ed63ef7cf",
 	"telegram-deleted.db":           "3c3685e2c5561d7358a0ccca6dbfd88291ce8c9e511f921bac14ad909fc555af",
-	"telegram-deleted.wal":          "4e15bdbba6fbf30f2052945aa422459990466bf87eff4117c8cc20aca02a5028",
+	"telegram-deleted.wal":          "0f5412ed1032b06baee3dc8fb090b8b17dbfd1ffefda7783c09804a1584944e1",
 	"telegram-hostile.db":           "942754bde24c3963cacc8a9931fe064e3b9413bd7a0bd5fb671d988676ee75c4",
 	"telegram-layers.db":            "fe855dd38d732e9a406bf45584c7ace3e7377dfdad9df159ddc2264946d23dc9",
 	"telegram-nomessages.db":        "15969aca2129d996aa94cccaae585a51dc26566d4c69dd6e353b781f4ed7f495",

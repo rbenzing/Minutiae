@@ -139,6 +139,7 @@ type msgRow struct {
 	table        string
 	raw, unknown map[string]any
 	cells        map[string]intCell
+	repliers     []string // the blob's full decoded replier list, for the replies_data conflict only (ruling F1)
 }
 
 // unknownName is the unknown_columns key of a column: "<table>.<col>".
@@ -528,7 +529,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 		times = editTime(raw, v)
 		peerRaw(v, raw)
 		fwdRaw(v, raw)
-		tailRaw(v, raw)
+		r.repliers = tailRaw(v, raw)
 		atts = mediaSummary(v, tab, top, raw)
 		readTrailer(b, v, top, raw)
 	}

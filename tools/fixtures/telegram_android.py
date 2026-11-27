@@ -787,12 +787,14 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
             continue
         # design D13, P6: the replies_data cell is the serialized message.replies, decoded as MessageReplies with the
         # blob keys (no _undecided); the replies shape when it decoded whole, and replies_conflict when the blob's own
-        # replies was read whole and the two differ (B8: by decoded values)
+        # replies was read whole and the two differ (B8: by decoded values; final-review ruling F1: the full replier
+        # lists are compared too, never only the lists cut to MAX_REPLIERS)
         rb = Blob(v, "MessageReplies")
         blob_raw(raw, "replies_data", rb)
         if rb.state == "decoded" and rb.cls is not None:
             raw["replies_data"] = replies_shape(rb, "")
-            if isinstance(raw.get("replies"), dict) and raw["replies"] != raw["replies_data"]:
+            if isinstance(raw.get("replies"), dict) and (raw["replies"] != raw["replies_data"]
+                                                         or all_repliers(b, "replies") != all_repliers(rb, "")):
                 raw["replies_conflict"] = True
 
     # reply copy (spec 8.5)
@@ -1372,6 +1374,16 @@ def replies_shape(b, p):
     return r
 
 
+def all_repliers(b, p):
+    """Every decoded replier of the MessageReplies at p, uncapped (final-review ruling F1), for the replies_data
+    conflict only and never stated: an entry that is no address is "?" and its class, so its position counts."""
+    rp = join(p, "recent_repliers")
+    n = vec_len(b, rp)
+    if n is None:
+        return None
+    return [address(b, "%s[%d]" % (rp, i)) or "?%s" % b.obj_cls("%s[%d]" % (rp, i)) for i in range(n)]
+
+
 def map_tail(b, raw):
     """The tail of a message blob (plan "Raw shapes" Tail): raw only, never a record field or a participant. An object
     or list is stated when read whole; a stop at or inside it is <key>_state partial (P3); one never reached is
@@ -1504,6 +1516,10 @@ def map_tail(b, raw):
         uid = b.f.get(e + ".user_id")
         if uid is not None and uid["kind"] in ("i32", "i64"):
             x["user"] = "user:%d" % uid["value"]
+        elif uid is not None and uid["kind"] == "object":
+            # final-review ruling F2: an InputUser object read in place of an id (inputUserSelf, inputUserEmpty) is
+            # stated by its class label, never as a user
+            x["user_class"] = class_label(uid["cls"], "TL_inputUser") or uid["cls"]
         return x
     put_list(b, raw, "entities", "entities", MAX_ENTITIES, entity)
 
@@ -2734,7 +2750,9 @@ def variant_deleted(work):
     """R1, R2, R4 live with the users SELF and ANN, the chats row of R4's group, the enc_chats rows (their key columns
     hold the key-material chains, C1 of plan 4I4 Task 14), and the contacts and users_data rows of ANN and of user
     1000012; in a WAL that is never checkpointed: rows 201-205 (ANN), 206 (an outgoing secret message of chat 77 with
-    a secret document, its key and IV) and 207 (a message of the group 2000001) and the users row 1000012 inserted
+    a secret document, its key and IV), 207 (a message of the group 2000001) and 208 (ANN: a 4I4b document whose
+    access_hash and thumbnail FileLocation.secret are secret_i64 credentials, with file references; final-review ruling
+    F3, so the typed pass's int64 search is backed) and the users row 1000012 inserted
     (committed), then deleted (a later frame), so each recovered row has live users, chats or enc_chats rows that it
     must not join (B2); R1 edited and R2 rewritten with REPLACE INTO (the pinned write_verb.messages_v2.edit and .put,
     T2: each gets a new rowid; the old image stays in the database file and in earlier frames). secure_delete is ON."""
@@ -2755,6 +2773,11 @@ def variant_deleted(work):
                                          "peer_id": pu(ANN), "date": D + 206, "message": "deleted secret",
                                          "media": enc_document([]), "entities": []}), out=1))
     gone.append(row(207, 207, -2000001, enc(tlmsg(207, 207, "deleted group message", peer=pc(2000001), frm=pu(BOT)))))
+    gone_thumb = {"_": "TL_photoSize_layer127", "type": "m", "w": 90, "h": 90, "size": 100, "location": {
+        "_": "TL_fileLocation_layer97", "dc_id": 2, "volume_id": 1, "local_id": 9, "secret": secret_i64(9902),
+        "file_reference": secret("4i4b-del-locref", 24)}}
+    gone_doc = document(9901, "application/pdf", [fname("gone.pdf")], secret("4i4b-del-fileref", 24), thumbs=[gone_thumb])
+    gone.append(row(208, 208, ANN, enc(tlmsg(208, 208, "deleted document", frm=pu(ANN), media=doc_media(gone_doc)))))
     cols = list(gone[0])
     gone_user = {"uid": GONE_USER, "name": "gone user", "status": 0,
                  "data": E.encode("User", {"_": "TL_user", "access_hash": 1, "id": GONE_USER, "first_name": "Gone", "phone": "15550000012"})}
@@ -2763,7 +2786,7 @@ def variant_deleted(work):
     put = dict(R[2])
     put.pop("rowid")
     stmts = ["pragma secure_delete = ON", "pragma wal_autocheckpoint = 0", "BEGIN"] + [insert_sql("messages_v2", g, cols) for g in gone] + [
-        insert_sql("users", gone_user, list(gone_user)), "COMMIT", "delete from messages_v2 where rowid between 201 and 207",
+        insert_sql("users", gone_user, list(gone_user)), "COMMIT", "delete from messages_v2 where rowid between 201 and 208",
         "delete from users where uid = %d" % GONE_USER,
         insert_sql("messages_v2", edited, cols, "replace"), insert_sql("messages_v2", put, cols, "replace")]
     C.kill_child(path, stmts)

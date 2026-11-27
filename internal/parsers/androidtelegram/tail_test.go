@@ -137,6 +137,32 @@ func TestTelegramTailObjectsAreRawOnly(t *testing.T) {
 		g["summary_from_language_sha256"] != sha256Hex(lang) || g["summary_from_language"] != nil {
 		t.Errorf("summary_from_language of 65 bytes: %v; want too-long with its length and digest, no value", g)
 	}
+	mentionUserClass(t)
+}
+
+// mentionUserClass is the final-review ruling F2 part of TestTelegramTailObjectsAreRawOnly: a
+// TL_inputMessageEntityMentionName whose user_id is an InputUser object that is no id (the telegram-layers rows of
+// TL_inputUserEmpty and TL_inputUserSelf) states user_class, the object's class label, and never a user.
+func mentionUserClass(t *testing.T) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, r := range parseFixture(t, "telegram-layers").Records {
+		l, _ := rawOf(r)["entities"].([]any)
+		for _, e := range l {
+			m, _ := e.(map[string]any)
+			if m["type"] != "input_mention_name" {
+				continue
+			}
+			c, _ := m["user_class"].(string)
+			if m["user"] != nil || c == "" {
+				t.Errorf("%s: input_mention_name %v; want user_class and no user", r.Locator, m)
+			}
+			seen[c] = true
+		}
+	}
+	if !seen["empty"] || !seen["self"] {
+		t.Errorf("user_class values seen %v; want empty and self", seen)
+	}
 }
 
 // Plan 4I4b section 8.3: the people in a reaction list, a top-reactor list or the recent repliers are never
@@ -237,6 +263,40 @@ func TestTelegramRepliesDataConflictIsStated(t *testing.T) {
 	}
 	if len(warned) != 1 || !strings.Contains(warned[0], "2 records (truncated:2)") {
 		t.Errorf("replies_data warnings %v, want one counting 2 truncated records", warned)
+	}
+	repliersPast16(t)
+}
+
+// repliersPast16 is the final-review ruling F1 part of TestTelegramRepliesDataConflictIsStated (B8: "different" is
+// judged on decoded values): the conflict compares the full decoded replier lists, never the lists cut to 16 for the
+// output. Two replies of 17 repliers that agree in the first 16 and differ only at the 17th state the same capped
+// shape and replies_conflict true; 17 equal repliers state none.
+func repliersPast16(t *testing.T) {
+	t.Helper()
+	// TL_messageReplies (flags F.1, replies 17, replies_pts 1, recent_repliers [17 peers]); last is the 17th user id
+	replies := func(last int64) []byte {
+		b := slices.Concat(le32(0x83d60fc2), le32(1<<1), le32(17), le32(1), le32(idTLVector), le32(17))
+		for i := range int64(16) {
+			b = append(b, peerUser(1000100+i)...)
+		}
+		return append(b, peerUser(last)...)
+	}
+	blob := replies(1000116)
+	m := tlMessage{flags: 1 << 23, id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", tail: blob}
+	v2 := []msgCells{
+		{mid: 1, uid: idAnn, data: m.bytes(), repliesData: blob},
+		{mid: 2, uid: idAnn, data: m.bytes(), repliesData: replies(1000999)},
+	}
+	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, v2))).Records)
+	same, diff := rawOf(got["messages_v2/1"]), rawOf(got["messages_v2/2"])
+	if same["replies_conflict"] != nil {
+		t.Errorf("17 equal repliers: replies_conflict %v, want none", same["replies_conflict"])
+	}
+	if jsonText(diff["replies"]) != jsonText(diff["replies_data"]) {
+		t.Fatalf("the capped shapes differ (%v, %v): the case does not isolate the 17th replier", diff["replies"], diff["replies_data"])
+	}
+	if diff["replies_conflict"] != true {
+		t.Errorf("repliers differing only at the 17th: replies_conflict %v, want true (F1: the full lists are compared)", diff["replies_conflict"])
 	}
 }
 

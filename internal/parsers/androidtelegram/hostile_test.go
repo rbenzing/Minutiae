@@ -89,6 +89,7 @@ func TestTelegramHostileBlobsAreStated(t *testing.T) {
 	}
 
 	hostileCutsAndCaps(t, recs, blobs)
+	blobKeysCovered(t)
 
 	// a blob above MaxBlob and one of exactly MaxBlob, in a Go-built database
 	msg := func(id int32, text string) []byte {
@@ -433,6 +434,50 @@ func blobKey(k string) bool {
 		}
 	}
 	return false
+}
+
+// notBlobKeys are the top-level raw keys of a message record that blobKey leaves out of the cut comparison, each on
+// purpose (final-review item 2): the plain and side columns and their states, the data_*, trailer_* and other cells'
+// statements about the cell itself, the join and record-level states, the 4I4 blob header keys outside the 4I4b media
+// and tail (readBlobRaw, fwdRaw, the call and label mapping) and forwards_conflict, a relation of the blob to the
+// forwards column (the cut rows carry another column value than R60), not a value read.
+func notBlobKeys() []string {
+	return []string{
+		"account", "address_state", "attach_params", "attach_params_total", "attach_path", "attach_path_state", "blob_flags",
+		"blob_flags2", "call_id", "chat_data_constructor", "chat_data_len", "chat_data_sha256", "chat_data_state",
+		"counterparty_state", "custom_params_len", "custom_params_sha256", "data_constructor", "data_flags", "data_len",
+		"data_sha256", "data_state", "data_stop_id", "data_stop_kind", "data_stop_offset", "data_stop_path", "data_undecided",
+		"date", "date_conflict", "date_status", "dialog_basis", "dialog_class", "dialog_class_state", "direction_conflict",
+		"duration", "enc_chat_id", "flags", "forwards", "forwards_conflict", "fwd", "fwd_msg_id", "group_id", "grouped_id",
+		"guid_state", "id", "id_conflict", "imp", "is_channel", "label_constructor", "label_reason", "label_send_state",
+		"live_key_state", "mention", "message_id", "message_id_basis", "mid", "mid_state", "out", "peer_id", "post",
+		"read_state", "read_state_state", "reason", "reason_state", "reply_copy", "reply_to_message_id", "reply_to_msg_id",
+		"reply_to_story_id", "replydata_constructor", "replydata_len", "replydata_sha256", "replydata_state", "secret_chat",
+		"send_state", "sender_basis", "sender_state", "slug", "source_table", "thread_reply_id", "thread_state",
+		"thread_title_state", "thread_user_state", "time_end_basis", "trailer_len", "trailer_sha256", "trailer_state", "ttl",
+		"ttl_state", "uid", "unknown_columns", "video",
+	}
+}
+
+// blobKeysCovered is final-review item 2's part of TestTelegramHostileBlobsAreStated: every top-level raw key a message
+// record of any committed variant emits is either compared at the cut (blobKey) or listed in notBlobKeys, so a new
+// media or tail key outside blobKey's prefixes fails here instead of going silently unchecked by hostileCutsAndCaps.
+func blobKeysCovered(t *testing.T) {
+	t.Helper()
+	exempt := notBlobKeys()
+	for _, v := range variants {
+		for _, r := range parseAt(t, remoteApp, fixtureFiles(t, v)).Records {
+			raw := rawOf(r)
+			if st := raw["source_table"]; st != "messages" && st != "messages_v2" {
+				continue
+			}
+			for k := range raw {
+				if !blobKey(k) && !slices.Contains(exempt, k) {
+					t.Errorf("%s %s: raw.%s is neither compared at the cut (blobKey) nor exempt (notBlobKeys)", v, r.Locator, k)
+				}
+			}
+		}
+	}
 }
 
 // hostileCutsAndCaps is plan 4I4b Task 7's part of TestTelegramHostileBlobsAreStated (spec 8.4, rulings P3, B1): every

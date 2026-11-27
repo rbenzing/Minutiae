@@ -169,7 +169,7 @@ type genInfo struct {
 
 // pool is the text the bodies are cut from (a fixed pseudo-random text, so a run is repeatable).
 func bodyPool() []byte {
-	r := rand.New(rand.NewPCG(7, 11))
+	r := rand.New(rand.NewPCG(7, 11)) //nolint:gosec // a fixed seed: the generated input is repeatable
 	p := make([]byte, 32<<10)
 	for i := range p {
 		if r.IntN(6) == 0 {
@@ -228,7 +228,7 @@ func genMMS(path string, target int64) (genInfo, error) {
 		_ = db.Close()
 		return genInfo{}, err
 	}
-	pool, r := bodyPool(), rand.New(rand.NewPCG(1, 2))
+	pool, r := bodyPool(), rand.New(rand.NewPCG(1, 2)) //nolint:gosec // a fixed seed: the generated input is repeatable
 	const batch = 5000
 	var rows int64
 	for {
@@ -713,7 +713,7 @@ func genWhatsApp(path string, n int64) (genInfo, error) {
 	if err := execScript(db, waDDL); err != nil {
 		return fail(err)
 	}
-	r, pool := rand.New(rand.NewPCG(3, 4)), bodyPool()
+	r, pool := rand.New(rand.NewPCG(3, 4)), bodyPool() //nolint:gosec // a fixed seed: the generated input is repeatable
 	tx, err := db.Begin()
 	if err != nil {
 		return fail(err)
@@ -882,7 +882,7 @@ func genWhatsAppIOS(path string, n int64) (genInfo, error) {
 	if err := execScript(db, waiosDDL); err != nil {
 		return fail(err)
 	}
-	r, pool := rand.New(rand.NewPCG(5, 6)), bodyPool()
+	r, pool := rand.New(rand.NewPCG(5, 6)), bodyPool() //nolint:gosec // a fixed seed: the generated input is repeatable
 	tx, err := db.Begin()
 	if err != nil {
 		return fail(err)
@@ -1426,6 +1426,8 @@ func tgMessage(id int32, from, uid int64, out bool, date int32, text []byte) []b
 	}
 	b = tgLE32(tgLE32(b, 0x1cb5c415), 1)
 	b = tgLE32(tgLE32(tgLE32(b, 0xbd610bc9), 0), 4)
+	// the scale phase asserts only data_state over these rows; the correctness of the reaction mapping is covered by the
+	// androidtelegram unit tests (TestTelegramTailObjectsAreRawOnly and its fixture rows)
 	if mix == 4 { // TL_messageReactions: flags 0, results [2 x TL_reactionCount{flags 0, TL_reactionEmoji, count 3}]
 		b = tgLE32(tgLE32(tgLE32(b, 0x0a339f0b), 0), 0x1cb5c415)
 		b = tgLE32(b, 2)
@@ -1859,6 +1861,10 @@ func gmessagesDecodeRun(t *testing.T, e scaleEnv) {
 	captureFile(t, c, gmRemotePath, genPath(e, "gmessages-1m.db"))
 	reg, err := artparse.Register(androidgooglemessages.Parser{}, parsertest.FakeHash(androidgooglemessages.Name))
 	if err != nil {
+		t.Fatal(err)
+	}
+	// the parser claims messages and parts (plan 4I5 Task 8): a claiming parser needs a recovery identity
+	if reg, err = reg.WithRecoveryHash(parsertest.FakeHash(androidgooglemessages.Name + ".recover")); err != nil {
 		t.Fatal(err)
 	}
 	lim := parse.DefaultLimits()

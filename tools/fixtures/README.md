@@ -3586,7 +3586,7 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   `access_hash` and `FileLocation.secret` is an int64 `0x7E575EC2E7A10000 + n` (`secret_i64`), every new file
   reference, key and iv a literal `secret("4i4b-<site>", 24)`, and thumbnail, waveform and seed content the ASCII
   `SYNTHETIC-THUMB-nn-`, `SYNTHETIC-WAVE-nn-` and `SYNTHETIC-SEED-0001`. `TestTelegramFixturesReadEveryStageAFullRow`
-  requires every full row of the 4I4b types to be read by some committed cell.
+  requires every full row of the 4I4b types to be read by some committed cell. The 4I4b final review restated in the oracle the `replies_conflict` comparison over the full decoded replier lists (F1) and a mention's `user_class` for an InputUser object read in place of an id (F2; only `telegram-layers.expect.json` changed), and added to the WAL of `telegram-deleted` the deleted row 208, a document whose `access_hash` and thumbnail `FileLocation.secret` are `secret_i64` credentials with its file references (F3); the two variants were regenerated alone with `--variant telegram-layers telegram-deleted --pins-go ...` and the recover oracle of `telegram-deleted` rewritten, so the other variants' WAL salts and pins stand.
 - Google Messages facts and DDL (plan 4I5 Task 1): `schemas/google-messages/facts.tsv` (header `key value constant contract pin
   source note`: the AOSP Messaging `message_protocol` and `message_status` codes with their constant names and the
   channel or direction each maps to, the self-participant, time, trigger, URI, deletion and path facts, each with its pin

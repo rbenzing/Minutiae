@@ -1,6 +1,7 @@
 package androidtelegram
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,8 +27,9 @@ const colRepliesData = "replies_data"
 // never a participant. A scalar is stated when it was read; an object or list only when read whole (P3), else
 // <key>_state "partial" when the stop lies at or inside it (nothing when the decode never reached it: data_undecided
 // names it). The blob's forwards stays beside the forwards column (B10); the times of no pinned unit are raw with
-// _unit "unestablished" (P8).
-func tailRaw(v view, raw map[string]any) {
+// _unit "unestablished" (P8). It returns the blob's full decoded replier list (nil when replies was not read whole), which
+// readRepliesData compares beside the capped shape (ruling F1).
+func tailRaw(v view, raw map[string]any) []string {
 	if x, ok := v.Int("forwards"); ok {
 		raw["blob_forwards"] = x
 		if col, ok := raw["forwards"].(int64); ok && col != x {
@@ -50,10 +52,11 @@ func tailRaw(v view, raw map[string]any) {
 	if b, ok := v.Str("summary_from_language"); ok {
 		identInto(raw, raw, "summary_from_language", "summary_from_language", b, maxTiny)
 	}
+	var repliers []string
 	switch {
 	case v.Whole("replies"):
-		if m, ok := repliesOf(v, "replies."); ok {
-			raw["replies"] = m
+		if m, all, ok := repliesOf(v, "replies."); ok {
+			raw["replies"], repliers = m, all
 		}
 	case v.inside("replies"):
 		raw["replies_state"] = statePartial
@@ -81,6 +84,7 @@ func tailRaw(v view, raw map[string]any) {
 		raw["suggested_post_state"] = statePartial
 	}
 	putList(v, raw, "entities", "entities", maxEntities, func(p string) (any, bool) { return entityOf(v, raw, p), true })
+	return repliers
 }
 
 // entityLabel is the type label of a MessageEntity class: classLabel after TL_messageEntity, and for
@@ -93,7 +97,8 @@ func entityLabel(class string) string {
 }
 
 // entityOf is one scalar-only entry of raw.entities: its type label, offset, length, url (4 KiB, cleaned), the user of
-// a mention (an inline id, "user:<id>"; an InputUser object is not one), document_id and language (64 B).
+// a mention (an inline id, "user:<id>"; an InputUser object read in its place is no id: user_class, its class label,
+// ruling F2), document_id and language (64 B).
 func entityOf(v view, raw map[string]any, p string) map[string]any {
 	x := map[string]any{"type": entityLabel(v.Class(p))}
 	for _, k := range []string{"offset", "length", "document_id"} {
@@ -107,8 +112,19 @@ func entityOf(v view, raw map[string]any, p string) map[string]any {
 	if b, ok := v.Str(p + ".language"); ok {
 		cleanInto(x, raw, "language", "entities.language", b, maxTiny)
 	}
-	if n, ok := v.Named(p + ".user_id"); ok && (n.Kind == tl.KInt32 || n.Kind == tl.KInt64) {
-		x["user"] = "user:" + strconv.FormatInt(n.Int, 10)
+	if n, ok := v.Named(p + ".user_id"); ok {
+		switch n.Kind {
+		case tl.KInt32, tl.KInt64:
+			x["user"] = "user:" + strconv.FormatInt(n.Int, 10)
+		case tl.KObject:
+			// ruling F2: an InputUser object read in place of an id (inputUserSelf, inputUserEmpty) is stated by its
+			// class label, never as a user
+			class := v.Class(p + ".user_id")
+			if label := classLabel(class, "TL_inputUser"); label != "" {
+				class = label
+			}
+			x["user_class"] = class
+		}
 	}
 	return x
 }
@@ -290,12 +306,14 @@ func reactionsRaw(v view, raw map[string]any) {
 
 // repliesOf is the replies object (plan 4I4b "Raw shapes") of a MessageReplies read under prefix: "replies." in the
 // blob, "" for the replies_data cell (whose top object it is). It is stated only when the object was read whole: false
-// otherwise (P3). Its repliers are addresses in raw, never participants.
-func repliesOf(v view, prefix string) (map[string]any, bool) {
+// otherwise (P3). Its repliers are addresses in raw, never participants. all is every decoded replier (bounded by the
+// decoder's vector bound, never by maxRepliers), for the conflict comparison only and never emitted (ruling F1): an
+// entry that is no address is "?" and its class, so its position still counts.
+func repliesOf(v view, prefix string) (r map[string]any, all []string, ok bool) {
 	if prefix == "" && v.r.Stop != nil || prefix != "" && !v.Whole(strings.TrimSuffix(prefix, ".")) {
-		return nil, false
+		return nil, nil, false
 	}
-	r := map[string]any{}
+	r = map[string]any{}
 	for _, k := range []string{"replies", "replies_pts", "max_id", "read_max_id"} {
 		if x, ok := v.Int(prefix + k); ok {
 			r[k] = x
@@ -310,8 +328,15 @@ func repliesOf(v view, prefix string) (map[string]any, bool) {
 	rp := prefix + "recent_repliers"
 	if n, ok := v.Len(rp); ok {
 		var addrs []any
-		for i := range min(n, maxRepliers) {
-			if a, ok := peerOf(v, elem(rp, i)); ok {
+		all = []string{} // grown as read: never sized from the count
+		for i := range n {
+			a, ok := peerOf(v, elem(rp, i))
+			if !ok {
+				all = append(all, "?"+v.Class(elem(rp, i)))
+				continue
+			}
+			all = append(all, a)
+			if i < maxRepliers {
 				addrs = append(addrs, a)
 			}
 		}
@@ -323,13 +348,15 @@ func repliesOf(v view, prefix string) (map[string]any, bool) {
 			r["recent_repliers_truncated"] = true
 		}
 	}
-	return r, true
+	return r, all, true
 }
 
 // readRepliesData states the replies_data cell (design D13, rulings B8, P6): the serialized message.replies, decoded as
 // a MessageReplies beside the blob with the blob keys (replies_data_state, _len, _sha256, _constructor, _flags,
 // _stop_*; no _undecided) and nothing merged: raw.replies_data is its replies shape when it decoded whole, and
-// raw.replies_conflict is true when the blob's own replies was read whole too and the two decoded values differ (B8).
+// raw.replies_conflict is true when the blob's own replies was read whole too and the two decoded values differ (B8):
+// the capped shapes, and the full replier lists beside them (ruling F1: lists equal in their first 16 entries may differ
+// after them).
 // A cell of another class or an unreadable one is listed in unknown_columns, a NULL states nothing. What the decode
 // charged is freed when the row returns (F8).
 func (r *msgRow) readRepliesData(row parse.Row, c rowrun.Cols, tab tl.Table, bud tl.Budget) {
@@ -346,12 +373,12 @@ func (r *msgRow) readRepliesData(row parse.Row, c rowrun.Cols, tab tl.Table, bud
 		if _, ok := topOf(v, tab, typeReplies, state); !ok || state != stateDecoded {
 			return
 		}
-		m, ok := repliesOf(v, "")
+		m, all, ok := repliesOf(v, "")
 		if !ok {
 			return
 		}
 		r.raw[colRepliesData] = m
-		if blob, ok := r.raw["replies"].(map[string]any); ok && !sameReplies(blob, m) {
+		if blob, ok := r.raw["replies"].(map[string]any); ok && (!sameReplies(blob, m) || !slices.Equal(r.repliers, all)) {
 			r.raw["replies_conflict"] = true
 		}
 	case rowrun.CellOther:

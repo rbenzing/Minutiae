@@ -374,7 +374,7 @@ func TestTelegramRecoveredRowsJoinNothing(t *testing.T) {
 // (mid, uid): R2's older images (REPLACE INTO gave R2 a new rowid) are "present" (the message's key is still live),
 // and come only through the recovery emitter with the host's relation, never as live records; the mapping states no
 // deletion of its own (ruling T8: the host's Deleted stamp on every typed record marks recovered provenance, 4G-R7);
-// rows 201-207 are "absent"; a row whose mid cell cannot be read is "undecided". R1's edit image follows the pinned
+// rows 201-208 are "absent"; a row whose mid cell cannot be read is "undecided". R1's edit image follows the pinned
 // write_verb.messages_v2.edit as the put does: an UPDATE keeps the rowid, so the older image carries the host's
 // superseded-version relation; a re-inserting verb gives a new rowid, so the older image is absent-from-live with
 // live_key_state "present". telegram-v181's R52, written in a WAL frame that was never committed, is a typed record of
@@ -417,7 +417,7 @@ func TestTelegramRecoveredLiveKeyStateFollowsTheWriteVerb(t *testing.T) {
 			if state != "present" || r.Body != "Hi Ann" || f.Relation != "absent-from-live" {
 				t.Errorf("%s: R2's older image: live_key_state %v, relation %q, Body %q", f.Locator, state, f.Relation, r.Body)
 			}
-		case slices.Contains([]any{int64(201), int64(202), int64(203), int64(204), int64(205), int64(-12), int64(207)}, mid):
+		case slices.Contains([]any{int64(201), int64(202), int64(203), int64(204), int64(205), int64(-12), int64(207), int64(208)}, mid):
 			if state != "absent" {
 				t.Errorf("%s: deleted row (mid %v): live_key_state %v, want absent", f.Locator, mid, state)
 			}
