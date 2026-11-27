@@ -83,3 +83,6 @@ func (lostRowid) Recovered() *sqlitedb.RecoveredInfo { return &sqlitedb.Recovere
 
 // PutReinserts is putReinserts (facts.tsv write_verb.*.put).
 const PutReinserts = putReinserts
+
+// TableEntry is the constructor table's entry of id (the zero Constructor when the table lacks it).
+func TableEntry(id uint32) tl.Constructor { return newTable()[id] }

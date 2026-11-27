@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
@@ -385,7 +386,67 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	if v181.Notes["constructors_seen"] != exp.Notes["constructors_seen"] {
 		t.Errorf("telegram-v181: constructors_seen %q, the oracle %q", v181.Notes["constructors_seen"], exp.Notes["constructors_seen"])
 	}
-	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:49,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" {
+	// plan 4I4b: R29's Dice is full and well-formed, so it decodes (49 decoded and 7 partial before)
+	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:50,partial:6,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" {
 		t.Errorf("telegram-v181: blob_states %q (the oracle: %q)", got, exp.Notes["blob_states"])
+	}
+}
+
+// idReplyKeyboardHide is TL_replyKeyboardHide (ReplyMarkup), an opaque row in this plan (Stage B reads reply markup).
+const idReplyKeyboardHide = 0xa03e5b85
+
+// Plan 4I4b design D9, rulings R5, B3 (Review Focus 4): edit_date is Unix seconds at all four pins (facts.tsv
+// unit.edit_date), so a read valid edit_date is Times.edited beside the raw value and its unit; 0 is a sentinel and
+// -100 invalid, stated in raw.edit_date_status with no time; edit_hide does not void it; a stop after edit_date keeps
+// it (the field was read), and a stop before it gives no time and lists edit_date in data_undecided.
+func TestTelegramEditTimeFollowsTheUnitFact(t *testing.T) {
+	const ann, self = 1000002, 1000001
+	edited := time.Date(2023, 11, 14, 22, 23, 20, 0, time.UTC) // baseDate + 600
+	msg := func(id int32, edit int32, set bool, flags uint32, markup, tail []byte) msgCells {
+		return msgCells{mid: int64(id), uid: ann, data: tlMessage{
+			flags: flags, id: id, from: ann, peer: self, date: baseDate, editDate: edit, editSet: set, text: "x",
+			markup: markup, tail: tail,
+		}.bytes()}
+	}
+	old := append(append(append(le32(idReactionCountOld), le32(0)...), tlStr("👍")...), le32(2)...)
+	rows := []msgCells{
+		msg(1, baseDate+600, false, 0, nil, nil),
+		msg(2, 0, true, 0, nil, nil),
+		msg(3, -100, false, 0, nil, nil),
+		msg(4, baseDate+600, false, bitEditHide, nil, nil),
+		msg(5, baseDate+600, false, bitReactions, nil, reactionsWith(old)),
+		msg(6, baseDate+600, false, 0, append(le32(idReplyKeyboardHide), le32(0)...), nil),
+	}
+	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, rows))).Records)
+	rec := func(n int) (records.Record, map[string]any) {
+		r := got["messages_v2/"+itoa(int64(n))]
+		return r, rawOf(r)
+	}
+	hasEdited := func(r records.Record) bool {
+		return len(r.Times) == 1 && r.Times[0].Kind == "edited" && r.Times[0].Time.T.Equal(edited) &&
+			r.Times[0].Time.Basis == records.BasisUTC
+	}
+
+	r, raw := rec(1)
+	if !hasEdited(r) || raw["edit_date"] != int64(baseDate+600) || raw["edit_date_unit"] != "seconds" || raw["edit_date_status"] != nil {
+		t.Errorf("edit D+600: times %v, raw edit_date %v unit %v status %v", r.Times, raw["edit_date"], raw["edit_date_unit"], raw["edit_date_status"])
+	}
+	for n, st := range map[int]string{2: "sentinel", 3: "invalid"} {
+		r, raw := rec(n)
+		if len(r.Times) != 0 || raw["edit_date_status"] != st || raw["edit_date"] == nil {
+			t.Errorf("row %d: times %v, edit_date %v status %v, want no time and %s", n, r.Times, raw["edit_date"], raw["edit_date_status"], st)
+		}
+	}
+	if r, raw := rec(4); !hasEdited(r) || raw["edit_hide"] != true {
+		t.Errorf("edit_hide: times %v, raw.edit_hide %v", r.Times, raw["edit_hide"])
+	}
+	if r, raw := rec(5); !hasEdited(r) || raw["data_stop_path"] != "reactions.results[0]" {
+		t.Errorf("stop after edit_date: times %v, stop %v", r.Times, raw["data_stop_path"])
+	}
+	r, raw = rec(6)
+	undecided, _ := raw["data_undecided"].(string)
+	if len(r.Times) != 0 || raw["edit_date"] != nil || raw["data_stop_path"] != "reply_markup" ||
+		!slices.Contains(strings.Split(undecided, ","), "edit_date") {
+		t.Errorf("stop before edit_date: times %v, edit_date %v, stop %v, data_undecided %q", r.Times, raw["edit_date"], raw["data_stop_path"], undecided)
 	}
 }

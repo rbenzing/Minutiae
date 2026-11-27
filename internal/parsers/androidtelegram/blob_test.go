@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/decode/tl"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
@@ -108,11 +109,12 @@ func TestTelegramBlobStatesArePinned(t *testing.T) {
 		t.Errorf("rowid 2016: data_flags %v, want padding-nonzero", raw["data_flags"])
 	}
 
-	// partial: R18, a conference-call action the table lacks (spec 8.7, Q7)
+	// partial: R18, a conference-call action (spec 8.7, Q7) the table holds as an opaque row since plan 4I4b (rulings
+	// R2, B2: every MessageAction ID of A-HEAD is a row, opaque unless read), so the stop is opaque and names it
 	v181 := fixtureBlobs(t, "telegram-v181", "messages_v2", "data")
 	raw, st := androidtelegram.DecodeBlob(v181[18], androidtelegram.TypeMessage, bud())
 	seen[st] = true
-	want := map[string]any{"data_state": "partial", "data_stop_kind": "unknown-constructor", "data_stop_path": "action", "data_stop_id": "0x2ffe2f7a", "data_stop_offset": int64(40)}
+	want := map[string]any{"data_state": "partial", "data_stop_kind": "opaque", "data_stop_path": "action", "data_stop_id": "0x2ffe2f7a", "data_stop_offset": int64(40)}
 	for k, v := range want {
 		if raw[k] != v {
 			t.Errorf("R18: %s = %v, want %v", k, raw[k], v)
@@ -193,4 +195,49 @@ func equalJSON(a, b map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// The IDs of the reaction rows the pin-conflict rows use (constructors.tsv).
+const (
+	idMessageReactions = 0x0a339f0b // TL_messageReactions (TLRPC.java:27428@A-HEAD)
+	idReactionCountOld = 0x6fb250d1 // TL_reactionCount_layer144: read two ways across the pins, opaque (R3)
+	idReactionEmoji    = 0x1b2286b8 // TL_reactionEmoji
+	idTLVector         = 0x1cb5c415
+)
+
+// reactionsWith is a TL_messageReactions (flags 0) whose results vector holds one element, given encoded, ID first.
+func reactionsWith(elem []byte) []byte {
+	b := append(le32(idMessageReactions), le32(0)...)
+	b = append(b, le32(idTLVector)...)
+	b = append(b, le32(1)...)
+	return append(b, elem...)
+}
+
+// Plan 4I4b design D4, rulings R3, T1b: 0x6fb250d1 is read as (flags, string, count) at 5.14.0 and 8.1.1 and as
+// (flags, boxed Reaction, count) at A-HEAD, so its row is opaque and a blob holding it stops there under either
+// reading, naming the constructor: both rows are partial at reactions.results[0] with the stop id, never decoded one
+// way.
+func TestTelegramPinConflictIsOpaque(t *testing.T) {
+	c := androidtelegram.TableEntry(idReactionCountOld)
+	if c.Body != tl.BodyOpaque || c.Type != "ReactionCount" {
+		t.Errorf("table entry 0x6fb250d1: body %v type %q, want opaque ReactionCount", c.Body, c.Type)
+	}
+	old := append(append(append(le32(idReactionCountOld), le32(0)...), tlStr("👍")...), le32(2)...)
+	boxed := append(append(append(append(le32(idReactionCountOld), le32(0)...), le32(idReactionEmoji)...), tlStr("👍")...), le32(2)...)
+	for name, elem := range map[string][]byte{"old reading": old, "new reading": boxed} {
+		b := tlMessage{flags: bitReactions, id: 1, from: 1000002, peer: 1000001, date: baseDate, text: "x", tail: reactionsWith(elem)}.bytes()
+		raw, state := androidtelegram.DecodeBlob(b, androidtelegram.TypeMessage, parse.NewBudget(1<<20).View())
+		want := map[string]any{
+			"data_state": "partial", "data_stop_kind": "opaque", "data_stop_path": "reactions.results[0]",
+			"data_stop_id": "0x6fb250d1",
+		}
+		if state != "partial" {
+			t.Errorf("%s: state %q, want partial", name, state)
+		}
+		for k, v := range want {
+			if raw[k] != v {
+				t.Errorf("%s: raw.%s = %v, want %v", name, k, raw[k], v)
+			}
+		}
+	}
 }

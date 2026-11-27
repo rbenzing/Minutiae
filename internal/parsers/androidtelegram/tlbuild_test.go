@@ -23,10 +23,13 @@ const (
 	bitOut           = 1 << 1
 	bitFwdFrom       = 1 << 2
 	bitFromID        = 1 << 8
+	bitReplyMarkup   = 1 << 6
 	bitMedia         = 1 << 9
 	bitPost          = 1 << 14
 	bitEditDate      = 1 << 15
 	bitFromScheduled = 1 << 18
+	bitReactions     = 1 << 20
+	bitEditHide      = 1 << 21
 )
 
 func le32(v uint32) []byte { return binary.LittleEndian.AppendUint32(nil, v) }
@@ -49,17 +52,21 @@ func tlStr(s string) []byte {
 
 func peerUser(id int64) []byte { return append(le32(idPeerUser), le64(id)...) }
 
-// tlMessage is one TL_message: flags (out, from_scheduled and the gates of from_id, fwd_from, media and edit_date are
-// set from the fields), flags2 0, id, [from_id], peer_id, [fwd_from], date, message, [media], [edit_date], then tail
-// (an app-local trailer, spec 6.5) as given. fwd and media are the encoded objects, ID first; fromPeer and peerObj,
-// when set, are the encoded from_id and peer_id objects in place of a TL_peerUser of from and peer.
+// tlMessage is one TL_message: flags (out, from_scheduled and the gates of from_id, fwd_from, media, reply_markup and
+// edit_date are set from the fields), flags2 0, id, [from_id], peer_id, [fwd_from], date, message, [media],
+// [reply_markup], [edit_date], then tail (an app-local trailer, spec 6.5, or the fields after edit_date with their
+// bits set in flags, such as F.20 reactions) as given. fwd, media and markup are the encoded objects, ID first;
+// fromPeer and peerObj, when set, are the encoded from_id and peer_id objects in place of a TL_peerUser of from and
+// peer. editSet writes F.15 and editDate even when editDate is 0 (plan 4I4b Task 3).
 type tlMessage struct {
 	flags             uint32
 	id                int32
 	from, peer        int64
 	date, editDate    int32
+	editSet           bool
 	text              string
 	fwd, media        []byte
+	markup            []byte
 	fromPeer, peerObj []byte
 	tail              []byte
 }
@@ -69,8 +76,11 @@ func (m tlMessage) bytes() []byte {
 	if m.from != 0 || m.fromPeer != nil {
 		flags |= bitFromID
 	}
-	if m.editDate != 0 {
+	if m.editDate != 0 || m.editSet {
 		flags |= bitEditDate
+	}
+	if m.markup != nil {
+		flags |= bitReplyMarkup
 	}
 	if m.fwd != nil {
 		flags |= bitFwdFrom
@@ -96,7 +106,8 @@ func (m tlMessage) bytes() []byte {
 	b = append(b, le32(uint32(m.date))...)
 	b = append(b, tlStr(m.text)...)
 	b = append(b, m.media...)
-	if m.editDate != 0 {
+	b = append(b, m.markup...)
+	if m.editDate != 0 || m.editSet {
 		b = append(b, le32(uint32(m.editDate))...)
 	}
 	return append(b, m.tail...)

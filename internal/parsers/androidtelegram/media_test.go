@@ -3,6 +3,7 @@ package androidtelegram_test
 import (
 	"encoding/binary"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
@@ -127,7 +128,7 @@ func TestTelegramMediaSummaries(t *testing.T) {
 		},
 		27: {"type": "venue", "constructor": "0x2ec0533f", "lat": 52.52, "long": 13.405, "title": "Office", "address": "1 Main St"},
 		28: {"type": "web_page", "constructor": "0xddf10c3b", "url": "https://example.test/a", "display_url": "example.test/a"},
-		29: {"type": "dice", "constructor": "0x08cbec07"}, // opaque: the type from the table, nothing read
+		29: {"type": "dice", "constructor": "0x08cbec07"}, // full since 4I4b; the 4I4 summary reads no dice field
 	}
 	for id, m := range want {
 		r := rows["messages_v2/"+itoa(id)]
@@ -158,14 +159,26 @@ func TestTelegramMediaSummaries(t *testing.T) {
 		t.Errorf("R1: raw.media %v: a message without media has none", m)
 	}
 
+	// the telegram-layers media rows 1501...: one per full MessageMedia wrapper and TL_messageMediaUnsupported_old
+	// (opaque), each with the text "media <class>"; its type is the class's label (spec 6.6). Plan 4I4b Task 1 made
+	// more wrappers full (32 full of 52), so the rows are 33 (11 before) and the type follows the class, never a
+	// position.
 	layers := byRow(parseFixture(t, "telegram-layers").Records)
-	types := []string{"venue", "empty", "document", "geo", "contact", "poll", "unsupported", "geo_live", "web_page", "photo", "unsupported"}
-	for i, typ := range types {
-		key := "messages_v2/" + itoa(int64(1501+i))
-		m, _ := rawOf(layers[key])["media"].(map[string]any)
-		if m["type"] != typ {
-			t.Errorf("%s: raw.media.type %v, want %s", key, m["type"], typ)
+	n := 0
+	for id := int64(1501); id < 1601; id++ {
+		r, ok := layers["messages_v2/"+itoa(id)]
+		if !ok {
+			break
 		}
+		n++
+		cls, isMedia := strings.CutPrefix(r.Body, "media ")
+		m, _ := rawOf(r)["media"].(map[string]any)
+		if !isMedia || labels[cls] == "" || m["type"] != labels[cls] {
+			t.Errorf("messages_v2/%d (%q): raw.media.type %v, want the label of the class", id, r.Body, m["type"])
+		}
+	}
+	if n != 33 {
+		t.Errorf("%d telegram-layers media rows, want 33", n)
 	}
 
 	for _, v := range variants {

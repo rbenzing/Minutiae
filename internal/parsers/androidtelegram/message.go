@@ -232,10 +232,10 @@ func (r *msgRow) readPre84() (int64, bool) {
 }
 
 // readBlobRaw states the decoded blob fields of spec 8.5's raw list (the media, forward header and trailer are
-// mediaSummary's, fwdRaw's and readTrailer's, the reply copy replyCopy's, the peer peerRaw's): the flags words,
-// the set booleans, the id (and id_conflict against the message id), via_bot_id, grouped_id, ttl_period, views,
-// reply_to.reply_to_msg_id, edit_date with its unit, the blob date (and date_conflict against the date column) and the
-// messageEmpty label.
+// mediaSummary's, fwdRaw's and readTrailer's, the reply copy replyCopy's, the peer peerRaw's, the edit time
+// editTime's): the flags words, the set booleans, the id (and id_conflict against the message id), via_bot_id,
+// grouped_id, ttl_period, views, reply_to.reply_to_msg_id, edit_date as stored with its unit, the blob date (and
+// date_conflict against the date column) and the messageEmpty label.
 func readBlobRaw(raw map[string]any, v view, c tl.Constructor, msgID int64, msgIDOK bool, date int64, dateOK bool) {
 	if f, ok := v.Int("flags"); ok {
 		raw["blob_flags"] = f
@@ -263,8 +263,7 @@ func readBlobRaw(raw map[string]any, v view, c tl.Constructor, msgID int64, msgI
 		raw["reply_to_msg_id"] = x
 	}
 	if x, ok := v.Int("edit_date"); ok {
-		// raw only: Times.edited would need unitEditDate "seconds", and the pinned source leaves the unit
-		// unestablished (facts.tsv unit.edit_date; TestTelegramFactsMatchTheCode)
+		// kept as stored beside Times.edited (editTime; facts.tsv unit.edit_date, TestTelegramFactsMatchTheCode)
 		raw["edit_date"], raw["edit_date_unit"] = x, unitEditDate
 	}
 	if x, ok := v.Int("date"); ok {
@@ -528,8 +527,10 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	}
 	top, hasTop := topOf(v, tab, typeMessage, state)
 	var atts []message.Attachment
+	var times []records.NamedTime
 	if hasTop {
 		readBlobRaw(raw, v, top, msgID, msgIDOK, date, dateOK)
+		times = editTime(raw, v)
 		peerRaw(v, raw)
 		fwdRaw(v, raw)
 		atts = mediaSummary(v, tab, top, raw)
@@ -602,7 +603,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 	msg.Raw = raw
 	rec := records.Record{
 		Type: message.Type, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator,
-		Range: &place.Range, Time: tm, Body: body,
+		Range: &place.Range, Time: tm, Times: times, Body: body,
 		Summary: messageSummary(d, dir, msg.Participants, body),
 		Payload: msg.Payload(),
 	}
@@ -623,4 +624,29 @@ func setBodyFields(msg *message.Message, cl common.Cleaned) {
 		n := int64(cl.RawLen)
 		msg.BodyRawB64, msg.BodyRawSHA256, msg.BodyRawLen = cl.RawB64, cl.RawSHA256, &n
 	}
+}
+
+// timeEdited is the Times kind of a message's edit time.
+const timeEdited = "edited"
+
+// editTime is a message's Times.edited from the blob's edit_date (plan 4I4b design D9, rulings R5, B3): only while
+// unitEditDate is "seconds" (facts.tsv unit.edit_date at all four pins) and only when edit_date was read (a stop at
+// or before it gives none; it is then in data_undecided). The date-status rule of the date column applies: a valid
+// value is the time, a sentinel (0, -1) or a value outside 1970-2100 states raw.edit_date_status and gives none.
+// edit_hide does not void it (the flag hides the label in the app, the value stands). raw.edit_date stays as stored
+// beside it (readBlobRaw).
+func editTime(raw map[string]any, v view) []records.NamedTime {
+	if unitEditDate != "seconds" {
+		return nil
+	}
+	x, ok := v.Int("edit_date")
+	if !ok {
+		return nil
+	}
+	inst := rowrun.Seconds(x)
+	if inst.Status != ts.StatusValid {
+		raw["edit_date_status"] = inst.Status.String()
+		return nil
+	}
+	return []records.NamedTime{{Kind: timeEdited, Time: records.Time{T: inst.T, Basis: records.BasisUTC}}}
 }

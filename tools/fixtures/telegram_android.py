@@ -1375,7 +1375,7 @@ def core_messages():
         "_": "TL_messageMediaVenue", "geo": geo(52.52), "title": "Office", "address": "1 Main St", "provider": "", "venue_id": "", "venue_type": ""})))
     R[28] = row(28, 124, ANN, enc(tlmsg(124, 28, "", frm=pu(ANN), media={"_": "TL_messageMediaWebPage", "webpage": {
         "_": "TL_webPage", "id": 9003, "url": "https://example.test/a", "display_url": "example.test/a", "hash": 0}})))
-    R[29] = row(29, 125, ANN, enc(tlmsg(125, 29, "", frm=pu(ANN), media={"_raw": u32le(0x08CBEC07) + b"\x03\x00\x00\x00\x02\xf0\x9f\x8e\xb2\x00"})))
+    R[29] = row(29, 125, ANN, enc(tlmsg(125, 29, "", frm=pu(ANN), media={"_": "TL_messageMediaDice", "value": 3, "emoticon": "\U0001F3B2"})))  # Dice is full since 4I4b: a well-formed body
     R[30] = row(30, 126, ANN, enc(tlmsg(126, 30, "Reply", frm=pu(ANN), reply_to={"_": "TL_messageReplyHeader", "reply_to_msg_id": 101})),
                 replydata=R[1]["data"], reply_to_message_id=101)
     bold_url = [{"_": "TL_messageEntityBold", "offset": 0, "length": 4}, {"_": "TL_messageEntityUrl", "offset": 5, "length": 4}]

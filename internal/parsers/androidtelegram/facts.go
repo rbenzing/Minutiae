@@ -3,9 +3,16 @@ package androidtelegram
 // Go constants that follow a pinned fact of tools/fixtures/schemas/telegram-android/facts.tsv (4I4-P4); each is
 // asserted equal to its row by TestTelegramFactsMatchTheCode, so a fact and the code that follows it never drift.
 const (
-	// unitEditDate is facts.tsv unit.edit_date: the pinned source never establishes the unit of a message's
-	// edit_date, so it stays raw with raw.edit_date_unit and never becomes Times.edited (spec 8.5, 10, T6 Q3).
-	unitEditDate = "unestablished"
+	// unitEditDate is facts.tsv unit.edit_date (plan 4I4b Task 1, rulings R5, B3): seconds at all four pins, so a
+	// message's edit_date is Times.edited (editTime) beside raw.edit_date and raw.edit_date_unit. The call site
+	// differs by pin: at A-HEAD the cell passes edit_date to timeString (ChatMessageCell.java:15657), whose edited
+	// label formats it with LocaleController.formatPmEditedDate (ChatMessageCell.java:15576); at A-11.4.2,
+	// release-8.1.1_2431 and release-5.14.0_1851 the cited call site is the cell's own
+	// LocaleController.formatLocationUpdateDate call on edit_date (ChatMessageCell.java:8330, 4968, 4050), the
+	// formatter named for a location's update date, not the edited label route. Both formatters multiply the value by
+	// 1000 before Calendar.setTimeInMillis, which establishes seconds at each pin. Any other value leaves edit_date
+	// raw only.
+	unitEditDate = "seconds"
 	// unitBlobTimes is facts.tsv unit.blob_times: the unit of the blob's other times (fwd_from.date, until_date,
 	// expire_date) is not established as a set, so they stay raw only (spec 10).
 	unitBlobTimes = "unestablished"

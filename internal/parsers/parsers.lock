@@ -41,8 +41,10 @@ android.mmssms.recover 1.0.6 src1:sha256:a7de7dc4fa517888d1e68e6d4a37effb7f4a932
 android.mmssms.recover 1.0.7 src1:sha256:6e82dd70c4697b58aa51b67b8692d4768be694b2eccc9985b42eab51fc82b6c2
 android.telegram 1.0.0 src1:sha256:4368ca92b67200e6f7ffc35337847ea944617cd975fd25c2da8b31f041b078fd
 android.telegram 1.0.1 src1:sha256:c99cbe9cc98cc4aa21ba6ff653cdcede7ec982147d8e97ac40775aa5efe51478
+android.telegram 1.1.0 src1:sha256:8fdc27f76d432cfce0ef1832932b6eebfb7a0dca0e442f4024a35a13ea6137a8
 android.telegram.recover 1.0.0 src1:sha256:932c7b75f6786f8354013910870f067c76f9a77743ea23a86b44f9ea056df782
 android.telegram.recover 1.0.1 src1:sha256:5f02f75242129d283e7e6603091361b48a21e1749de649f94e2b0a5e23b93613
+android.telegram.recover 1.1.0 src1:sha256:b3a0e5218efc3894b4d3666e8ce019141e07705ffb703cb8dcea76ec9f98977a
 android.whatsapp.contacts 1.0.0 src1:sha256:f6150ccc678a1635e594255a70e428009a3639f17f01cd0a3d8631dcd2e59fd1
 android.whatsapp.contacts 1.0.1 src1:sha256:1f8eabb4c56d0bb2355642be1750c651b6551e15832a1a4b9d20e951a2e9b1e7
 android.whatsapp.contacts.recover 1.0.0 src1:sha256:0d4ec9837a503274bf30830df32291f9217d8b8def2832852683b823b903b9f3

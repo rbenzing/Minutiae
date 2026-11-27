@@ -243,3 +243,49 @@ func TestTelegramTablesGoIsGofmtClean(t *testing.T) {
 		t.Error("tables.go is not gofmt-clean: regenerate it with tools/fixtures/telegram_tl_facts.py --go")
 	}
 }
+
+// closureGaps are the object types a full or prefix row of tab names (a KObject or KVector field's Of) that no
+// constructor of tab has, one line per naming field: "<type> named by <class>.<field>", sorted.
+func closureGaps(tab tl.Table) []string {
+	types := map[string]bool{}
+	for _, c := range tab {
+		types[c.Type] = true
+	}
+	var out []string
+	for _, c := range tab {
+		if c.Body == tl.BodyOpaque {
+			continue
+		}
+		for _, f := range c.Fields {
+			if (f.Kind == tl.KObject || f.Kind == tl.KVector) && f.Of != "" && !types[f.Of] {
+				out = append(out, f.Of+" named by "+c.Name+"."+f.Name)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// withoutType is a copy of tab without every constructor of type typ.
+func withoutType(tab tl.Table, typ string) tl.Table {
+	out := maps.Clone(tab)
+	maps.DeleteFunc(out, func(_ uint32, c tl.Constructor) bool { return c.Type == typ })
+	return out
+}
+
+// Plan 4I4b design D3, rulings R2, B2: the table is closed, so a decode never meets a type it has no row of: every
+// object type a full or prefix row names has constructors in the table. A copy without the PhotoSize rows names the
+// gap and a class that names it (TL_photo); one without the MessageAction rows names that gap.
+func TestTelegramTableIsClosed(t *testing.T) {
+	if gaps := closureGaps(newTable()); len(gaps) != 0 {
+		t.Errorf("%d closure gaps, first: %s", len(gaps), gaps[0])
+	}
+	gaps := closureGaps(withoutType(newTable(), "PhotoSize"))
+	if !slices.ContainsFunc(gaps, func(g string) bool { return strings.HasPrefix(g, "PhotoSize named by TL_photo.") }) {
+		t.Errorf("without PhotoSize: no gap naming PhotoSize and TL_photo in %v", gaps)
+	}
+	gaps = closureGaps(withoutType(newTable(), typeAction))
+	if !slices.ContainsFunc(gaps, func(g string) bool { return strings.HasPrefix(g, typeAction+" named by ") }) {
+		t.Errorf("without MessageAction: no gap naming MessageAction in %v", gaps)
+	}
+}

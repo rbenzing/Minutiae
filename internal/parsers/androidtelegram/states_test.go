@@ -161,7 +161,20 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 		{
 			"edit date",
 			msgCells{mid: 20, uid: ann, data: tlMessage{id: 20, from: ann, peer: self, date: baseDate, editDate: baseDate + 5, text: "x"}.bytes()},
-			map[string]any{"edit_date": int64(baseDate + 5), "edit_date_unit": "unestablished"},
+			map[string]any{"edit_date": int64(baseDate + 5), "edit_date_unit": "seconds", "edit_date_status": nil},
+			nil,
+		},
+		// plan 4I4b Task 3 (design D9, rulings R5, B3): the date-status rule of the date column on edit_date
+		{
+			"edit date sentinel",
+			msgCells{mid: 47, uid: ann, data: tlMessage{id: 47, from: ann, peer: self, date: baseDate, editSet: true, text: "x"}.bytes()},
+			map[string]any{"edit_date": int64(0), "edit_date_unit": "seconds", "edit_date_status": "sentinel"},
+			nil,
+		},
+		{
+			"edit date invalid",
+			msgCells{mid: 48, uid: ann, data: tlMessage{id: 48, from: ann, peer: self, date: baseDate, editDate: -100, text: "x"}.bytes()},
+			map[string]any{"edit_date": int64(-100), "edit_date_unit": "seconds", "edit_date_status": "invalid"},
 			nil,
 		},
 		{

@@ -51,6 +51,10 @@ func TestTelegramFactsMatchTheCode(t *testing.T) {
 			}
 		}
 	}
+	// plan 4I4b Task 1, ruling B3: unit.edit_date is pinned at each of the four pins (one row per pin)
+	if n := len(factValues(t, "unit.edit_date")); n != 4 {
+		t.Errorf("facts.tsv has %d unit.edit_date rows, want 4", n)
+	}
 	// ruling T2, F30 (Task 14): putReinserts is true when any pinned put of a message table re-inserts: a REPLACE
 	// statement deletes the stored row of the key and inserts the new one (an UPDATE rewrites it in place)
 	reinserts := false

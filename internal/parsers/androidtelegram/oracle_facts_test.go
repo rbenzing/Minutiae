@@ -187,7 +187,8 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	want("R11", call(11).str("outcome") == "missed" && call(11).str("kind") == "voice" && call(11).str("address") == "user:1000002" && noMessage(11))
 	want("R12", call(12).str("direction") == "out" && call(12).str("outcome") == "unknown" && call(12).raw["label_reason"] == "hangup" && call(12).str("kind") == "video")
 	want("R13-R17", call(13).str("outcome") == "rejected" && call(14).raw["reason_state"] == "not-recorded" && call(16).raw["slug"] == "conf-1" && call(17).str("address") == "" && call(17).raw["address_state"] == "not-user-dialog")
-	// spec 8.7: a conference-call action is not in the table: a system message, partial at the action
+	// spec 8.7: a conference-call action is an opaque row (plan 4I4b rulings R2, B2): a system message, partial at the
+	// action
 	want("R18 R19", msg(18).str("kind") == "system" && msg(18).raw["data_state"] == "partial" && msg(18).raw["data_stop_id"] == "0x2ffe2f7a" && msg(19).str("kind") == "system")
 	// spec 8.5: messageEmpty claims nothing about deletion
 	want("R20", msg(20).str("kind") == "unknown" && msg(20).raw["label_constructor"] == "messageEmpty" && !msg(20).r.Deleted)
@@ -196,7 +197,9 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	want("R22", msg(22).raw["data_state"] == "partial" && msg(22).raw["data_stop_path"] == "media.photo.sizes[0]" && num(msg(22).rawObj("media")["id"]) == "9001" && msg(22).body() == "")
 	want("R23", msg(23).att0() == att{mime: "application/pdf", size: "12345"} && msg(23).raw["data_state"] == "partial")
 	want("R24 R25", num(msg(24).rawObj("media")["lat"]) == "52.52" && num(msg(24).rawObj("media")["long"]) == "13.405" && msg(25).rawObj("media")["lat_state"] == "out-of-range")
-	want("R29", msg(29).str("kind") == "media" && msg(29).rawObj("media")["type"] == "dice" && msg(29).raw["data_stop_kind"] == "opaque")
+	// plan 4I4b Task 1: TL_messageMediaDice is full, so R29 (a well-formed Dice body since Task 3, Task 1 review M1)
+	// decodes whole
+	want("R29", msg(29).str("kind") == "media" && msg(29).rawObj("media")["type"] == "dice" && msg(29).raw["data_state"] == "decoded")
 	// spec 8.5 reply copy: never Body, never target_guid
 	want("R30", num(msg(30).raw["reply_to_msg_id"]) == "101" && msg(30).rawObj("reply_copy")["copy"] == true && msg(30).rawObj("reply_copy")["text"] == "Hello Ann here" && msg(30).str("target_guid") == "")
 	// T3: entities and quote replies decode
@@ -223,14 +226,15 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	// F22 and the Task 5 ruling: the second secret document stops at the same place
 	want("R59", msg(59).raw["data_state"] == "partial" && msg(59).raw["data_stop_path"] == "media.document.thumbs" && msg(59).rawObj("media")["key_present"] == nil)
 	// coordinator ruling M3 (Task 5 review): TL_messageMediaEmpty reads no field, so it is full and read whole; the
-	// secret rows that carry it decode with no stop, and v181 counts 8 undecoded message blobs (7 partial), not 11
+	// secret rows that carry it decode with no stop, and v181 counts 7 undecoded message blobs (6 partial; R29 decodes
+	// since plan 4I4b), not 11
 	for _, n := range []int64{8, 10, 57} {
 		_, stopped := msg(n).raw["data_stop_kind"]
 		want(fmt.Sprintf("M3 R%d", n), msg(n).raw["data_state"] == "decoded" && !stopped && msg(n).raw["trailer_state"] == "none")
 	}
 	undecoded := false
 	for _, w := range parsertest.LoadFixture(t, "testdata", "telegram-v181").Expect.Warnings {
-		undecoded = undecoded || w.Contains == "telegram-blob-undecoded: messages_v2.data: 8 records (partial:7,unknown-constructor:1)"
+		undecoded = undecoded || w.Contains == "telegram-blob-undecoded: messages_v2.data: 7 records (partial:6,unknown-constructor:1)"
 	}
 	want("M3 count", undecoded)
 	// F18
