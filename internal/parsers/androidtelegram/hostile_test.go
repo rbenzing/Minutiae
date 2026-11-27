@@ -586,6 +586,16 @@ func hostileStageB(t *testing.T, recs map[string]records.Record, blobs map[int64
 		if off, err := strconv.Atoi(jsonText(raw["data_stop_offset"])); w.state != "decoded" && (err != nil || off > len(blobs[id])) {
 			t.Errorf("H%d: data_stop_offset %v beyond the blob's %d bytes", id, raw["data_stop_offset"], len(blobs[id]))
 		}
+		// a row a stop ended is not a cut row (there is no whole blob to compare with): the object or list it ended is
+		// stated by its _state only, so no Stage B list is stated (the list bounds of the decoded rows are pinned by
+		// markupCaps4I4c and pollCaps4I4c in TestTelegramCapsAreCountedNeverSilent)
+		if w.state != "decoded" {
+			for _, k := range []string{"reply_markup_buttons", "poll_answers", "poll_results_options", "poll_voters"} {
+				if raw[k] != nil {
+					t.Errorf("H%d: raw.%s stated after a stop in its object", id, k)
+				}
+			}
+		}
 	}
 	full := byRow(parseFixture(t, "telegram-v181").Records)
 	counts := map[string]int{}

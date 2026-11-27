@@ -365,4 +365,33 @@ func TestTelegramKeyMaterialNeverEmitted(t *testing.T) {
 			}
 		})
 	}
+
+	// plan 4I4c Task 8, R7 "both parsers": a deleted message whose mention is a full TL_inputUser (access_hash
+	// secret_i64(4410), a Stage B credential) lies only in WAL frames; the typed pass recovers it, states the mention and
+	// emits none of the credential
+	t.Run("typed-pass/go-built-mention-wal", func(t *testing.T) {
+		user := slices.Concat(le32(idInputUser), le64(1000009), le64(secretI64Base+4410))
+		files := deletedMessageInWAL(t, mentionMessage(user))
+		if !f.labels(string(files["wal"]))["i64:4410"] {
+			t.Fatalf("the WAL holds no i64:4410 credential (%v): the check proves nothing", f.labels(string(files["wal"])))
+		}
+		res := typedRun(t, files)
+		stated := 0
+		for _, r := range res.recs {
+			ents, _ := rawOf(r)["entities"].([]any)
+			for _, e := range ents {
+				if m, _ := e.(map[string]any); m["user"] == "user:1000009" && m["user_access_hash_present"] == true {
+					stated++
+				}
+			}
+		}
+		if stated != 1 {
+			t.Fatalf("the typed pass states %d recovered mentions of the InputUser (%d records): the check proves nothing", stated, len(res.recs))
+		}
+		for _, s := range res.texts(t) {
+			if label, form, ok := f.find(s); ok {
+				t.Errorf("the typed pass's output holds %s (form %q)", label, form)
+			}
+		}
+	})
 }

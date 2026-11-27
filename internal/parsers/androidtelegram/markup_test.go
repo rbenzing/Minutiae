@@ -306,11 +306,17 @@ var callbackData = strings.Repeat("SYNTHETIC-CALLBACK-07-", 4)
 // pages after that row was deleted: the recovered row and its callback bytes lie only in WAL frames (as secretRowsInWAL).
 func callbackRowInWAL(t *testing.T) map[string][]byte {
 	t.Helper()
-	live := tlMessage{id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "live"}
-	gone := tlMessage{
+	return deletedMessageInWAL(t, tlMessage{
 		id: 2, from: idAnn, peer: idSelf, date: baseDate, text: "deleted",
 		markup: inlineMarkup(buttonRow(idInlineRow, callbackButton("Go", callbackData))),
-	}
+	})
+}
+
+// deletedMessageInWAL is the Go-built database of callbackRowInWAL for any message (id 2): the row and its bytes lie only
+// in WAL frames.
+func deletedMessageInWAL(t *testing.T, gone tlMessage) map[string][]byte {
+	t.Helper()
+	live := tlMessage{id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "live"}
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 181})
 	b.CreateTable("users", ddlUsers)
 	v2 := b.CreateTable("messages_v2", ddlV2Full)
@@ -370,32 +376,41 @@ func markupCaps4I4c(t *testing.T) {
 	markupTextCaps(t)
 }
 
-// markupTextCaps is a Go-built message whose button texts are one byte over their caps (ruling T5r1, plan Raw shapes:
-// text, fwd_text-like names, query and the suggested names 1 KiB; url and copy_text 4 KiB; the keyboard placeholder
-// 1 KiB): each is kept at its cap and named in raw.text_flags, never cut silently.
+// markupTextCaps is Go-built messages whose button texts are one byte over their caps and exactly at them (ruling T5r1,
+// plan Raw shapes: text, fwd_text, query and the suggested names 1 KiB; url and copy_text 4 KiB; the keyboard
+// placeholder 1 KiB): a text over a cap is kept at the cap and named in raw.text_flags, never cut silently; one exactly
+// at a cap is kept whole and not flagged (an off-by-one would show here).
 func markupTextCaps(t *testing.T) {
 	t.Helper()
 	const (
 		idButtonURL     = 0x258aff05 // TL_keyboardButtonUrl_layer223: text, url
+		idButtonURLAuth = 0x10b78d29 // TL_keyboardButtonUrlAuth_layer223: flags, text, fwd_text (F.0), url, button_id
 		idButtonCopy    = 0xbcc4af10 // TL_keyboardButtonCopy_layer228: flags, text, copy_text
 		idButtonSwitch  = 0x991399fc // TL_keyboardButtonSwitchInline_layer228: flags, text, query
 		idButtonRequest = 0x5b0f15f5 // TL_keyboardButtonRequestPeer_layer228: flags, text, button_id, peer_type, max_quantity
 		idCreateBot     = 0x3e81e078 // TL_requestPeerTypeCreateBot: flags, suggested_name (F.1), suggested_username (F.2)
 	)
-	over := func(n int) string { return strings.Repeat("a", n+1) }
-	url := append(append(le32(idButtonURL), tlStr(over(1<<10))...), tlStr(over(4<<10))...)
-	cp := append(append(append(le32(idButtonCopy), le32(0)...), tlStr("c")...), tlStr(over(4<<10))...)
-	sw := append(append(append(le32(idButtonSwitch), le32(0)...), tlStr("s")...), tlStr(over(1<<10))...)
-	bot := append(append(append(le32(idCreateBot), le32(6)...), tlStr(over(1<<10))...), tlStr(over(1<<10))...)
-	req := append(append(append(append(append(le32(idButtonRequest), le32(0)...), tlStr("r")...), le32(1)...), bot...), le32(1)...)
-	// the keyboard markup with F.3 placeholder, over its cap
-	kb := append(append(append(le32(idKeyboardMarkup), le32(8)...), tlVec(buttonRow(idKeyboardRow, req))...), tlStr(over(1<<10))...)
-	inline := inlineMarkup(buttonRow(idInlineRow, url, cp, sw))
-	cells := []msgCells{
-		{mid: 1, uid: idAnn, data: tlMessage{id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: inline}.bytes()},
-		{mid: 2, uid: idAnn, data: tlMessage{id: 2, from: idAnn, peer: idSelf, date: baseDate, text: "y", markup: kb}.bytes()},
+	cat := func(parts ...[]byte) []byte { return slices.Concat(parts...) }
+	// the inline and keyboard markups whose every text is its cap plus delta bytes
+	markups := func(delta int) (inline, keyboard []byte) {
+		txt := func(n int) string { return strings.Repeat("a", n+delta) }
+		url := cat(le32(idButtonURL), tlStr(txt(1<<10)), tlStr(txt(4<<10)))
+		auth := cat(le32(idButtonURLAuth), le32(1), tlStr("u"), tlStr(txt(1<<10)), tlStr("x"), le32(1))
+		cp := cat(le32(idButtonCopy), le32(0), tlStr("c"), tlStr(txt(4<<10)))
+		sw := cat(le32(idButtonSwitch), le32(0), tlStr("s"), tlStr(txt(1<<10)))
+		bot := cat(le32(idCreateBot), le32(6), tlStr(txt(1<<10)), tlStr(txt(1<<10)))
+		req := cat(le32(idButtonRequest), le32(0), tlStr("r"), le32(1), bot, le32(1))
+		keyboard = cat(le32(idKeyboardMarkup), le32(8), tlVec(buttonRow(idKeyboardRow, req)), tlStr(txt(1<<10)))
+		return inlineMarkup(buttonRow(idInlineRow, url, auth, cp, sw)), keyboard
 	}
-	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, cells))).Records)
+	cell := func(id int32, markup []byte) msgCells {
+		return msgCells{mid: int64(id), uid: idAnn, data: tlMessage{id: id, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: markup}.bytes()}
+	}
+	overIn, overKb := markups(1)
+	exactIn, exactKb := markups(0)
+	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, []msgCells{
+		cell(1, overIn), cell(2, overKb), cell(3, exactIn), cell(4, exactKb),
+	}))).Records)
 	length := func(m map[string]any, k string) int { s, _ := m[k].(string); return len(s) }
 	buttons := func(row string) []map[string]any {
 		var out []map[string]any
@@ -405,36 +420,40 @@ func markupTextCaps(t *testing.T) {
 		}
 		return out
 	}
-	b1 := buttons("1")
-	if len(b1) != 3 {
-		t.Fatalf("%d inline buttons, want 3", len(b1))
-	}
-	if length(b1[0], "text") != 1<<10 || length(b1[0], "url") != 4<<10 || length(b1[1], "copy_text") != 4<<10 || length(b1[2], "query") != 1<<10 {
-		t.Errorf("kept lengths text %d url %d copy_text %d query %d; want 1024, 4096, 4096, 1024",
-			length(b1[0], "text"), length(b1[0], "url"), length(b1[1], "copy_text"), length(b1[2], "query"))
-	}
-	flags1, _ := rawOf(got["messages_v2/1"])["text_flags"].(string)
-	for _, want := range []string{"reply_markup_buttons.text", "reply_markup_buttons.url", "reply_markup_buttons.copy_text", "reply_markup_buttons.query"} {
-		if !slices.Contains(strings.Split(flags1, ","), want) {
-			t.Errorf("text_flags %q does not name %s", flags1, want)
+	check := func(inRow, kbRow string, flagged bool) {
+		in, kb := buttons(inRow), buttons(kbRow)
+		if len(in) != 4 || len(kb) != 1 {
+			t.Fatalf("rows %s and %s: %d inline and %d keyboard buttons, want 4 and 1", inRow, kbRow, len(in), len(kb))
+		}
+		m, _ := rawOf(got["messages_v2/"+kbRow])["reply_markup"].(map[string]any)
+		for _, c := range []struct {
+			name, key  string
+			have, want int
+		}{
+			{"reply_markup_buttons.text", "text", length(in[0], "text"), 1 << 10},
+			{"reply_markup_buttons.url", "url", length(in[0], "url"), 4 << 10},
+			{"reply_markup_buttons.fwd_text", "fwd_text", length(in[1], "fwd_text"), 1 << 10},
+			{"reply_markup_buttons.copy_text", "copy_text", length(in[2], "copy_text"), 4 << 10},
+			{"reply_markup_buttons.query", "query", length(in[3], "query"), 1 << 10},
+			{"reply_markup_buttons.suggested_name", "suggested_name", length(kb[0], "suggested_name"), 1 << 10},
+			{"reply_markup_buttons.suggested_username", "suggested_username", length(kb[0], "suggested_username"), 1 << 10},
+			{"reply_markup.placeholder", "placeholder", length(m, "placeholder"), 1 << 10},
+		} {
+			if c.have != c.want {
+				t.Errorf("rows %s, %s: kept %s of %d bytes, want %d", inRow, kbRow, c.key, c.have, c.want)
+			}
+			named := false
+			for _, r := range []string{inRow, kbRow} {
+				flags, _ := rawOf(got["messages_v2/"+r])["text_flags"].(string)
+				named = named || slices.Contains(strings.Split(flags, ","), c.name)
+			}
+			if named != flagged {
+				t.Errorf("rows %s, %s: text_flags names %s = %v, want %v (flagged only over the cap)", inRow, kbRow, c.name, named, flagged)
+			}
 		}
 	}
-	b2 := buttons("2")
-	if len(b2) != 1 {
-		t.Fatalf("%d keyboard buttons, want 1", len(b2))
-	}
-	raw2 := rawOf(got["messages_v2/2"])
-	m2, _ := raw2["reply_markup"].(map[string]any)
-	if length(b2[0], "suggested_name") != 1<<10 || length(b2[0], "suggested_username") != 1<<10 || length(m2, "placeholder") != 1<<10 {
-		t.Errorf("kept lengths suggested_name %d suggested_username %d placeholder %d; want 1024 each",
-			length(b2[0], "suggested_name"), length(b2[0], "suggested_username"), length(m2, "placeholder"))
-	}
-	flags2, _ := raw2["text_flags"].(string)
-	for _, want := range []string{"reply_markup_buttons.suggested_name", "reply_markup_buttons.suggested_username", "reply_markup.placeholder"} {
-		if !slices.Contains(strings.Split(flags2, ","), want) {
-			t.Errorf("text_flags %q does not name %s", flags2, want)
-		}
-	}
+	check("1", "2", true)
+	check("3", "4", false)
 }
 
 // markupVocabulary is plan 4I4c Task 6's part of TestTelegramStateVocabularyIsPinned: the four markup kinds, the button
