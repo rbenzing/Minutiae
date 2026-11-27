@@ -3072,3 +3072,24 @@ read by another task's agent, recorded in a section of its own.
 | 0x51b67eff | TL_messagePeerReaction_layer144 | TLRPC.java:2679 (reads 2683-2688) | flags:# big=F.0 unread=F.1 peer_id:Peer reaction.emoticon:str (the app builds a TL_reactionEmoji around the string, 2687-2688) | read by hand |
 | 0x932844fa | TL_messagePeerReaction_layer137 | TLRPC.java:2704 (reads 2710-2714) | peer_id:id64@user reaction.emoticon:str (the int64 read at 2710 is put in the TL_peerUser built at 2713-2714; the string at 2712 in a TL_reactionEmoji) | read by hand |
 | 0xfa64e172 | TL_webPage_layer107 | TLRPC.java:20041 (reads 20045-20093) | flags:# id:i64 url:str display_url:str hash:i32 [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document] [F.11: documents:vec<Document>] [F.10: cached_page:TL_iv.Page] (bit 11 is read before bit 10, 20086-20093; the app wraps the documents in a TL_webPageAttributeTheme) | read by hand |
+
+## Hand-read rows, second read (plan 4I4b Task 2, B11)
+
+The same four rows, read a second time by the Task 2 builder, a different agent from Task 1, from `TLRPC.java` at
+A-HEAD (21f7d109da6ab3506c9e9577f98c6a38771ab335; fetched into scratch, SHA-256
+37a1b1ee83d1f84352f90ac65e8d2176a863678f60c902010c3e1c0b1beea86b, deleted after). Each body was written from the
+class's `readParams` before `constructors.tsv`, this file or the recon were opened, then compared token for token
+with the row's `fields`. All four agree in what is read (IDs, field order, flag bits, wire types). Reading notes:
+`0xa3d1cb80` reads 45146-45151, `chosen` is the flag-only test of bit 0 that also gates `chosen_order`;
+`0x51b67eff` reads 2683-2688, the string goes into a `TL_reactionEmoji` the app builds (not read);
+`0x932844fa` reads 2710-2712, one int64 then one string: the int64 is held in `user_id` and becomes the user id of
+the `TL_peerUser` the app builds (2713-2714), which the T5 notation names `peer_id:id64@user` (as the other inline
+ids of the table name the peer the app builds); `0xfa64e172` reads 20045-20093, bit 11 (a vector of documents the app
+wraps in a `TL_webPageAttributeTheme`) is read before bit 10 (`cached_page`).
+
+| ID | Class | Source | Body read | Verdict |
+|---|---|---|---|---|
+| 0xa3d1cb80 | TL_reactionCount | TLRPC.java:45142 | flags:# chosen=F.0 [F.0: chosen_order:i32] reaction:Reaction count:i32 | agrees |
+| 0x51b67eff | TL_messagePeerReaction_layer144 | TLRPC.java:2679 | flags:# big=F.0 unread=F.1 peer_id:Peer reaction.emoticon:str | agrees |
+| 0x932844fa | TL_messagePeerReaction_layer137 | TLRPC.java:2704 | peer_id:id64@user reaction.emoticon:str | agrees |
+| 0xfa64e172 | TL_webPage_layer107 | TLRPC.java:20041 | flags:# id:i64 url:str display_url:str hash:i32 [F.0: type:str] [F.1: site_name:str] [F.2: title:str] [F.3: description:str] [F.4: photo:Photo] [F.5: embed_url:str] [F.5: embed_type:str] [F.6: embed_width:i32] [F.6: embed_height:i32] [F.7: duration:i32] [F.8: author:str] [F.9: document:Document] [F.11: documents:vec<Document>] [F.10: cached_page:TL_iv.Page] | agrees |

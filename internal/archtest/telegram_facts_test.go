@@ -206,7 +206,8 @@ func tgTSV(t *testing.T, name, src, header string) [][]string {
 // nothing missing or mismatched; no file holds a URL (GPLv2 facts only, cited by repository and commit).
 // Plan 4I4b Task 1 (design D1, D3-D6, D9; rulings R3, B2-B4, B7, B9, B11, T1a-T1d): the closed table's counts per
 // type and body, the pin conflicts as opaque rows and the only CONFLICT verdicts, the D5 field type, the B7 spelling,
-// unit.edit_date seconds at all four pins, the compatible widening of 0xe89c45b2 and the hand-read section.
+// unit.edit_date seconds at all four pins, the compatible widening of 0xe89c45b2 and the hand-read section; plan 4I4b
+// Task 2 (ruling B11): the second, independent hand-read agrees with each of the four rows token for token.
 func TestTelegramFactsCiteTheirSource(t *testing.T) {
 	dir := calendarSchemaDir(t, "telegram-android")
 	consSrc := calendarReadFile(t, filepath.Join(dir, "constructors.tsv"))
@@ -496,6 +497,34 @@ func TestTelegramFactsCiteTheirSource(t *testing.T) {
 		for _, id := range []string{"0xa3d1cb80", "0x51b67eff", "0x932844fa", "0xfa64e172"} {
 			if n := len(regexp.MustCompile(`(?m)^\| `+id+` \|`).FindAllString(section, -1)); n != 1 {
 				t.Errorf("CROSSCHECK.md hand-read section: %d rows for %s, want 1 (ruling B11)", n, id)
+			}
+		}
+	}
+	// ruling B11 (plan 4I4b Task 2): the second, independent hand-read agrees with each committed row token for
+	// token: one row per ID whose body read equals that ID's fields in constructors.tsv, verdict "agrees".
+	const hand2Head = "## Hand-read rows, second read (plan 4I4b Task 2, B11)\n"
+	if i := strings.Index(report, hand2Head); i < 0 {
+		t.Errorf("CROSSCHECK.md has no section %q", strings.TrimSpace(hand2Head))
+	} else {
+		section := report[i+len(hand2Head):]
+		if j := strings.Index(section, "\n#"); j >= 0 {
+			section = section[:j]
+		}
+		byID := map[string][]string{}
+		for _, r := range cons {
+			byID[r[1]] = r
+		}
+		for _, id := range []string{"0xa3d1cb80", "0x51b67eff", "0x932844fa", "0xfa64e172"} {
+			r, ok := byID[id]
+			if !ok {
+				t.Errorf("constructors.tsv has no row %s (ruling B11)", id)
+				continue
+			}
+			line := `(?m)^\| ` + id + ` \| ` + regexp.QuoteMeta(r[2]) + ` \| ` + regexp.QuoteMeta(r[5]) + ` \| ` +
+				regexp.QuoteMeta(r[6]) + ` \| agrees \|$`
+			if n := len(regexp.MustCompile(line).FindAllString(section, -1)); n != 1 {
+				t.Errorf("CROSSCHECK.md second hand-read section: %d agreeing rows for %s %s %s, want 1 (ruling B11)",
+					n, id, r[2], r[5])
 			}
 		}
 	}
