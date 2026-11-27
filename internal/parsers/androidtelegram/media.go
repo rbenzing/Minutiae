@@ -53,11 +53,11 @@ func mediaSummary(v view, tab tl.Table, c tl.Constructor, raw map[string]any) []
 		raw["media"] = mediaStop(s, tab)
 		return nil
 	}
-	id, ok := v.ID("media")
+	id, mc, ok := entryAt(v, tab, "media")
 	if !ok {
 		return nil
 	}
-	class := tab[id].Name
+	class := mc.Name
 	m := map[string]any{"type": mediaLabel(class), "constructor": hexID(id)}
 	raw["media"] = m
 	wrapperSummary(v, m, raw)
@@ -173,20 +173,21 @@ func diceSummary(v view, m, raw map[string]any) {
 // mediaStop is raw.media of a decode that stopped at the media object itself: an ID that was read (one the table
 // lacks, or an opaque one with its class's label) is its constructor; a stop before the ID was read or at it for
 // another reason (the blob ends inside the ID, the depth bound) is state <the stop kind>, never an ID that is not on
-// the wire (review I1; data_stop_path says where).
+// the wire (review I1; data_stop_path says where). The class is the entry of the stop's type and ID (plan 4I4c P3).
 func mediaStop(s *tl.Stop, tab tl.Table) map[string]any {
+	key := tl.Key{Type: s.Type, ID: s.ID}
 	switch s.Kind {
 	case tl.StopUnknownConstructor:
 		return map[string]any{"constructor": hexID(s.ID)}
 	case tl.StopOpaque:
 		m := map[string]any{"constructor": hexID(s.ID)}
-		if mc, ok := tab[s.ID]; ok {
+		if mc, ok := tab[key]; ok {
 			m["type"] = mediaLabel(mc.Name)
 		}
 		return m
 	}
 	m := map[string]any{"state": s.Kind}
-	if mc, ok := tab[s.ID]; ok && s.ID != 0 { // the ID was read and known: a refusal after it (the budget)
+	if mc, ok := tab[key]; ok && s.ID != 0 { // the ID was read and known: a refusal after it (the budget)
 		m["constructor"], m["type"] = hexID(s.ID), mediaLabel(mc.Name)
 	}
 	return m

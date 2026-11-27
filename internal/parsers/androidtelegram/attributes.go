@@ -26,11 +26,10 @@ const (
 // distinct names in wire order, total the number of distinct names) or undecided (the attribute list was not read
 // whole). No state and no name: the document was not read, or its class has neither attributes nor a file_name.
 func fileName(v view, tab tl.Table, doc, flag string, raw map[string]any) (name, state string, names []string, total int) {
-	id, ok := v.ID(doc)
+	_, c, ok := entryAt(v, tab, doc)
 	if !ok {
 		return "", "", nil, 0
 	}
-	c := tab[id]
 	var values [][]byte
 	switch {
 	case hasField(c, "file_name"):

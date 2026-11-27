@@ -25,24 +25,32 @@ const (
 	KFlags
 	// KTrue is a flag-only true: no bytes; Named.Bool true when its bit is set, absent else.
 	KTrue
-	// KObject is a boxed object of the type Field.Of (Named.ID; its fields follow).
+	// KObject is a boxed object of the type Field.Of (Named.ID, Named.Type; its fields follow).
 	KObject
-	// KVector is a boxed vector of boxed objects of the type Field.Of (Named.Len; elements
-	// follow at name[i]).
+	// KVector is a boxed vector of boxed objects of the type Field.Of, or Field.Alt for an ID
+	// Of lacks (Named.Len; elements follow at name[i]).
 	KVector
-	// KVecInt32 is a boxed vector header and bare int32 elements (Named.Len; name[i]).
+	// KVecInt32 is a boxed vector header and bare int32 elements (Named.Len; name[i], KID32
+	// with Field.Class when it is set).
 	KVecInt32
-	// KVecInt64 is a boxed vector header and bare int64 elements (Named.Len; name[i]).
+	// KVecInt64 is a boxed vector header and bare int64 elements (Named.Len; name[i], KID64
+	// with Field.Class when it is set).
 	KVecInt64
 	// KID32 is an int32 identifier of the class Field.Class (Named.Int, Named.Class; T5).
 	KID32
 	// KID64 is an int64 identifier of the class Field.Class (Named.Int, Named.Class; T5).
 	KID64
+	// KVecString is a boxed vector header and bare TL strings (Named.Len; name[i] are KString
+	// elements, plan 4I4c W3).
+	KVecString
 )
 
 // Field is one field of a constructor, in declaration order. Of names the type of a KObject
 // or KVector; Flags names the flags word ("flags" or "flags2") that gates the field, "" for
-// an ungated one, and Bit its bit (0 to 31); Class is the identity class of a KID32 or KID64.
+// an ungated one, and Bit its bit (0 to 31); Class is the identity class of a KID32 or KID64,
+// or of every element of a KVecInt32 or KVecInt64 (read as KID32 or KID64; plan 4I4c W3).
+// Alt is the second type of a union KVector, whose elements are read by Of when Of holds the
+// ID, else by Alt (plan 4I4c W2).
 type Field struct {
 	Name  string
 	Kind  Kind
@@ -50,6 +58,7 @@ type Field struct {
 	Flags string
 	Bit   int
 	Class string
+	Alt   string
 }
 
 // Body says how much of a constructor the table pins.
@@ -77,6 +86,12 @@ type Constructor struct {
 	Source string
 }
 
-// Table maps a constructor ID to its constructor. It is read-only data: the walker never
-// changes it, and a table lives in the parser that owns the facts (spec section 8.2).
-type Table map[uint32]Constructor
+// Key is the type and ID a constructor is looked up by (plan 4I4c W1).
+type Key struct {
+	Type string
+	ID   uint32
+}
+
+// Table maps a key to its constructor. It is read-only data: the walker never changes it,
+// and a table lives in the parser that owns the facts (spec section 8.2).
+type Table map[Key]Constructor

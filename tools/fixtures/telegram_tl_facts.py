@@ -1384,16 +1384,18 @@ def go_table(rows):
             "// citing its source line at the pin that reads it (plan 4I4 spec 8.2). It is a function, not a package",
             "// variable: a parser holds no package-level state (the purity rule P5), so each Parse builds its own.",
             "func newTable() tl.Table {", "\treturn tl.Table{"]
-    for r in sorted(rows, key=lambda r: int(r[1], 16)):
+    # the table is keyed by (type, ID) (plan 4I4c W1); Go accepts a duplicate struct key in a map literal, so a
+    # duplicate (type, ID) is refused here (ruling C2) and by the parser's table test
+    for r in sorted(rows, key=lambda r: (int(r[1], 16), r[0])):
         typ, cid, name, body, pin, source, fields = r
-        if cid in seen or body not in GO_BODY:
-            raise SystemExit("%s: duplicate id or unknown body %r" % (cid, body))
-        seen.add(cid)
+        if (typ, cid) in seen or body not in GO_BODY:
+            raise SystemExit("%s %s: duplicate (type, id) or unknown body %r" % (typ, cid, body))
+        seen.add((typ, cid))
         fl = go_fields(cid, fields)
         # gofmt aligns the values of a run of one-line keys: ID, Name, Type and Body, joined by Source when no Fields
         # block ends the run
         w = 4 if fl else 6
-        ent = ["%s: {" % cid] + ["\t%s %s," % ((k + ":").ljust(w + 1), v) for k, v in (
+        ent = ["{Type: %s, ID: %s}: {" % (go_type(typ), cid)] + ["\t%s %s," % ((k + ":").ljust(w + 1), v) for k, v in (
             ("ID", cid), ("Name", '"%s"' % name), ("Type", go_type(typ)), ("Body", GO_BODY[body]))]
         if fl:
             ent.append("\tFields: []tl.Field{")

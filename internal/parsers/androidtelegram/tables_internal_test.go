@@ -137,13 +137,19 @@ func loadConstructors(t *testing.T) []tsvRow {
 
 var bodyOf = map[string]tl.Body{"full": tl.BodyFull, "prefix": tl.BodyPrefix, "opaque": tl.BodyOpaque}
 
-// tableDiffs compares a table with the facts, both ways, and returns one line per difference.
+// tableDiffs compares a table with the facts, both ways, by (type, ID) (plan 4I4c W1, ruling C2: Go accepts a duplicate
+// struct key in a map literal, so a duplicate (type, ID) row is reported here), and returns one line per difference.
 func tableDiffs(tab tl.Table, rows []tsvRow) []string {
 	var out []string
-	have := map[uint32]bool{}
+	have := map[tl.Key]bool{}
 	for _, r := range rows {
-		have[r.id] = true
-		c, ok := tab[r.id]
+		k := tl.Key{Type: typeName(r.typ), ID: r.id}
+		if have[k] {
+			out = append(out, fmt.Sprintf("%#08x %s %s: duplicate (type, id) row", r.id, r.typ, r.class))
+			continue
+		}
+		have[k] = true
+		c, ok := tab[k]
 		if !ok {
 			out = append(out, fmt.Sprintf("%#08x %s: no table entry", r.id, r.class))
 			continue
@@ -159,9 +165,9 @@ func tableDiffs(tab tl.Table, rows []tsvRow) []string {
 			out = append(out, fmt.Sprintf("%#08x %s: fields differ", r.id, r.class))
 		}
 	}
-	for id := range tab {
-		if !have[id] {
-			out = append(out, fmt.Sprintf("%#08x: table entry without a row", id))
+	for k := range tab {
+		if !have[k] {
+			out = append(out, fmt.Sprintf("%#08x %s: table entry without a row", k.ID, k.Type))
 		}
 	}
 	return out
@@ -182,16 +188,29 @@ func TestTelegramConstructorTableMatchesFacts(t *testing.T) {
 	}
 
 	extra := maps.Clone(table)
-	extra[0xdeadbeef] = tl.Constructor{ID: 0xdeadbeef, Name: "TL_planted", Type: typeMessage, Body: tl.BodyOpaque, Source: "X.java:1@A-HEAD"}
+	extra[tl.Key{Type: typeMessage, ID: 0xdeadbeef}] = tl.Constructor{ID: 0xdeadbeef, Name: "TL_planted", Type: typeMessage, Body: tl.BodyOpaque, Source: "X.java:1@A-HEAD"}
 	if d := tableDiffs(extra, rows); len(d) != 1 || !strings.Contains(d[0], "without a row") {
 		t.Errorf("a planted extra entry is not reported alone: %v", d)
 	}
 
+	// Ruling C2: a fact row repeated (the same type and ID twice) is reported once, as a duplicate.
+	if d := tableDiffs(table, append(slices.Clone(rows), rows[0])); len(d) != 1 || !strings.Contains(d[0], "duplicate") {
+		t.Errorf("a repeated (type, id) row is not reported alone as a duplicate: %v", d)
+	}
+	// A row whose (type, ID) the table lacks (the same ID under another type) is reported, and so is the entry left
+	// without its row.
+	moved := slices.Clone(rows)
+	moved[0].typ = "Planted"
+	if d := tableDiffs(table, moved); len(d) != 2 || !strings.Contains(d[0], "no table entry") || !strings.Contains(d[1], "without a row") {
+		t.Errorf("a row of another type is not reported as a missing pair: %v", d)
+	}
+
 	swapped := maps.Clone(table)
-	var victim uint32
+	var victim tl.Key
 	for _, r := range rows {
-		if f := table[r.id].Fields; len(f) >= 2 && !reflect.DeepEqual(f[0], f[1]) {
-			victim = r.id
+		k := tl.Key{Type: typeName(r.typ), ID: r.id}
+		if f := table[k].Fields; len(f) >= 2 && !reflect.DeepEqual(f[0], f[1]) {
+			victim = k
 			break
 		}
 	}
@@ -269,7 +288,7 @@ func closureGaps(tab tl.Table) []string {
 // withoutType is a copy of tab without every constructor of type typ.
 func withoutType(tab tl.Table, typ string) tl.Table {
 	out := maps.Clone(tab)
-	maps.DeleteFunc(out, func(_ uint32, c tl.Constructor) bool { return c.Type == typ })
+	maps.DeleteFunc(out, func(k tl.Key, _ tl.Constructor) bool { return k.Type == typ })
 	return out
 }
 

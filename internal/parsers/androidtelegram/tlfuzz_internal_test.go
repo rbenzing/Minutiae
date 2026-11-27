@@ -2,6 +2,7 @@ package androidtelegram
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"maps"
 	"slices"
@@ -28,7 +29,10 @@ const seedsPerType = 10
 // taken in ascending ID order with at most seedsPerType per type and file: the same seeds on every run (Task 7
 // review M2, carried into Task 8 as C6).
 func FuzzTLDecode(f *testing.F) {
-	ids := slices.Sorted(maps.Keys(table))
+	// the keys in (ID, type) order: the same seeds on every run (plan 4I4c W1 keys the table by both)
+	keys := slices.SortedFunc(maps.Keys(table), func(a, b tl.Key) int {
+		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Type, b.Type))
+	})
 	perType := make([]int, len(fuzzTypes))
 	for _, name := range []string{"telegram-v181", "telegram-hostile"} {
 		fx := parsertest.LoadFixture(f, "testdata", name)
@@ -36,12 +40,12 @@ func FuzzTLDecode(f *testing.F) {
 			raw := fx.Files[role]
 			for i, typ := range fuzzTypes {
 				seeds := 0
-				for _, id := range ids {
-					if table[id].Type != typ || seeds >= seedsPerType {
+				for _, k := range keys {
+					if k.Type != typ || seeds >= seedsPerType {
 						continue
 					}
 					var pat [4]byte
-					binary.LittleEndian.PutUint32(pat[:], id)
+					binary.LittleEndian.PutUint32(pat[:], k.ID)
 					if at := bytes.Index(raw, pat[:]); at >= 0 {
 						f.Add(raw[at:min(at+512, len(raw))], uint8(i))
 						seeds++

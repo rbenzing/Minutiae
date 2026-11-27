@@ -22,8 +22,26 @@
 //     4 counting the prefix; a non-zero padding byte is stated with FlagPaddingNonzero. A
 //     length past the end of the blob is refused, as the app refuses it, as ErrTruncated: the
 //     framing cannot declare a length above MaxString (spec ruling T7).
-//   - A boxed vector is the constructor 0x1cb5c415, an int32 count and the elements (VEC:8,35-37);
-//     bare int and long vectors exist (VEC:60-131) and are the walker's to read.
+//   - A boxed vector is the constructor 0x1cb5c415, an int32 count and the elements (VEC:8,35-37).
+//     The bare vector reader (VEC:161-177) reads the same header and refuses another value
+//     (VEC:162-166), then the int32 count, checked against the bytes that remain (VEC:167-171),
+//     then each element bare (VEC:173-175): int32 (VEC:178-180), int64 (VEC:181-183) or a TL
+//     string (VEC:184-186). The app's count check allows 1 byte per element; the walker checks
+//     each element's minimum (4 for an int32 or a string, whose prefix and padding take 4 bytes,
+//     8 for an int64), which refuses no vector the app can read whole.
+//   - A bare id vector (VecL = tgnet/VectorLegacy.java) is a bare int32 or int64 vector whose
+//     elements the app wraps as user peers (VecL:27-37, 48-58).
+//
+// The walker reads three table forms beyond single fields and plain vectors (plan 4I4c W1-W3):
+//
+//   - Every object is looked up by (expected type, ID) (Key): an ID of another type is an
+//     unknown constructor, and the Named of every KObject carries the type it was read as.
+//   - A union vector element (a KVector field with Alt) is read by Of when Of holds its ID,
+//     whatever the body there, else by Alt; an ID in neither is an unknown constructor naming
+//     "Of|Alt".
+//   - A bare id vector (KVecInt32 or KVecInt64 with Class) yields KID32 or KID64 elements
+//     carrying the class; a bare string vector (KVecString) yields KString elements, each a
+//     sub-slice of the input.
 //   - A flags:# field gates optional fields by bit in declaration order and flag-only true
 //     fields carry no bytes (TLO:15-54); FlagUnknownFlagBits names a set bit that gates nothing
 //     in a pinned constructor, which only a table-driven walker can decide.

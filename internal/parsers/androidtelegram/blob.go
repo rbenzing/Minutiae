@@ -123,16 +123,14 @@ func decodeBlob(raw map[string]any, col string, b []byte, typ string, tab tl.Tab
 }
 
 // topOf is the top constructor of a decode when the table knows it for typ and the state is not
-// unknown-constructor (a truncated, malformed or capped blob whose top ID was read has one).
+// unknown-constructor (a truncated, malformed or capped blob whose top ID was read has one). The
+// table is keyed by (type, ID), so the key holds the type (plan 4I4c P3, ruling C1).
 func topOf(v view, tab tl.Table, typ, state string) (tl.Constructor, bool) {
 	if state == stateUnknown || state == stateNull {
 		return tl.Constructor{}, false
 	}
-	c, ok := tab[v.r.Top]
-	if !ok || c.Type != typ {
-		return tl.Constructor{}, false
-	}
-	return c, true
+	c, ok := tab[tl.Key{Type: typ, ID: v.r.Top}]
+	return c, ok
 }
 
 // headOf is the top-level field name of a path ("fwd_from.from_id" -> "fwd_from", "entities[0]" -> "entities").

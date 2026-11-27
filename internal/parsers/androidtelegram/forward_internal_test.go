@@ -13,7 +13,7 @@ import (
 // refuses one), so the decode result is built by hand.
 func TestTelegramForwardUnresolvedClassIsContradictory(t *testing.T) {
 	v := newView(tl.Result{Fields: []tl.Named{
-		{Path: "fwd_from", Kind: tl.KObject, ID: 0xc786ddcb},
+		{Path: "fwd_from", Kind: tl.KObject, ID: 0xc786ddcb, Type: typeFwd},
 		{Path: "fwd_from.flags", Kind: tl.KFlags, Int: 1},
 		{Path: "fwd_from.from_id", Kind: tl.KID32, Int: 1000003, Class: "unknown"},
 		{Path: "fwd_from.date", Kind: tl.KInt32, Int: 1700000000},
@@ -31,7 +31,7 @@ func TestTelegramForwardUnresolvedClassIsContradictory(t *testing.T) {
 func TestTelegramSecretDocumentKeyIsPresenceOnly(t *testing.T) {
 	const idThumb = 0x7e57e57e
 	tab := newTable()
-	tab[idThumb] = tl.Constructor{ID: idThumb, Name: "TL_photoSizeTest", Type: "PhotoSize", Body: tl.BodyFull}
+	tab[tl.Key{Type: "PhotoSize", ID: idThumb}] = tl.Constructor{ID: idThumb, Name: "TL_photoSizeTest", Type: "PhotoSize", Body: tl.BodyFull}
 	key := []byte("SYNTHETIC-NOT-A-KEY-0123456789ab")
 	le := func(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
 	str := func(b []byte) []byte {

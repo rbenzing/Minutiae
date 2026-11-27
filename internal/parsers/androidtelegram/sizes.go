@@ -64,11 +64,8 @@ func sizeKind(class string) string {
 
 // className is the table class name of the object read at path ("" when no object was read there).
 func className(v view, tab tl.Table, path string) string {
-	id, ok := v.ID(path)
-	if !ok {
-		return ""
-	}
-	return tab[id].Name
+	_, c, _ := entryAt(v, tab, path)
+	return c.Name
 }
 
 // elem is the path of element i of the list at path.
@@ -180,11 +177,11 @@ func fieldKind(v view, tab tl.Table, path string) tl.Kind {
 	if i < 0 {
 		return 0
 	}
-	id, ok := v.ID(path[:i])
+	_, c, ok := entryAt(v, tab, path[:i])
 	if !ok {
 		return 0
 	}
-	for _, f := range tab[id].Fields {
+	for _, f := range c.Fields {
 		if f.Name == path[i+1:] {
 			return f.Kind
 		}

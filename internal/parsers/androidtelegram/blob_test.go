@@ -218,7 +218,7 @@ func reactionsWith(elem []byte) []byte {
 // reading, naming the constructor: both rows are partial at reactions.results[0] with the stop id, never decoded one
 // way.
 func TestTelegramPinConflictIsOpaque(t *testing.T) {
-	c := androidtelegram.TableEntry(idReactionCountOld)
+	c := androidtelegram.TableEntry("ReactionCount", idReactionCountOld)
 	if c.Body != tl.BodyOpaque || c.Type != "ReactionCount" {
 		t.Errorf("table entry 0x6fb250d1: body %v type %q, want opaque ReactionCount", c.Body, c.Type)
 	}

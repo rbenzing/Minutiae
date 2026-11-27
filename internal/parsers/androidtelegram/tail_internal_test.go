@@ -9,9 +9,9 @@ import (
 // idOf is the constructor ID of the table row named name.
 func idOf(t *testing.T, tab tl.Table, name string) uint32 {
 	t.Helper()
-	for id, c := range tab {
+	for k, c := range tab {
 		if c.Name == name {
-			return id
+			return k.ID
 		}
 	}
 	t.Fatalf("no constructor %s in the table", name)
@@ -22,7 +22,7 @@ func idOf(t *testing.T, tab tl.Table, name string) uint32 {
 // (the decode stopped inside it) states no reaction, not "emoji:".
 func TestReactionOfStatesNoEmptyEmoji(t *testing.T) {
 	tab := newTable()
-	v := newView(tl.Result{Fields: []tl.Named{{Path: "r", Kind: tl.KObject, ID: idOf(t, tab, "TL_reactionEmoji")}}})
+	v := newView(tl.Result{Fields: []tl.Named{{Path: "r", Kind: tl.KObject, ID: idOf(t, tab, "TL_reactionEmoji"), Type: "Reaction"}}})
 	v.tab = tab
 	if s, ok := reactionOf(v, "r", map[string]any{}); ok || s != "" {
 		t.Errorf("reactionOf with no emoticon read = %q, %v; want no reaction", s, ok)

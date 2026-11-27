@@ -41,7 +41,7 @@ func webPageSummary(v view, tab tl.Table, m, raw map[string]any) {
 	}
 	labelList(v, tab, m, "webpage_attributes", w+"attributes", "TL_webPageAttribute", maxLabels)
 	if s := v.stopAt(w + "cached_page"); s != nil && s.ID != 0 {
-		if c, ok := tab[s.ID]; ok {
+		if c, ok := tab[tl.Key{Type: s.Type, ID: s.ID}]; ok {
 			m["cached_page_class"] = c.Name
 		}
 	}

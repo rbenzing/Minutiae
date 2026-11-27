@@ -133,19 +133,20 @@ const idMessageMediaPoll = 0x773f4e66
 // is listed by type, ID and class. An object counts only when read whole (the decode's stop neither at nor inside it,
 // Task 4 review M1); the one exemption is TL_messageMediaPoll, whose Poll is opaque under R1.
 func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
-	seen := map[uint32]bool{}
+	seen := map[tl.Key]bool{}
 	for _, v := range variants {
 		for typ, cells := range tlCells(t, fixtureFiles(t, v)["db"]) {
 			for _, b := range cells {
-				for _, id := range androidtelegram.SeenConstructors(b, typ) {
-					seen[id] = true
+				for _, k := range androidtelegram.SeenConstructors(b, typ) {
+					seen[k] = true
 				}
 			}
 		}
 	}
 	var missing []string
 	media, actions := 0, 0
-	for id, c := range androidtelegram.Table() {
+	for k, c := range androidtelegram.Table() {
+		id := k.ID
 		if c.Body != tl.BodyFull || !slices.Contains(stageATypes(), c.Type) {
 			continue
 		}
@@ -155,7 +156,7 @@ func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
 		case "MessageAction":
 			actions++
 		}
-		if !seen[id] && id != idMessageMediaPoll {
+		if !seen[k] && id != idMessageMediaPoll {
 			missing = append(missing, fmt.Sprintf("%s 0x%08x %s", c.Type, id, c.Name))
 		}
 	}

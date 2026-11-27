@@ -24,28 +24,28 @@ const (
 // variable: a parser holds no package-level state (the purity rule P5), so each Parse builds its own.
 func newTable() tl.Table {
 	return tl.Table{
-		0x01a9fbfc: {
+		{Type: "TL_iv.RichText", ID: 0x01a9fbfc}: {
 			ID:     0x01a9fbfc,
 			Name:   "textMentionName",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:718@A-HEAD",
 		},
-		0x01baa035: {
+		{Type: typeAction, ID: 0x01baa035}: {
 			ID:     0x01baa035,
 			Name:   "TL_messageActionPhoneNumberRequest",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:25763@A-HEAD",
 		},
-		0x01c641c2: {
+		{Type: "WebPageAttribute", ID: 0x01c641c2}: {
 			ID:     0x01c641c2,
 			Name:   "TL_webPageAttributeStarGiftAuction",
 			Type:   "WebPageAttribute",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10389@A-HEAD",
 		},
-		0x020b1422: {
+		{Type: typeUser, ID: 0x020b1422}: {
 			ID:   0x020b1422,
 			Name: "TL_user_layer216",
 			Type: typeUser,
@@ -88,7 +88,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:22479@A-HEAD",
 		},
-		0x020df5d0: {
+		{Type: typeEntity, ID: 0x020df5d0}: {
 			ID:   0x020df5d0,
 			Name: "TL_messageEntityBlockquote_layer180",
 			Type: typeEntity,
@@ -99,7 +99,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32950@A-HEAD",
 		},
-		0x021e1ad6: {
+		{Type: "PhotoSize", ID: 0x021e1ad6}: {
 			ID:   0x021e1ad6,
 			Name: "TL_photoCachedSize",
 			Type: "PhotoSize",
@@ -112,14 +112,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44569@A-HEAD",
 		},
-		0x028703c8: {
+		{Type: "InputStickerSet", ID: 0x028703c8}: {
 			ID:     0x028703c8,
 			Name:   "TL_inputStickerSetAnimatedEmoji",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30823@A-HEAD",
 		},
-		0x0296f104: {
+		{Type: "GeoPoint", ID: 0x0296f104}: {
 			ID:   0x0296f104,
 			Name: "TL_geoPoint_layer119",
 			Type: "GeoPoint",
@@ -131,42 +131,42 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:5081@A-HEAD",
 		},
-		0x02ff29d3: {
+		{Type: "TL_iv.RichText", ID: 0x02ff29d3}: {
 			ID:     0x02ff29d3,
 			Name:   "textBotCommand",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:634@A-HEAD",
 		},
-		0x031224c3: {
+		{Type: typeAction, ID: 0x031224c3}: {
 			ID:     0x031224c3,
 			Name:   "TL_messageActionChatJoinedByLink",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25877@A-HEAD",
 		},
-		0x034986ab: {
+		{Type: "WebPageAttribute", ID: 0x034986ab}: {
 			ID:     0x034986ab,
 			Name:   "TL_webPageAttributeStarGiftAuction_layer219",
 			Type:   "WebPageAttribute",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10441@A-HEAD",
 		},
-		0x034b8621: {
+		{Type: "TL_iv.RichText", ID: 0x034b8621}: {
 			ID:     0x034b8621,
 			Name:   "textMarked",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:490@A-HEAD",
 		},
-		0x04c4d4ce: {
+		{Type: "InputStickerSet", ID: 0x04c4d4ce}: {
 			ID:     0x04c4d4ce,
 			Name:   "TL_inputStickerSetEmojiGenericAnimations",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30831@A-HEAD",
 		},
-		0x051448e5: {
+		{Type: "DocumentAttribute", ID: 0x051448e5}: {
 			ID:   0x051448e5,
 			Name: "TL_documentAttributeAudio_old",
 			Type: "DocumentAttribute",
@@ -176,7 +176,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1645@A-HEAD",
 		},
-		0x05f46804: {
+		{Type: typeMessage, ID: 0x05f46804}: {
 			ID:   0x05f46804,
 			Name: "TL_messageForwarded_old",
 			Type: typeMessage,
@@ -195,7 +195,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61033@A-HEAD",
 		},
-		0x0652c1c5: {
+		{Type: typeEntity, ID: 0x0652c1c5}: {
 			ID:   0x0652c1c5,
 			Name: "TL_messageEntityDiffDelete",
 			Type: typeEntity,
@@ -206,7 +206,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:63923@A-HEAD",
 		},
-		0x07328bdb: {
+		{Type: typeChat, ID: 0x07328bdb}: {
 			ID:   0x07328bdb,
 			Name: "TL_chatForbidden_layer131",
 			Type: typeChat,
@@ -217,7 +217,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42223@A-HEAD",
 		},
-		0x075cf7a8: {
+		{Type: typeUser, ID: 0x075cf7a8}: {
 			ID:   0x075cf7a8,
 			Name: "TL_userForeign_old2",
 			Type: typeUser,
@@ -230,21 +230,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24461@A-HEAD",
 		},
-		0x081ccf4f: {
+		{Type: "TL_iv.RichText", ID: 0x081ccf4f}: {
 			ID:     0x081ccf4f,
 			Name:   "textImage",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:518@A-HEAD",
 		},
-		0x08557637: {
+		{Type: typeAction, ID: 0x08557637}: {
 			ID:     0x08557637,
 			Name:   "TL_messageActionStarGift_layer195",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67803@A-HEAD",
 		},
-		0x087b6e36: {
+		{Type: "MessageReactions", ID: 0x087b6e36}: {
 			ID:   0x087b6e36,
 			Name: "TL_messageReactionsOld",
 			Type: "MessageReactions",
@@ -258,7 +258,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27588@A-HEAD",
 		},
-		0x08cbec07: {
+		{Type: typeMedia, ID: 0x08cbec07}: {
 			ID:   0x08cbec07,
 			Name: "TL_messageMediaDice",
 			Type: typeMedia,
@@ -271,7 +271,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8203@A-HEAD",
 		},
-		0x091d11eb: {
+		{Type: "FileLocation", ID: 0x091d11eb}: {
 			ID:   0x091d11eb,
 			Name: "TL_fileLocation_layer97",
 			Type: "FileLocation",
@@ -285,7 +285,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44288@A-HEAD",
 		},
-		0x0a339f0b: {
+		{Type: "MessageReactions", ID: 0x0a339f0b}: {
 			ID:   0x0a339f0b,
 			Name: "TL_messageReactions",
 			Type: "MessageReactions",
@@ -301,7 +301,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27428@A-HEAD",
 		},
-		0x0aadfc8f: {
+		{Type: typeChat, ID: 0x0aadfc8f}: {
 			ID:   0x0aadfc8f,
 			Name: "TL_channel_layer185",
 			Type: typeChat,
@@ -339,7 +339,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41430@A-HEAD",
 		},
-		0x0cb44b1c: {
+		{Type: typeChat, ID: 0x0cb44b1c}: {
 			ID:   0x0cb44b1c,
 			Name: "TL_channel_layer72",
 			Type: typeChat,
@@ -361,14 +361,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42659@A-HEAD",
 		},
-		0x0d999256: {
+		{Type: typeAction, ID: 0x0d999256}: {
 			ID:     0x0d999256,
 			Name:   "TL_messageActionTopicCreate",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26221@A-HEAD",
 		},
-		0x0da082fe: {
+		{Type: "VideoSize", ID: 0x0da082fe}: {
 			ID:   0x0da082fe,
 			Name: "TL_videoSizeStickerMarkup",
 			Type: "VideoSize",
@@ -380,7 +380,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:19032@A-HEAD",
 		},
-		0x0db12acb: {
+		{Type: typeChat, ID: 0x0db12acb}: {
 			ID:   0x0db12acb,
 			Name: "TL_channel_layer167_3",
 			Type: typeChat,
@@ -418,7 +418,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:49495@A-11.4.2",
 		},
-		0x0e17e23c: {
+		{Type: "PhotoSize", ID: 0x0e17e23c}: {
 			ID:   0x0e17e23c,
 			Name: "TL_photoSizeEmpty",
 			Type: "PhotoSize",
@@ -428,7 +428,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44516@A-HEAD",
 		},
-		0x0e5af939: {
+		{Type: typeReply, ID: 0x0e5af939}: {
 			ID:   0x0e5af939,
 			Name: "TL_messageReplyStoryHeader",
 			Type: typeReply,
@@ -439,7 +439,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28186@A-HEAD",
 		},
-		0x0e8e37e5: {
+		{Type: "SuggestedPost", ID: 0x0e8e37e5}: {
 			ID:   0x0e8e37e5,
 			Name: "SuggestedPost",
 			Type: "SuggestedPost",
@@ -453,7 +453,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:70661@A-HEAD",
 		},
-		0x0ef02ce6: {
+		{Type: "DocumentAttribute", ID: 0x0ef02ce6}: {
 			ID:   0x0ef02ce6,
 			Name: "TL_documentAttributeVideo_layer159",
 			Type: "DocumentAttribute",
@@ -468,21 +468,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1815@A-HEAD",
 		},
-		0x1117dd5f: {
+		{Type: "GeoPoint", ID: 0x1117dd5f}: {
 			ID:     0x1117dd5f,
 			Name:   "TL_geoPointEmpty",
 			Type:   "GeoPoint",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:5113@A-HEAD",
 		},
-		0x11b58939: {
+		{Type: "DocumentAttribute", ID: 0x11b58939}: {
 			ID:     0x11b58939,
 			Name:   "TL_documentAttributeAnimated",
 			Type:   "DocumentAttribute",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:1683@A-HEAD",
 		},
-		0x15590068: {
+		{Type: "DocumentAttribute", ID: 0x15590068}: {
 			ID:   0x15590068,
 			Name: "TL_documentAttributeFilename",
 			Type: "DocumentAttribute",
@@ -492,21 +492,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1691@A-HEAD",
 		},
-		0x15cefd00: {
+		{Type: typeAction, ID: 0x15cefd00}: {
 			ID:     0x15cefd00,
 			Name:   "TL_messageActionChatAddUser",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25691@A-HEAD",
 		},
-		0x16605e3e: {
+		{Type: typeAction, ID: 0x16605e3e}: {
 			ID:     0x16605e3e,
 			Name:   "TL_messageActionManagedBotCreated",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64899@A-HEAD",
 		},
-		0x17399fad: {
+		{Type: "DocumentAttribute", ID: 0x17399fad}: {
 			ID:   0x17399fad,
 			Name: "TL_documentAttributeVideo_layer187",
 			Type: "DocumentAttribute",
@@ -524,7 +524,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1747@A-HEAD",
 		},
-		0x17d493d5: {
+		{Type: typeChat, ID: 0x17d493d5}: {
 			ID:   0x17d493d5,
 			Name: "TL_channelForbidden",
 			Type: typeChat,
@@ -540,7 +540,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:39960@A-HEAD",
 		},
-		0x1981ea7e: {
+		{Type: typeChat, ID: 0x1981ea7e}: {
 			ID:   0x1981ea7e,
 			Name: "TL_channel_layer166",
 			Type: typeChat,
@@ -578,7 +578,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41710@A-HEAD",
 		},
-		0x1b2286b8: {
+		{Type: "Reaction", ID: 0x1b2286b8}: {
 			ID:   0x1b2286b8,
 			Name: "TL_reactionEmoji",
 			Type: "Reaction",
@@ -588,7 +588,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:51781@A-HEAD",
 		},
-		0x1b97dd66: {
+		{Type: typeReply, ID: 0x1b97dd66}: {
 			ID:   0x1b97dd66,
 			Name: "TL_messageReplyHeader_layer231",
 			Type: typeReply,
@@ -612,7 +612,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28290@A-HEAD",
 		},
-		0x1c32b11c: {
+		{Type: typeChat, ID: 0x1c32b11c}: {
 			ID:   0x1c32b11c,
 			Name: "TL_channel_layer227",
 			Type: typeChat,
@@ -655,7 +655,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40501@A-HEAD",
 		},
-		0x1c60e608: {
+		{Type: typeUser, ID: 0x1c60e608}: {
 			ID:   0x1c60e608,
 			Name: "TL_userSelf_old3",
 			Type: typeUser,
@@ -669,7 +669,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24356@A-HEAD",
 		},
-		0x1c9b1027: {
+		{Type: typeMessage, ID: 0x1c9b1027}: {
 			ID:   0x1c9b1027,
 			Name: "TL_message_layer104_2",
 			Type: typeMessage,
@@ -704,21 +704,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:72674@A-11.4.2",
 		},
-		0x1ccb966a: {
+		{Type: "TL_iv.RichText", ID: 0x1ccb966a}: {
 			ID:     0x1ccb966a,
 			Name:   "textPhone",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:502@A-HEAD",
 		},
-		0x1cf671a0: {
+		{Type: "InputStickerSet", ID: 0x1cf671a0}: {
 			ID:     0x1cf671a0,
 			Name:   "TL_inputStickerSetTonGifts",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30737@A-HEAD",
 		},
-		0x1d86f70e: {
+		{Type: typeMessage, ID: 0x1d86f70e}: {
 			ID:   0x1d86f70e,
 			Name: "TL_messageService_old2",
 			Type: typeMessage,
@@ -737,14 +737,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59717@A-HEAD",
 		},
-		0x1da448e2: {
+		{Type: "InputUser", ID: 0x1da448e2}: {
 			ID:     0x1da448e2,
 			Name:   "TL_inputUserFromMessage",
 			Type:   "InputUser",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:18959@A-HEAD",
 		},
-		0x1e4c8a69: {
+		{Type: typeMessage, ID: 0x1e4c8a69}: {
 			ID:   0x1e4c8a69,
 			Name: "TL_message_layer175",
 			Type: typeMessage,
@@ -787,7 +787,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2222@A-HEAD",
 		},
-		0x1e87342b: {
+		{Type: "Document", ID: 0x1e87342b}: {
 			ID:   0x1e87342b,
 			Name: "TL_document_layer142",
 			Type: "Document",
@@ -807,7 +807,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29229@A-HEAD",
 		},
-		0x200250ba: {
+		{Type: typeUser, ID: 0x200250ba}: {
 			ID:   0x200250ba,
 			Name: "TL_userEmpty_layer131",
 			Type: typeUser,
@@ -817,7 +817,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24400@A-HEAD",
 		},
-		0x2049d70c: {
+		{Type: "GeoPoint", ID: 0x2049d70c}: {
 			ID:   0x2049d70c,
 			Name: "TL_geoPoint_layer81",
 			Type: "GeoPoint",
@@ -828,7 +828,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:5098@A-HEAD",
 		},
-		0x208e68c9: {
+		{Type: typeEntity, ID: 0x208e68c9}: {
 			ID:   0x208e68c9,
 			Name: "TL_inputMessageEntityMentionName",
 			Type: typeEntity,
@@ -840,7 +840,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32751@A-HEAD",
 		},
-		0x211a1788: {
+		{Type: "WebPage", ID: 0x211a1788}: {
 			ID:   0x211a1788,
 			Name: "TL_webPageEmpty",
 			Type: "WebPage",
@@ -852,7 +852,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20333@A-HEAD",
 		},
-		0x215c4438: {
+		{Type: typeUser, ID: 0x215c4438}: {
 			ID:   0x215c4438,
 			Name: "TL_user_layer184",
 			Type: typeUser,
@@ -893,14 +893,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23234@A-HEAD",
 		},
-		0x2238f214: {
+		{Type: typeMedia, ID: 0x2238f214}: {
 			ID:     0x2238f214,
 			Name:   "TL_messageMediaWidget",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66788@A-HEAD",
 		},
-		0x22b56751: {
+		{Type: "Photo", ID: 0x22b56751}: {
 			ID:   0x22b56751,
 			Name: "TL_photo_old",
 			Type: "Photo",
@@ -916,7 +916,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33275@A-HEAD",
 		},
-		0x22e49072: {
+		{Type: typeUser, ID: 0x22e49072}: {
 			ID:   0x22e49072,
 			Name: "TL_user_old",
 			Type: typeUser,
@@ -941,7 +941,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24627@A-HEAD",
 		},
-		0x22e8ceb0: {
+		{Type: typeUser, ID: 0x22e8ceb0}: {
 			ID:   0x22e8ceb0,
 			Name: "TL_userRequest_old",
 			Type: typeUser,
@@ -955,7 +955,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24413@A-HEAD",
 		},
-		0x22eb6aba: {
+		{Type: typeMessage, ID: 0x22eb6aba}: {
 			ID:   0x22eb6aba,
 			Name: "TL_message_old",
 			Type: typeMessage,
@@ -972,7 +972,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61073@A-HEAD",
 		},
-		0x2331b22d: {
+		{Type: "Photo", ID: 0x2331b22d}: {
 			ID:   0x2331b22d,
 			Name: "TL_photoEmpty",
 			Type: "Photo",
@@ -982,7 +982,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33262@A-HEAD",
 		},
-		0x2357bf25: {
+		{Type: typeMessage, ID: 0x2357bf25}: {
 			ID:   0x2357bf25,
 			Name: "TL_message_layer179",
 			Type: typeMessage,
@@ -1029,21 +1029,21 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:1886@A-HEAD",
 		},
-		0x24c26789: {
+		{Type: "TL_iv.RichText", ID: 0x24c26789}: {
 			ID:     0x24c26789,
 			Name:   "textAutoPhone",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:690@A-HEAD",
 		},
-		0x26077b99: {
+		{Type: typeAction, ID: 0x26077b99}: {
 			ID:     0x26077b99,
 			Name:   "TL_messageActionStarGiftUnique_layer197",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68543@A-HEAD",
 		},
-		0x286fa604: {
+		{Type: typeMessage, ID: 0x286fa604}: {
 			ID:   0x286fa604,
 			Name: "TL_messageService_layer123",
 			Type: typeMessage,
@@ -1065,7 +1065,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61265@A-HEAD",
 		},
-		0x289da732: {
+		{Type: typeChat, ID: 0x289da732}: {
 			ID:   0x289da732,
 			Name: "TL_channelForbidden_layer131",
 			Type: typeChat,
@@ -1080,7 +1080,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:39991@A-HEAD",
 		},
-		0x28a20571: {
+		{Type: typeEntity, ID: 0x28a20571}: {
 			ID:   0x28a20571,
 			Name: "TL_messageEntityCode",
 			Type: typeEntity,
@@ -1091,7 +1091,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32862@A-HEAD",
 		},
-		0x29562865: {
+		{Type: typeChat, ID: 0x29562865}: {
 			ID:   0x29562865,
 			Name: "TL_chatEmpty",
 			Type: typeChat,
@@ -1101,28 +1101,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61827@A-HEAD",
 		},
-		0x29632a36: {
+		{Type: typeMedia, ID: 0x29632a36}: {
 			ID:     0x29632a36,
 			Name:   "TL_messageMediaUnsupported_old",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:7269@A-HEAD",
 		},
-		0x29d0f5ee: {
+		{Type: "InputStickerSet", ID: 0x29d0f5ee}: {
 			ID:     0x29d0f5ee,
 			Name:   "TL_inputStickerSetEmojiDefaultStatuses",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30753@A-HEAD",
 		},
-		0x2a9fadc5: {
+		{Type: typeAction, ID: 0x2a9fadc5}: {
 			ID:     0x2a9fadc5,
 			Name:   "TL_messageActionGiveawayResults_layer186",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67301@A-HEAD",
 		},
-		0x2b085862: {
+		{Type: typeMessage, ID: 0x2b085862}: {
 			ID:   0x2b085862,
 			Name: "TL_messageService_layer195",
 			Type: typeMessage,
@@ -1145,7 +1145,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61435@A-HEAD",
 		},
-		0x2bebfa86: {
+		{Type: typeMessage, ID: 0x2bebfa86}: {
 			ID:   0x2bebfa86,
 			Name: "TL_message_old6",
 			Type: typeMessage,
@@ -1170,21 +1170,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60661@A-HEAD",
 		},
-		0x2c8f2a25: {
+		{Type: typeAction, ID: 0x2c8f2a25}: {
 			ID:     0x2c8f2a25,
 			Name:   "TL_messageActionSuggestBirthday",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25746@A-HEAD",
 		},
-		0x2d117597: {
+		{Type: "InputUser", ID: 0x2d117597}: {
 			ID:     0x2d117597,
 			Name:   "TL_inputUserFromMessage_layer132",
 			Type:   "InputUser",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:18994@A-HEAD",
 		},
-		0x2d85832c: {
+		{Type: typeChat, ID: 0x2d85832c}: {
 			ID:   0x2d85832c,
 			Name: "TL_channelForbidden_layer52",
 			Type: typeChat,
@@ -1196,7 +1196,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40098@A-HEAD",
 		},
-		0x2e13f4c3: {
+		{Type: typeUser, ID: 0x2e13f4c3}: {
 			ID:   0x2e13f4c3,
 			Name: "TL_user_layer104",
 			Type: typeUser,
@@ -1225,21 +1225,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24224@A-HEAD",
 		},
-		0x2e3ae60e: {
+		{Type: typeAction, ID: 0x2e3ae60e}: {
 			ID:     0x2e3ae60e,
 			Name:   "TL_messageActionStarGiftUnique_layer210",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68425@A-HEAD",
 		},
-		0x2e94c3e7: {
+		{Type: "WebPageAttribute", ID: 0x2e94c3e7}: {
 			ID:     0x2e94c3e7,
 			Name:   "TL_webPageAttributeStory",
 			Type:   "WebPageAttribute",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10464@A-HEAD",
 		},
-		0x2ec0533f: {
+		{Type: typeMedia, ID: 0x2ec0533f}: {
 			ID:   0x2ec0533f,
 			Name: "TL_messageMediaVenue",
 			Type: typeMedia,
@@ -1254,7 +1254,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7491@A-HEAD",
 		},
-		0x2fda2204: {
+		{Type: typeMedia, ID: 0x2fda2204}: {
 			ID:   0x2fda2204,
 			Name: "TL_messageMediaDocument_old",
 			Type: typeMedia,
@@ -1264,21 +1264,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7804@A-HEAD",
 		},
-		0x2ffe2f7a: {
+		{Type: typeAction, ID: 0x2ffe2f7a}: {
 			ID:     0x2ffe2f7a,
 			Name:   "TL_messageActionConferenceCall",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67873@A-HEAD",
 		},
-		0x31518e9b: {
+		{Type: typeAction, ID: 0x31518e9b}: {
 			ID:     0x31518e9b,
 			Name:   "TL_messageActionRequestedPeer",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64991@A-HEAD",
 		},
-		0x31774388: {
+		{Type: typeUser, ID: 0x31774388}: {
 			ID:   0x31774388,
 			Name: "TL_user_layer218",
 			Type: typeUser,
@@ -1325,14 +1325,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:22273@A-HEAD",
 		},
-		0x31c48347: {
+		{Type: typeAction, ID: 0x31c48347}: {
 			ID:     0x31c48347,
 			Name:   "TL_messageActionGiftCode",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65827@A-HEAD",
 		},
-		0x31cad303: {
+		{Type: "WebPageAttribute", ID: 0x31cad303}: {
 			ID:   0x31cad303,
 			Name: "TL_webPageAttributeStarGiftCollection",
 			Type: "WebPageAttribute",
@@ -1342,7 +1342,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:10515@A-HEAD",
 		},
-		0x32ca960f: {
+		{Type: typeEntity, ID: 0x32ca960f}: {
 			ID:   0x32ca960f,
 			Name: "TL_messageEntitySpoiler",
 			Type: typeEntity,
@@ -1353,28 +1353,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32707@A-HEAD",
 		},
-		0x332ba9ed: {
+		{Type: typeAction, ID: 0x332ba9ed}: {
 			ID:     0x332ba9ed,
 			Name:   "TL_messageActionGiveawayLaunch_layer186",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67263@A-HEAD",
 		},
-		0x34f762f3: {
+		{Type: typeAction, ID: 0x34f762f3}: {
 			ID:     0x34f762f3,
 			Name:   "TL_messageActionStarGiftUnique_layer214",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68354@A-HEAD",
 		},
-		0x3502758c: {
+		{Type: "ReplyMarkup", ID: 0x3502758c}: {
 			ID:     0x3502758c,
 			Name:   "TL_replyKeyboardMarkup_layer129",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10279@A-HEAD",
 		},
-		0x352dca58: {
+		{Type: typeEntity, ID: 0x352dca58}: {
 			ID:   0x352dca58,
 			Name: "TL_messageEntityMentionName_layer131",
 			Type: typeEntity,
@@ -1386,7 +1386,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32734@A-HEAD",
 		},
-		0x353a686b: {
+		{Type: typeFwd, ID: 0x353a686b}: {
 			ID:   0x353a686b,
 			Name: "TL_messageFwdHeader_layer118",
 			Type: typeFwd,
@@ -1405,14 +1405,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44001@A-HEAD",
 		},
-		0x35553762: {
+		{Type: "TL_iv.RichText", ID: 0x35553762}: {
 			ID:     0x35553762,
 			Name:   "textAnchor",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:539@A-HEAD",
 		},
-		0x36c6019a: {
+		{Type: typePeer, ID: 0x36c6019a}: {
 			ID:   0x36c6019a,
 			Name: "TL_peerChat",
 			Type: typePeer,
@@ -1422,7 +1422,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:3902@A-HEAD",
 		},
-		0x36f8c871: {
+		{Type: "Document", ID: 0x36f8c871}: {
 			ID:   0x36f8c871,
 			Name: "TL_documentEmpty",
 			Type: "Document",
@@ -1432,7 +1432,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29334@A-HEAD",
 		},
-		0x38116ee0: {
+		{Type: typeMessage, ID: 0x38116ee0}: {
 			ID:   0x38116ee0,
 			Name: "TL_message_layer169",
 			Type: typeMessage,
@@ -1473,7 +1473,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2530@A-HEAD",
 		},
-		0x388fa391: {
+		{Type: "Video", ID: 0x388fa391}: {
 			ID:   0x388fa391,
 			Name: "TL_video_old2",
 			Type: "Video",
@@ -1494,14 +1494,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27814@A-HEAD",
 		},
-		0x399674dc: {
+		{Type: typeAction, ID: 0x399674dc}: {
 			ID:     0x399674dc,
 			Name:   "TL_messageActionPollDeleteAnswer",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25335@A-HEAD",
 		},
-		0x3a556302: {
+		{Type: "DocumentAttribute", ID: 0x3a556302}: {
 			ID:   0x3a556302,
 			Name: "TL_documentAttributeSticker_layer55",
 			Type: "DocumentAttribute",
@@ -1512,7 +1512,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1630@A-HEAD",
 		},
-		0x3ae56482: {
+		{Type: typeMessage, ID: 0x3ae56482}: {
 			ID:   0x3ae56482,
 			Name: "TL_message_layer224",
 			Type: typeMessage,
@@ -1570,7 +1570,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:251@A-HEAD",
 		},
-		0x3bda1bde: {
+		{Type: typeChat, ID: 0x3bda1bde}: {
 			ID:   0x3bda1bde,
 			Name: "TL_chat_layer131",
 			Type: typeChat,
@@ -1588,28 +1588,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:39905@A-HEAD",
 		},
-		0x3c134d7b: {
+		{Type: typeAction, ID: 0x3c134d7b}: {
 			ID:     0x3c134d7b,
 			Name:   "TL_messageActionSetMessagesTTL",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26077@A-HEAD",
 		},
-		0x3c2884c1: {
+		{Type: "TL_iv.RichText", ID: 0x3c2884c1}: {
 			ID:     0x3c2884c1,
 			Name:   "textUrl",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:424@A-HEAD",
 		},
-		0x3cd2a36a: {
+		{Type: "TL_iv.RichText", ID: 0x3cd2a36a}: {
 			ID:     0x3cd2a36a,
 			Name:   "textTonAddress",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:834@A-HEAD",
 		},
-		0x3d5c1693: {
+		{Type: typeReply, ID: 0x3d5c1693}: {
 			ID:   0x3d5c1693,
 			Name: "TL_messageReplyHeader_layer165_2",
 			Type: typeReply,
@@ -1627,7 +1627,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28572@A-HEAD",
 		},
-		0x3d8ce53d: {
+		{Type: typeMedia, ID: 0x3d8ce53d}: {
 			ID:   0x3d8ce53d,
 			Name: "TL_messageMediaPhoto_layer68",
 			Type: typeMedia,
@@ -1638,21 +1638,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8108@A-HEAD",
 		},
-		0x3ded6320: {
+		{Type: typeMedia, ID: 0x3ded6320}: {
 			ID:     0x3ded6320,
 			Name:   "TL_messageMediaEmpty",
 			Type:   typeMedia,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:7483@A-HEAD",
 		},
-		0x3e2793ba: {
+		{Type: typeAction, ID: 0x3e2793ba}: {
 			ID:     0x3e2793ba,
 			Name:   "TL_messageActionNoForwardsRequest",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64876@A-HEAD",
 		},
-		0x3f7ee58b: {
+		{Type: typeMedia, ID: 0x3f7ee58b}: {
 			ID:   0x3f7ee58b,
 			Name: "TL_messageMediaDice_layer220",
 			Type: typeMedia,
@@ -1663,7 +1663,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8230@A-HEAD",
 		},
-		0x3ff6ecb0: {
+		{Type: typeUser, ID: 0x3ff6ecb0}: {
 			ID:   0x3ff6ecb0,
 			Name: "TL_user_layer144",
 			Type: typeUser,
@@ -1696,14 +1696,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23998@A-HEAD",
 		},
-		0x40699cd0: {
+		{Type: typeAction, ID: 0x40699cd0}: {
 			ID:     0x40699cd0,
 			Name:   "TL_messageActionPaymentSent_layer140",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26320@A-HEAD",
 		},
-		0x4128faac: {
+		{Type: typeReplies, ID: 0x4128faac}: {
 			ID:   0x4128faac,
 			Name: "TL_messageReplies_layer131",
 			Type: typeReplies,
@@ -1720,14 +1720,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:9976@A-HEAD",
 		},
-		0x41b3e202: {
+		{Type: typeAction, ID: 0x41b3e202}: {
 			ID:     0x41b3e202,
 			Name:   "TL_messageActionPaymentRefunded",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25380@A-HEAD",
 		},
-		0x41cbf256: {
+		{Type: typeChat, ID: 0x41cbf256}: {
 			ID:   0x41cbf256,
 			Name: "TL_chat",
 			Type: typeChat,
@@ -1746,7 +1746,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:39844@A-HEAD",
 		},
-		0x427425e7: {
+		{Type: "Audio", ID: 0x427425e7}: {
 			ID:   0x427425e7,
 			Name: "TL_audio_old",
 			Type: "Audio",
@@ -1762,7 +1762,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:9704@A-HEAD",
 		},
-		0x435bb987: {
+		{Type: "VideoSize", ID: 0x435bb987}: {
 			ID:   0x435bb987,
 			Name: "TL_videoSize_layer115",
 			Type: "VideoSize",
@@ -1776,7 +1776,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:19105@A-HEAD",
 		},
-		0x43c57c48: {
+		{Type: "DocumentAttribute", ID: 0x43c57c48}: {
 			ID:   0x43c57c48,
 			Name: "TL_documentAttributeVideo",
 			Type: "DocumentAttribute",
@@ -1795,14 +1795,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1704@A-HEAD",
 		},
-		0x44c1f8e9: {
+		{Type: "InputStickerSet", ID: 0x44c1f8e9}: {
 			ID:     0x44c1f8e9,
 			Name:   "TL_inputStickerSetEmojiDefaultTopicIcons",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30839@A-HEAD",
 		},
-		0x44f9b43d: {
+		{Type: typeMessage, ID: 0x44f9b43d}: {
 			ID:   0x44f9b43d,
 			Name: "TL_message_layer104",
 			Type: typeMessage,
@@ -1834,7 +1834,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60550@A-HEAD",
 		},
-		0x450b7115: {
+		{Type: typeChat, ID: 0x450b7115}: {
 			ID:   0x450b7115,
 			Name: "TL_channel_layer77",
 			Type: typeChat,
@@ -1856,7 +1856,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42582@A-HEAD",
 		},
-		0x452c0e65: {
+		{Type: typeMessage, ID: 0x452c0e65}: {
 			ID:   0x452c0e65,
 			Name: "TL_message_layer117",
 			Type: typeMessage,
@@ -1890,70 +1890,70 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60431@A-HEAD",
 		},
-		0x45d5b021: {
+		{Type: typeAction, ID: 0x45d5b021}: {
 			ID:     0x45d5b021,
 			Name:   "TL_messageActionGiftStars",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25409@A-HEAD",
 		},
-		0x4717e8a4: {
+		{Type: typeAction, ID: 0x4717e8a4}: {
 			ID:     0x4717e8a4,
 			Name:   "TL_messageActionStarGift_layer211",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67679@A-HEAD",
 		},
-		0x4792929b: {
+		{Type: typeAction, ID: 0x4792929b}: {
 			ID:     0x4792929b,
 			Name:   "TL_messageActionScreenshotTaken",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:25738@A-HEAD",
 		},
-		0x47dd8079: {
+		{Type: typeAction, ID: 0x47dd8079}: {
 			ID:     0x47dd8079,
 			Name:   "TL_messageActionWebViewDataSentMe",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25954@A-HEAD",
 		},
-		0x488a7337: {
+		{Type: typeAction, ID: 0x488a7337}: {
 			ID:     0x488a7337,
 			Name:   "TL_messageActionChatAddUser_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25905@A-HEAD",
 		},
-		0x48a30254: {
+		{Type: "ReplyMarkup", ID: 0x48a30254}: {
 			ID:     0x48a30254,
 			Name:   "TL_replyInlineMarkup_layer228",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10353@A-HEAD",
 		},
-		0x48e91302: {
+		{Type: typeAction, ID: 0x48e91302}: {
 			ID:     0x48e91302,
 			Name:   "TL_messageActionGiftPremium",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26407@A-HEAD",
 		},
-		0x49748553: {
+		{Type: "InputStickerSet", ID: 0x49748553}: {
 			ID:     0x49748553,
 			Name:   "TL_inputStickerSetEmojiChannelDefaultStatuses",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30745@A-HEAD",
 		},
-		0x4a8bfe80: {
+		{Type: typeAction, ID: 0x4a8bfe80}: {
 			ID:     0x4a8bfe80,
 			Name:   "TL_messageActionChatJoinedViaCommunity",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65009@A-HEAD",
 		},
-		0x4b1b7506: {
+		{Type: typeChat, ID: 0x4b1b7506}: {
 			ID:   0x4b1b7506,
 			Name: "TL_channel_layer48",
 			Type: typeChat,
@@ -1976,7 +1976,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40043@A-HEAD",
 		},
-		0x4b46c37e: {
+		{Type: typeUser, ID: 0x4b46c37e}: {
 			ID:   0x4b46c37e,
 			Name: "TL_user_layer199",
 			Type: typeUser,
@@ -2018,7 +2018,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:22678@A-HEAD",
 		},
-		0x4ba3a95a: {
+		{Type: "MessageReactor", ID: 0x4ba3a95a}: {
 			ID:   0x4ba3a95a,
 			Name: "TL_messageReactor",
 			Type: "MessageReactor",
@@ -2033,21 +2033,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27350@A-HEAD",
 		},
-		0x4bd6e798: {
+		{Type: typeMedia, ID: 0x4bd6e798}: {
 			ID:     0x4bd6e798,
 			Name:   "TL_messageMediaPoll_layer223",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:7926@A-HEAD",
 		},
-		0x4c2a5d62: {
+		{Type: "TL_iv.RichText", ID: 0x4c2a5d62}: {
 			ID:     0x4c2a5d62,
 			Name:   "textSpoiler",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:592@A-HEAD",
 		},
-		0x4c4e743f: {
+		{Type: typeEntity, ID: 0x4c4e743f}: {
 			ID:   0x4c4e743f,
 			Name: "TL_messageEntityCashtag",
 			Type: typeEntity,
@@ -2058,7 +2058,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32781@A-HEAD",
 		},
-		0x4cf4d72d: {
+		{Type: typeMedia, ID: 0x4cf4d72d}: {
 			ID:   0x4cf4d72d,
 			Name: "TL_messageMediaDocument_layer187",
 			Type: typeMedia,
@@ -2076,7 +2076,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7698@A-HEAD",
 		},
-		0x4df30834: {
+		{Type: typeChat, ID: 0x4df30834}: {
 			ID:   0x4df30834,
 			Name: "TL_channel_layer104",
 			Type: typeChat,
@@ -2102,7 +2102,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42468@A-HEAD",
 		},
-		0x4e4df4bb: {
+		{Type: typeFwd, ID: 0x4e4df4bb}: {
 			ID:   0x4e4df4bb,
 			Name: "TL_messageFwdHeader",
 			Type: typeFwd,
@@ -2125,7 +2125,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:43863@A-HEAD",
 		},
-		0x4f2b9479: {
+		{Type: "MessageReactions", ID: 0x4f2b9479}: {
 			ID:   0x4f2b9479,
 			Name: "TL_messageReactions_layer185",
 			Type: "MessageReactions",
@@ -2140,7 +2140,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27461@A-HEAD",
 		},
-		0x4fe9cce0: {
+		{Type: typeUser, ID: 0x4fe9cce0}: {
 			ID:   0x4fe9cce0,
 			Name: "TL_user_layer185",
 			Type: typeUser,
@@ -2181,21 +2181,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23052@A-HEAD",
 		},
-		0x502f92f7: {
+		{Type: typeAction, ID: 0x502f92f7}: {
 			ID:     0x502f92f7,
 			Name:   "TL_messageActionInviteToGroupCall",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25561@A-HEAD",
 		},
-		0x5060a3f4: {
+		{Type: typeAction, ID: 0x5060a3f4}: {
 			ID:     0x5060a3f4,
 			Name:   "TL_messageActionSetChatWallPaper",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26000@A-HEAD",
 		},
-		0x50cc03d3: {
+		{Type: "WebPageAttribute", ID: 0x50cc03d3}: {
 			ID:   0x50cc03d3,
 			Name: "TL_webPageAttributeStickerSet",
 			Type: "WebPageAttribute",
@@ -2208,14 +2208,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:10491@A-HEAD",
 		},
-		0x519524ea: {
+		{Type: "TL_iv.RichText", ID: 0x519524ea}: {
 			ID:     0x519524ea,
 			Name:   "textHashtag",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:620@A-HEAD",
 		},
-		0x51b67eff: {
+		{Type: "MessagePeerReaction", ID: 0x51b67eff}: {
 			ID:   0x51b67eff,
 			Name: "TL_messagePeerReaction_layer144",
 			Type: "MessagePeerReaction",
@@ -2229,14 +2229,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:2679@A-HEAD",
 		},
-		0x51bdb021: {
+		{Type: typeAction, ID: 0x51bdb021}: {
 			ID:     0x51bdb021,
 			Name:   "TL_messageActionChatMigrateTo_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25704@A-HEAD",
 		},
-		0x5214c89d: {
+		{Type: typeUser, ID: 0x5214c89d}: {
 			ID:   0x5214c89d,
 			Name: "TL_userForeign_old",
 			Type: typeUser,
@@ -2248,14 +2248,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24438@A-HEAD",
 		},
-		0x523da4eb: {
+		{Type: "Reaction", ID: 0x523da4eb}: {
 			ID:     0x523da4eb,
 			Name:   "TL_reactionPaid",
 			Type:   "Reaction",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:51773@A-HEAD",
 		},
-		0x52d8ccd9: {
+		{Type: typeMedia, ID: 0x52d8ccd9}: {
 			ID:   0x52d8ccd9,
 			Name: "TL_messageMediaDocument",
 			Type: typeMedia,
@@ -2276,7 +2276,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7554@A-HEAD",
 		},
-		0x53d69076: {
+		{Type: "FileLocation", ID: 0x53d69076}: {
 			ID:   0x53d69076,
 			Name: "TL_fileLocation_layer82",
 			Type: "FileLocation",
@@ -2289,35 +2289,35 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44269@A-HEAD",
 		},
-		0x54b56617: {
+		{Type: "WebPageAttribute", ID: 0x54b56617}: {
 			ID:     0x54b56617,
 			Name:   "TL_webPageAttributeTheme",
 			Type:   "WebPageAttribute",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10575@A-HEAD",
 		},
-		0x55555550: {
+		{Type: typeAction, ID: 0x55555550}: {
 			ID:     0x55555550,
 			Name:   "TL_messageActionUserJoined",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:26022@A-HEAD",
 		},
-		0x55555551: {
+		{Type: typeAction, ID: 0x55555551}: {
 			ID:     0x55555551,
 			Name:   "TL_messageActionUserUpdatedPhoto",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26030@A-HEAD",
 		},
-		0x55555552: {
+		{Type: typeAction, ID: 0x55555552}: {
 			ID:     0x55555552,
 			Name:   "TL_messageActionTTLChange",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26064@A-HEAD",
 		},
-		0x55555553: {
+		{Type: "Video", ID: 0x55555553}: {
 			ID:   0x55555553,
 			Name: "TL_videoEncrypted",
 			Type: "Video",
@@ -2339,7 +2339,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27744@A-HEAD",
 		},
-		0x55555554: {
+		{Type: "FileLocation", ID: 0x55555554}: {
 			ID:   0x55555554,
 			Name: "TL_fileEncryptedLocation",
 			Type: "FileLocation",
@@ -2354,7 +2354,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44324@A-HEAD",
 		},
-		0x55555556: {
+		{Type: "Document", ID: 0x55555556}: {
 			ID:   0x55555556,
 			Name: "TL_documentEncrypted_old",
 			Type: "Document",
@@ -2374,14 +2374,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29155@A-HEAD",
 		},
-		0x55555557: {
+		{Type: typeAction, ID: 0x55555557}: {
 			ID:     0x55555557,
 			Name:   "TL_messageActionCreatedBroadcastList",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:25931@A-HEAD",
 		},
-		0x55555558: {
+		{Type: "Document", ID: 0x55555558}: {
 			ID:   0x55555558,
 			Name: "TL_documentEncrypted",
 			Type: "Document",
@@ -2400,14 +2400,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29347@A-HEAD",
 		},
-		0x555555f5: {
+		{Type: typeAction, ID: 0x555555f5}: {
 			ID:     0x555555f5,
 			Name:   "TL_messageActionLoginUnknownLocation",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25305@A-HEAD",
 		},
-		0x555555f6: {
+		{Type: "Audio", ID: 0x555555f6}: {
 			ID:   0x555555f6,
 			Name: "TL_audioEncrypted",
 			Type: "Audio",
@@ -2425,14 +2425,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:9729@A-HEAD",
 		},
-		0x555555f7: {
+		{Type: typeAction, ID: 0x555555f7}: {
 			ID:     0x555555f7,
 			Name:   "TL_messageEncryptedAction",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25505@A-HEAD",
 		},
-		0x555555f8: {
+		{Type: typeMessage, ID: 0x555555f8}: {
 			ID:   0x555555f8,
 			Name: "TL_message_secret_old",
 			Type: typeMessage,
@@ -2453,7 +2453,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61224@A-HEAD",
 		},
-		0x555555f9: {
+		{Type: typeMessage, ID: 0x555555f9}: {
 			ID:   0x555555f9,
 			Name: "TL_message_secret_layer72",
 			Type: typeMessage,
@@ -2477,7 +2477,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61168@A-HEAD",
 		},
-		0x555555fa: {
+		{Type: typeMessage, ID: 0x555555fa}: {
 			ID:   0x555555fa,
 			Name: "TL_message_secret",
 			Type: typeMessage,
@@ -2502,14 +2502,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61106@A-HEAD",
 		},
-		0x556ec7aa: {
+		{Type: "TL_iv.Page", ID: 0x556ec7aa}: {
 			ID:     0x556ec7aa,
 			Name:   "TL_pageFull_layer82",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:162@A-HEAD",
 		},
-		0x559ebe6d: {
+		{Type: typeFwd, ID: 0x559ebe6d}: {
 			ID:   0x559ebe6d,
 			Name: "TL_messageFwdHeader_layer96",
 			Type: typeFwd,
@@ -2526,7 +2526,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44166@A-HEAD",
 		},
-		0x567699b3: {
+		{Type: typeMessage, ID: 0x567699b3}: {
 			ID:   0x567699b3,
 			Name: "TL_message_old2",
 			Type: typeMessage,
@@ -2546,14 +2546,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60968@A-HEAD",
 		},
-		0x56d03994: {
+		{Type: typeAction, ID: 0x56d03994}: {
 			ID:     0x56d03994,
 			Name:   "TL_messageActionGiftCode_layer216",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65883@A-HEAD",
 		},
-		0x56e0d474: {
+		{Type: typeMedia, ID: 0x56e0d474}: {
 			ID:   0x56e0d474,
 			Name: "TL_messageMediaGeo",
 			Type: typeMedia,
@@ -2563,35 +2563,35 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8258@A-HEAD",
 		},
-		0x5755785a: {
+		{Type: "PollResults", ID: 0x5755785a}: {
 			ID:     0x5755785a,
 			Name:   "TL_pollResults_layer108",
 			Type:   "PollResults",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:4235@A-HEAD",
 		},
-		0x57adc690: {
+		{Type: typeReason, ID: 0x57adc690}: {
 			ID:     0x57adc690,
 			Name:   "TL_phoneCallDiscardReasonHangup",
 			Type:   typeReason,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:20934@A-HEAD",
 		},
-		0x57de635e: {
+		{Type: typeAction, ID: 0x57de635e}: {
 			ID:     0x57de635e,
 			Name:   "TL_messageActionSuggestProfilePhoto",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64845@A-HEAD",
 		},
-		0x58260664: {
+		{Type: typeMedia, ID: 0x58260664}: {
 			ID:     0x58260664,
 			Name:   "TL_messageMediaGiveaway_layer167",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66720@A-HEAD",
 		},
-		0x586988d8: {
+		{Type: "Audio", ID: 0x586988d8}: {
 			ID:   0x586988d8,
 			Name: "TL_audioEmpty_layer45",
 			Type: "Audio",
@@ -2601,14 +2601,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:9666@A-HEAD",
 		},
-		0x58747131: {
+		{Type: "Poll", ID: 0x58747131}: {
 			ID:     0x58747131,
 			Name:   "TL_poll_layer223",
 			Type:   "Poll",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:34428@A-HEAD",
 		},
-		0x58ae39c9: {
+		{Type: typeMessage, ID: 0x58ae39c9}: {
 			ID:   0x58ae39c9,
 			Name: "TL_message_layer123",
 			Type: typeMessage,
@@ -2645,14 +2645,14 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2947@A-HEAD",
 		},
-		0x58f7fcb6: {
+		{Type: "ReplyMarkup", ID: 0x58f7fcb6}: {
 			ID:     0x58f7fcb6,
 			Name:   "TL_replyInlineMarkup_layer228_old",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10336@A-HEAD",
 		},
-		0x5910cccb: {
+		{Type: "DocumentAttribute", ID: 0x5910cccb}: {
 			ID:   0x5910cccb,
 			Name: "TL_documentAttributeVideo_layer65",
 			Type: "DocumentAttribute",
@@ -2664,7 +2664,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1838@A-HEAD",
 		},
-		0x59511722: {
+		{Type: typePeer, ID: 0x59511722}: {
 			ID:   0x59511722,
 			Name: "TL_peerUser",
 			Type: typePeer,
@@ -2674,7 +2674,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:3876@A-HEAD",
 		},
-		0x59534e4c: {
+		{Type: "Document", ID: 0x59534e4c}: {
 			ID:   0x59534e4c,
 			Name: "TL_document_layer92",
 			Type: "Document",
@@ -2692,7 +2692,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29097@A-HEAD",
 		},
-		0x5a04a49f: {
+		{Type: "Video", ID: 0x5a04a49f}: {
 			ID:   0x5a04a49f,
 			Name: "TL_video_old",
 			Type: "Video",
@@ -2712,7 +2712,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27781@A-HEAD",
 		},
-		0x5aa86a51: {
+		{Type: "PhotoSize", ID: 0x5aa86a51}: {
 			ID:   0x5aa86a51,
 			Name: "TL_photoSizeProgressive_layer127",
 			Type: "PhotoSize",
@@ -2726,7 +2726,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44471@A-HEAD",
 		},
-		0x5ba66c13: {
+		{Type: typeMessage, ID: 0x5ba66c13}: {
 			ID:   0x5ba66c13,
 			Name: "TL_message_old7",
 			Type: typeMessage,
@@ -2752,7 +2752,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60050@A-HEAD",
 		},
-		0x5bcf1675: {
+		{Type: typeMedia, ID: 0x5bcf1675}: {
 			ID:   0x5bcf1675,
 			Name: "TL_messageMediaVideo_layer45",
 			Type: typeMedia,
@@ -2763,14 +2763,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8123@A-HEAD",
 		},
-		0x5d20bae8: {
+		{Type: typeAction, ID: 0x5d20bae8}: {
 			ID:     0x5d20bae8,
 			Name:   "TL_messageActionChangeCommunity",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68322@A-HEAD",
 		},
-		0x5d99adee: {
+		{Type: typeUser, ID: 0x5d99adee}: {
 			ID:   0x5d99adee,
 			Name: "TL_user_layer147",
 			Type: typeUser,
@@ -2804,14 +2804,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23875@A-HEAD",
 		},
-		0x5e3cfc4b: {
+		{Type: typeAction, ID: 0x5e3cfc4b}: {
 			ID:     0x5e3cfc4b,
 			Name:   "TL_messageActionChatAddUser_old",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26051@A-HEAD",
 		},
-		0x5e7d2f39: {
+		{Type: typeMedia, ID: 0x5e7d2f39}: {
 			ID:   0x5e7d2f39,
 			Name: "TL_messageMediaContact_layer81",
 			Type: typeMedia,
@@ -2824,7 +2824,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8089@A-HEAD",
 		},
-		0x5f07b4bc: {
+		{Type: "WebPage", ID: 0x5f07b4bc}: {
 			ID:   0x5f07b4bc,
 			Name: "TL_webPage_layer104",
 			Type: "WebPage",
@@ -2851,7 +2851,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20149@A-HEAD",
 		},
-		0x5f777dce: {
+		{Type: typeFwd, ID: 0x5f777dce}: {
 			ID:   0x5f777dce,
 			Name: "TL_messageFwdHeader_layer169",
 			Type: typeFwd,
@@ -2870,7 +2870,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:43942@A-HEAD",
 		},
-		0x6319d612: {
+		{Type: "DocumentAttribute", ID: 0x6319d612}: {
 			ID:   0x6319d612,
 			Name: "TL_documentAttributeSticker",
 			Type: "DocumentAttribute",
@@ -2884,7 +2884,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1658@A-HEAD",
 		},
-		0x638fe46b: {
+		{Type: typeMedia, ID: 0x638fe46b}: {
 			ID:   0x638fe46b,
 			Name: "TL_messageMediaDice_layer111",
 			Type: typeMedia,
@@ -2894,7 +2894,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8245@A-HEAD",
 		},
-		0x64e475c2: {
+		{Type: typeEntity, ID: 0x64e475c2}: {
 			ID:   0x64e475c2,
 			Name: "TL_messageEntityEmail",
 			Type: typeEntity,
@@ -2905,7 +2905,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32540@A-HEAD",
 		},
-		0x6592a1a7: {
+		{Type: typeChat, ID: 0x6592a1a7}: {
 			ID:   0x6592a1a7,
 			Name: "TL_chatForbidden",
 			Type: typeChat,
@@ -2916,7 +2916,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42208@A-HEAD",
 		},
-		0x65efe954: {
+		{Type: typeChat, ID: 0x65efe954}: {
 			ID:   0x65efe954,
 			Name: "TL_community",
 			Type: typeChat,
@@ -2934,21 +2934,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40705@A-HEAD",
 		},
-		0x6724abc4: {
+		{Type: "TL_iv.RichText", ID: 0x6724abc4}: {
 			ID:     0x6724abc4,
 			Name:   "textBold",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:364@A-HEAD",
 		},
-		0x678c2e09: {
+		{Type: typeAction, ID: 0x678c2e09}: {
 			ID:     0x678c2e09,
 			Name:   "TL_messageActionGiftCode_layer189",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65933@A-HEAD",
 		},
-		0x678e9587: {
+		{Type: typeChat, ID: 0x678e9587}: {
 			ID:   0x678e9587,
 			Name: "TL_channel_old",
 			Type: typeChat,
@@ -2970,14 +2970,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42299@A-HEAD",
 		},
-		0x68cb6283: {
+		{Type: typeMedia, ID: 0x68cb6283}: {
 			ID:     0x68cb6283,
 			Name:   "TL_messageMediaStory",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65742@A-HEAD",
 		},
-		0x6917560b: {
+		{Type: typeReply, ID: 0x6917560b}: {
 			ID:   0x6917560b,
 			Name: "TL_messageReplyHeader_layer223",
 			Type: typeReply,
@@ -2999,7 +2999,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28371@A-HEAD",
 		},
-		0x695150d7: {
+		{Type: typeMedia, ID: 0x695150d7}: {
 			ID:   0x695150d7,
 			Name: "TL_messageMediaPhoto_layer223",
 			Type: typeMedia,
@@ -3012,21 +3012,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7869@A-HEAD",
 		},
-		0x69b8c4bf: {
+		{Type: typeAction, ID: 0x69b8c4bf}: {
 			ID:     0x69b8c4bf,
 			Name:   "TL_messageActionWalletTonConnectRequest",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26505@A-HEAD",
 		},
-		0x69f916f8: {
+		{Type: typeAction, ID: 0x69f916f8}: {
 			ID:     0x69f916f8,
 			Name:   "TL_messageActionSuggestedPostRefund",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25364@A-HEAD",
 		},
-		0x6c37c15c: {
+		{Type: "DocumentAttribute", ID: 0x6c37c15c}: {
 			ID:   0x6c37c15c,
 			Name: "TL_documentAttributeImageSize",
 			Type: "DocumentAttribute",
@@ -3037,21 +3037,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1904@A-HEAD",
 		},
-		0x6c3f19b9: {
+		{Type: "TL_iv.RichText", ID: 0x6c3f19b9}: {
 			ID:     0x6c3f19b9,
 			Name:   "textFixed",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:412@A-HEAD",
 		},
-		0x6c6274fa: {
+		{Type: typeAction, ID: 0x6c6274fa}: {
 			ID:     0x6c6274fa,
 			Name:   "TL_messageActionGiftPremium_layer216",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26443@A-HEAD",
 		},
-		0x6cef8ac7: {
+		{Type: typeEntity, ID: 0x6cef8ac7}: {
 			ID:   0x6cef8ac7,
 			Name: "TL_messageEntityBotCommand",
 			Type: typeEntity,
@@ -3062,7 +3062,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32513@A-HEAD",
 		},
-		0x6e9c9bc7: {
+		{Type: typeChat, ID: 0x6e9c9bc7}: {
 			ID:   0x6e9c9bc7,
 			Name: "TL_chat_old",
 			Type: typeChat,
@@ -3073,7 +3073,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42346@A-HEAD",
 		},
-		0x6ed02538: {
+		{Type: typeEntity, ID: 0x6ed02538}: {
 			ID:   0x6ed02538,
 			Name: "TL_messageEntityUrl",
 			Type: typeEntity,
@@ -3084,7 +3084,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32625@A-HEAD",
 		},
-		0x6eebcabd: {
+		{Type: typeReply, ID: 0x6eebcabd}: {
 			ID:   0x6eebcabd,
 			Name: "TL_messageReplyHeader_layer166",
 			Type: typeReply,
@@ -3104,7 +3104,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28511@A-HEAD",
 		},
-		0x6f635b0d: {
+		{Type: typeEntity, ID: 0x6f635b0d}: {
 			ID:   0x6f635b0d,
 			Name: "TL_messageEntityHashtag",
 			Type: typeEntity,
@@ -3115,14 +3115,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32835@A-HEAD",
 		},
-		0x6fb250d1: {
+		{Type: "ReactionCount", ID: 0x6fb250d1}: {
 			ID:     0x6fb250d1,
 			Name:   "TL_reactionCount_layer144",
 			Type:   "ReactionCount",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:45165@A-HEAD",
 		},
-		0x7007b451: {
+		{Type: typeUser, ID: 0x7007b451}: {
 			ID:   0x7007b451,
 			Name: "TL_userSelf_old2",
 			Type: typeUser,
@@ -3136,7 +3136,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24708@A-HEAD",
 		},
-		0x70322949: {
+		{Type: typeMedia, ID: 0x70322949}: {
 			ID:   0x70322949,
 			Name: "TL_messageMediaContact",
 			Type: typeMedia,
@@ -3150,7 +3150,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8159@A-HEAD",
 		},
-		0x71777116: {
+		{Type: typeEntity, ID: 0x71777116}: {
 			ID:   0x71777116,
 			Name: "TL_messageEntityDiffInsert",
 			Type: typeEntity,
@@ -3161,7 +3161,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:63859@A-HEAD",
 		},
-		0x720535ec: {
+		{Type: typeUser, ID: 0x720535ec}: {
 			ID:   0x720535ec,
 			Name: "TL_userSelf_old",
 			Type: typeUser,
@@ -3174,7 +3174,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24331@A-HEAD",
 		},
-		0x7311ca11: {
+		{Type: "WebPage", ID: 0x7311ca11}: {
 			ID:   0x7311ca11,
 			Name: "TL_webPageNotModified",
 			Type: "WebPage",
@@ -3185,7 +3185,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20431@A-HEAD",
 		},
-		0x7312bc48: {
+		{Type: typeChat, ID: 0x7312bc48}: {
 			ID:   0x7312bc48,
 			Name: "TL_chat_old2",
 			Type: typeChat,
@@ -3201,7 +3201,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:39811@A-HEAD",
 		},
-		0x73924be0: {
+		{Type: typeEntity, ID: 0x73924be0}: {
 			ID:   0x73924be0,
 			Name: "TL_messageEntityPre",
 			Type: typeEntity,
@@ -3213,21 +3213,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32567@A-HEAD",
 		},
-		0x73ada76b: {
+		{Type: typeAction, ID: 0x73ada76b}: {
 			ID:     0x73ada76b,
 			Name:   "TL_messageActionStarGiftPurchaseOfferDeclined",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68296@A-HEAD",
 		},
-		0x744694e0: {
+		{Type: "TL_iv.RichText", ID: 0x744694e0}: {
 			ID:     0x744694e0,
 			Name:   "textPlain",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:350@A-HEAD",
 		},
-		0x7482147e: {
+		{Type: typeChat, ID: 0x7482147e}: {
 			ID:   0x7482147e,
 			Name: "TL_channel_layer203",
 			Type: typeChat,
@@ -3267,7 +3267,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40939@A-HEAD",
 		},
-		0x74aee3e0: {
+		{Type: "TL_stars.StarsAmount", ID: 0x74aee3e0}: {
 			ID:   0x74aee3e0,
 			Name: "TL_starsTonAmount",
 			Type: "TL_stars.StarsAmount",
@@ -3277,7 +3277,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_stars.java:2545@A-HEAD",
 		},
-		0x751f3146: {
+		{Type: "TL_textWithEntities", ID: 0x751f3146}: {
 			ID:   0x751f3146,
 			Name: "TL_textWithEntities",
 			Type: "TL_textWithEntities",
@@ -3288,7 +3288,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:45022@A-HEAD",
 		},
-		0x75c78e60: {
+		{Type: "PhotoSize", ID: 0x75c78e60}: {
 			ID:   0x75c78e60,
 			Name: "TL_photoSize",
 			Type: "PhotoSize",
@@ -3301,7 +3301,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44550@A-HEAD",
 		},
-		0x7600b9d3: {
+		{Type: typeMessage, ID: 0x7600b9d3}: {
 			ID:   0x7600b9d3,
 			Name: "TL_message",
 			Type: typeMessage,
@@ -3361,7 +3361,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60187@A-HEAD",
 		},
-		0x761e6af4: {
+		{Type: typeEntity, ID: 0x761e6af4}: {
 			ID:   0x761e6af4,
 			Name: "TL_messageEntityBankCard",
 			Type: typeEntity,
@@ -3372,7 +3372,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32992@A-HEAD",
 		},
-		0x76a6d327: {
+		{Type: typeEntity, ID: 0x76a6d327}: {
 			ID:   0x76a6d327,
 			Name: "TL_messageEntityTextUrl",
 			Type: typeEntity,
@@ -3384,14 +3384,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32482@A-HEAD",
 		},
-		0x76b9f11a: {
+		{Type: typeAction, ID: 0x76b9f11a}: {
 			ID:     0x76b9f11a,
 			Name:   "TL_messageActionInviteToGroupCall_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25939@A-HEAD",
 		},
-		0x76bec211: {
+		{Type: typeMessage, ID: 0x76bec211}: {
 			ID:   0x76bec211,
 			Name: "TL_message_layer173",
 			Type: typeMessage,
@@ -3433,7 +3433,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2379@A-HEAD",
 		},
-		0x773f4e66: {
+		{Type: typeMedia, ID: 0x773f4e66}: {
 			ID:   0x773f4e66,
 			Name: "TL_messageMediaPoll",
 			Type: typeMedia,
@@ -3446,14 +3446,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7898@A-HEAD",
 		},
-		0x774278d4: {
+		{Type: typeAction, ID: 0x774278d4}: {
 			ID:     0x774278d4,
 			Name:   "TL_messageActionStarGiftPurchaseOffer",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68264@A-HEAD",
 		},
-		0x7781fe18: {
+		{Type: "WebPageAttribute", ID: 0x7781fe18}: {
 			ID:   0x7781fe18,
 			Name: "TL_webPageAttributeAiComposeTone",
 			Type: "WebPageAttribute",
@@ -3463,7 +3463,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:10424@A-HEAD",
 		},
-		0x77bfb61b: {
+		{Type: "PhotoSize", ID: 0x77bfb61b}: {
 			ID:   0x77bfb61b,
 			Name: "TL_photoSize_layer127",
 			Type: "PhotoSize",
@@ -3477,7 +3477,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44495@A-HEAD",
 		},
-		0x7912b71f: {
+		{Type: typeMedia, ID: 0x7912b71f}: {
 			ID:   0x7912b71f,
 			Name: "TL_messageMediaVenue_layer71",
 			Type: typeMedia,
@@ -3491,28 +3491,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7520@A-HEAD",
 		},
-		0x79e21a53: {
+		{Type: "InputStickerSet", ID: 0x79e21a53}: {
 			ID:     0x79e21a53,
 			Name:   "TL_inputStickerSetDice_layer111",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30776@A-HEAD",
 		},
-		0x79f5d419: {
+		{Type: "Reaction", ID: 0x79f5d419}: {
 			ID:     0x79f5d419,
 			Name:   "TL_reactionEmpty",
 			Type:   "Reaction",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:51765@A-HEAD",
 		},
-		0x7a0d7f42: {
+		{Type: typeAction, ID: 0x7a0d7f42}: {
 			ID:     0x7a0d7f42,
 			Name:   "TL_messageActionGroupCall",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25591@A-HEAD",
 		},
-		0x7a800e0a: {
+		{Type: typeMessage, ID: 0x7a800e0a}: {
 			ID:   0x7a800e0a,
 			Name: "TL_messageService",
 			Type: typeMessage,
@@ -3538,7 +3538,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61311@A-HEAD",
 		},
-		0x7ad15240: {
+		{Type: typeChat, ID: 0x7ad15240}: {
 			ID:   0x7ad15240,
 			Name: "TL_channel",
 			Type: typeChat,
@@ -3583,21 +3583,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40115@A-HEAD",
 		},
-		0x7adf2420: {
+		{Type: "PollResults", ID: 0x7adf2420}: {
 			ID:     0x7adf2420,
 			Name:   "TL_pollResults_layer223",
 			Type:   "PollResults",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:4392@A-HEAD",
 		},
-		0x7b9e1801: {
+		{Type: "TL_iv.RichText", ID: 0x7b9e1801}: {
 			ID:     0x7b9e1801,
 			Name:   "textCashtag",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:648@A-HEAD",
 		},
-		0x7c3c2609: {
+		{Type: typeMedia, ID: 0x7c3c2609}: {
 			ID:   0x7c3c2609,
 			Name: "TL_messageMediaGeoLive_layer119",
 			Type: typeMedia,
@@ -3608,7 +3608,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8061@A-HEAD",
 		},
-		0x7c4414d3: {
+		{Type: typeMedia, ID: 0x7c4414d3}: {
 			ID:   0x7c4414d3,
 			Name: "TL_messageMediaDocument_layer74",
 			Type: typeMedia,
@@ -3621,7 +3621,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7771@A-HEAD",
 		},
-		0x7c596b46: {
+		{Type: "FileLocation", ID: 0x7c596b46}: {
 			ID:   0x7c596b46,
 			Name: "TL_fileLocationUnavailable",
 			Type: "FileLocation",
@@ -3633,28 +3633,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44252@A-HEAD",
 		},
-		0x7e1c1187: {
+		{Type: typeAction, ID: 0x7e1c1187}: {
 			ID:     0x7e1c1187,
 			Name:   "TL_messageActionStarGiftUnique",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67972@A-HEAD",
 		},
-		0x7e6260d7: {
+		{Type: "TL_iv.RichText", ID: 0x7e6260d7}: {
 			ID:     0x7e6260d7,
 			Name:   "textConcat",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:454@A-HEAD",
 		},
-		0x7fcb13a8: {
+		{Type: typeAction, ID: 0x7fcb13a8}: {
 			ID:     0x7fcb13a8,
 			Name:   "TL_messageActionChatEditPhoto",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25725@A-HEAD",
 		},
-		0x80e11a7f: {
+		{Type: typeAction, ID: 0x80e11a7f}: {
 			ID:   0x80e11a7f,
 			Name: "TL_messageActionPhoneCall",
 			Type: typeAction,
@@ -3668,7 +3668,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:26192@A-HEAD",
 		},
-		0x8261ac61: {
+		{Type: typeChat, ID: 0x8261ac61}: {
 			ID:   0x8261ac61,
 			Name: "TL_channel_layer147",
 			Type: typeChat,
@@ -3702,7 +3702,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42105@A-HEAD",
 		},
-		0x826f8b60: {
+		{Type: typeEntity, ID: 0x826f8b60}: {
 			ID:   0x826f8b60,
 			Name: "TL_messageEntityItalic",
 			Type: typeEntity,
@@ -3713,7 +3713,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32653@A-HEAD",
 		},
-		0x83259464: {
+		{Type: typeChat, ID: 0x83259464}: {
 			ID:   0x83259464,
 			Name: "TL_channel_layer161",
 			Type: typeChat,
@@ -3750,7 +3750,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41986@A-HEAD",
 		},
-		0x83314fca: {
+		{Type: typeUser, ID: 0x83314fca}: {
 			ID:   0x83314fca,
 			Name: "TL_user_layer195",
 			Type: typeUser,
@@ -3792,7 +3792,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:22868@A-HEAD",
 		},
-		0x83d60fc2: {
+		{Type: typeReplies, ID: 0x83d60fc2}: {
 			ID:   0x83d60fc2,
 			Name: "TL_messageReplies",
 			Type: typeReplies,
@@ -3809,7 +3809,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:10019@A-HEAD",
 		},
-		0x83e5de54: {
+		{Type: typeMessage, ID: 0x83e5de54}: {
 			ID:   0x83e5de54,
 			Name: "TL_messageEmpty_layer122",
 			Type: typeMessage,
@@ -3819,21 +3819,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59680@A-HEAD",
 		},
-		0x84551347: {
+		{Type: typeMedia, ID: 0x84551347}: {
 			ID:     0x84551347,
 			Name:   "TL_messageMediaInvoice_layer145",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:7434@A-HEAD",
 		},
-		0x84b88578: {
+		{Type: typeAction, ID: 0x84b88578}: {
 			ID:     0x84b88578,
 			Name:   "TL_messageActionPaidMessagesPrice",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67837@A-HEAD",
 		},
-		0x8537784f: {
+		{Type: typeChat, ID: 0x8537784f}: {
 			ID:   0x8537784f,
 			Name: "TL_channelForbidden_layer67",
 			Type: typeChat,
@@ -3848,14 +3848,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40020@A-HEAD",
 		},
-		0x85849473: {
+		{Type: "WebPage", ID: 0x85849473}: {
 			ID:     0x85849473,
 			Name:   "TL_webPageNotModified_layer110",
 			Type:   "WebPage",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:20418@A-HEAD",
 		},
-		0x85d6cbe2: {
+		{Type: typeMessage, ID: 0x85d6cbe2}: {
 			ID:   0x85d6cbe2,
 			Name: "TL_message_layer135",
 			Type: typeMessage,
@@ -3894,21 +3894,21 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2675@A-HEAD",
 		},
-		0x85dd99d1: {
+		{Type: "ReplyMarkup", ID: 0x85dd99d1}: {
 			ID:     0x85dd99d1,
 			Name:   "TL_replyKeyboardMarkup",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10208@A-HEAD",
 		},
-		0x85e42301: {
+		{Type: typeReason, ID: 0x85e42301}: {
 			ID:     0x85e42301,
 			Name:   "TL_phoneCallDiscardReasonMissed",
 			Type:   typeReason,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:20950@A-HEAD",
 		},
-		0x861cc8a0: {
+		{Type: "InputStickerSet", ID: 0x861cc8a0}: {
 			ID:   0x861cc8a0,
 			Name: "TL_inputStickerSetShortName",
 			Type: "InputStickerSet",
@@ -3918,21 +3918,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:30810@A-HEAD",
 		},
-		0x86b40b08: {
+		{Type: "ReplyMarkup", ID: 0x86b40b08}: {
 			ID:     0x86b40b08,
 			Name:   "TL_replyKeyboardForceReply",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10256@A-HEAD",
 		},
-		0x86e18161: {
+		{Type: "Poll", ID: 0x86e18161}: {
 			ID:     0x86e18161,
 			Name:   "TL_poll_layer178",
 			Type:   "Poll",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:34475@A-HEAD",
 		},
-		0x87232bc7: {
+		{Type: "Document", ID: 0x87232bc7}: {
 			ID:   0x87232bc7,
 			Name: "TL_document_layer82",
 			Type: "Document",
@@ -3950,14 +3950,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29126@A-HEAD",
 		},
-		0x87e2f155: {
+		{Type: typeAction, ID: 0x87e2f155}: {
 			ID:     0x87e2f155,
 			Name:   "TL_messageActionGiveawayResults",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67276@A-HEAD",
 		},
-		0x8935fc73: {
+		{Type: "Reaction", ID: 0x8935fc73}: {
 			ID:   0x8935fc73,
 			Name: "TL_reactionCustomEmoji",
 			Type: "Reaction",
@@ -3967,14 +3967,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:51750@A-HEAD",
 		},
-		0x8a53b014: {
+		{Type: typeMedia, ID: 0x8a53b014}: {
 			ID:     0x8a53b014,
 			Name:   "TL_messageMediaToDo",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66764@A-HEAD",
 		},
-		0x8c79b63c: {
+		{Type: "MessagePeerReaction", ID: 0x8c79b63c}: {
 			ID:   0x8c79b63c,
 			Name: "TL_messagePeerReaction",
 			Type: "MessagePeerReaction",
@@ -3989,21 +3989,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:2635@A-HEAD",
 		},
-		0x8dee6c44: {
+		{Type: "TL_iv.Page", ID: 0x8dee6c44}: {
 			ID:     0x8dee6c44,
 			Name:   "TL_pagePart_layer67",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:145@A-HEAD",
 		},
-		0x8e3f9ebe: {
+		{Type: "TL_iv.Page", ID: 0x8e3f9ebe}: {
 			ID:     0x8e3f9ebe,
 			Name:   "TL_pagePart_layer82",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:128@A-HEAD",
 		},
-		0x8e87ccd8: {
+		{Type: typeChat, ID: 0x8e87ccd8}: {
 			ID:   0x8e87ccd8,
 			Name: "TL_channel_layer167",
 			Type: typeChat,
@@ -4041,14 +4041,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41579@A-HEAD",
 		},
-		0x8f31b327: {
+		{Type: typeAction, ID: 0x8f31b327}: {
 			ID:     0x8f31b327,
 			Name:   "TL_messageActionPaymentSentMe_layer193",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26621@A-HEAD",
 		},
-		0x8f97c628: {
+		{Type: typeUser, ID: 0x8f97c628}: {
 			ID:   0x8f97c628,
 			Name: "TL_user_layer159",
 			Type: typeUser,
@@ -4086,7 +4086,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23735@A-HEAD",
 		},
-		0x8fd4c4d8: {
+		{Type: "Document", ID: 0x8fd4c4d8}: {
 			ID:   0x8fd4c4d8,
 			Name: "TL_document",
 			Type: "Document",
@@ -4106,7 +4106,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29188@A-HEAD",
 		},
-		0x904ac7c7: {
+		{Type: typeEntity, ID: 0x904ac7c7}: {
 			ID:   0x904ac7c7,
 			Name: "TL_messageEntityFormattedDate",
 			Type: typeEntity,
@@ -4125,7 +4125,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:63794@A-HEAD",
 		},
-		0x90a6ca84: {
+		{Type: typeMessage, ID: 0x90a6ca84}: {
 			ID:   0x90a6ca84,
 			Name: "TL_messageEmpty",
 			Type: typeMessage,
@@ -4137,7 +4137,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59694@A-HEAD",
 		},
-		0x90dddc11: {
+		{Type: typeMessage, ID: 0x90dddc11}: {
 			ID:   0x90dddc11,
 			Name: "TL_message_layer72",
 			Type: typeMessage,
@@ -4166,7 +4166,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59750@A-HEAD",
 		},
-		0x9288dd29: {
+		{Type: "Photo", ID: 0x9288dd29}: {
 			ID:   0x9288dd29,
 			Name: "TL_photo_layer82",
 			Type: "Photo",
@@ -4181,14 +4181,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33360@A-HEAD",
 		},
-		0x92a72876: {
+		{Type: typeAction, ID: 0x92a72876}: {
 			ID:     0x92a72876,
 			Name:   "TL_messageActionGameScore",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26392@A-HEAD",
 		},
-		0x932844fa: {
+		{Type: "MessagePeerReaction", ID: 0x932844fa}: {
 			ID:   0x932844fa,
 			Name: "TL_messagePeerReaction_layer137",
 			Type: "MessagePeerReaction",
@@ -4199,14 +4199,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:2704@A-HEAD",
 		},
-		0x9329ea33: {
+		{Type: typeAction, ID: 0x9329ea33}: {
 			ID:     0x9329ea33,
 			Name:   "TL_messageActionGramTransfer",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65024@A-HEAD",
 		},
-		0x938458c1: {
+		{Type: typeUser, ID: 0x938458c1}: {
 			ID:   0x938458c1,
 			Name: "TL_user_layer131",
 			Type: typeUser,
@@ -4237,14 +4237,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24113@A-HEAD",
 		},
-		0x939a4671: {
+		{Type: "WebPageAttribute", ID: 0x939a4671}: {
 			ID:     0x939a4671,
 			Name:   "TL_webPageAttributeStory_layer162",
 			Type:   "WebPageAttribute",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10545@A-HEAD",
 		},
-		0x94345242: {
+		{Type: typeMessage, ID: 0x94345242}: {
 			ID:   0x94345242,
 			Name: "TL_message_layer195",
 			Type: typeMessage,
@@ -4294,14 +4294,14 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:1520@A-HEAD",
 		},
-		0x94bd38ed: {
+		{Type: typeAction, ID: 0x94bd38ed}: {
 			ID:     0x94bd38ed,
 			Name:   "TL_messageActionPinMessage",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:26155@A-HEAD",
 		},
-		0x94f592db: {
+		{Type: typeChat, ID: 0x94f592db}: {
 			ID:   0x94f592db,
 			Name: "TL_channel_layer165",
 			Type: typeChat,
@@ -4339,35 +4339,35 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41852@A-HEAD",
 		},
-		0x95728543: {
+		{Type: typeAction, ID: 0x95728543}: {
 			ID:     0x95728543,
 			Name:   "TL_messageActionStarGiftUnique_layer221",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68183@A-HEAD",
 		},
-		0x95d2ac92: {
+		{Type: typeAction, ID: 0x95d2ac92}: {
 			ID:     0x95d2ac92,
 			Name:   "TL_messageActionChannelCreate",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26127@A-HEAD",
 		},
-		0x95ddcf69: {
+		{Type: typeAction, ID: 0x95ddcf69}: {
 			ID:     0x95ddcf69,
 			Name:   "TL_messageActionSuggestedPostSuccess",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25350@A-HEAD",
 		},
-		0x95e3fbef: {
+		{Type: typeAction, ID: 0x95e3fbef}: {
 			ID:     0x95e3fbef,
 			Name:   "TL_messageActionChatDeletePhoto",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:26184@A-HEAD",
 		},
-		0x95ef6f2b: {
+		{Type: typeMessage, ID: 0x95ef6f2b}: {
 			ID:   0x95ef6f2b,
 			Name: "TL_message_layer226",
 			Type: typeMessage,
@@ -4426,28 +4426,28 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:15@A-HEAD",
 		},
-		0x96163f56: {
+		{Type: typeAction, ID: 0x96163f56}: {
 			ID:     0x96163f56,
 			Name:   "TL_messageActionPaymentSent_layer193",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26293@A-HEAD",
 		},
-		0x966e2dbf: {
+		{Type: "Poll", ID: 0x966e2dbf}: {
 			ID:     0x966e2dbf,
 			Name:   "TL_poll",
 			Type:   "Poll",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:34318@A-HEAD",
 		},
-		0x9686cb50: {
+		{Type: "TL_iv.RichText", ID: 0x9686cb50}: {
 			ID:     0x9686cb50,
 			Name:   "textDiff",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:775@A-HEAD",
 		},
-		0x96fdbbe9: {
+		{Type: typeMessage, ID: 0x96fdbbe9}: {
 			ID:   0x96fdbbe9,
 			Name: "TL_message_layer199",
 			Type: typeMessage,
@@ -4498,7 +4498,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:1327@A-HEAD",
 		},
-		0x9789dac4: {
+		{Type: typeMessage, ID: 0x9789dac4}: {
 			ID:   0x9789dac4,
 			Name: "TL_message_layer104_3",
 			Type: typeMessage,
@@ -4533,14 +4533,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:72510@A-11.4.2",
 		},
-		0x9801d2f7: {
+		{Type: "DocumentAttribute", ID: 0x9801d2f7}: {
 			ID:     0x9801d2f7,
 			Name:   "TL_documentAttributeHasStickers",
 			Type:   "DocumentAttribute",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:1883@A-HEAD",
 		},
-		0x9815cec8: {
+		{Type: typeMessage, ID: 0x9815cec8}: {
 			ID:   0x9815cec8,
 			Name: "TL_message_layer216",
 			Type: typeMessage,
@@ -4595,7 +4595,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:918@A-HEAD",
 		},
-		0x9852f9c6: {
+		{Type: "DocumentAttribute", ID: 0x9852f9c6}: {
 			ID:   0x9852f9c6,
 			Name: "TL_documentAttributeAudio",
 			Type: "DocumentAttribute",
@@ -4610,21 +4610,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1919@A-HEAD",
 		},
-		0x98657f0d: {
+		{Type: "TL_iv.Page", ID: 0x98657f0d}: {
 			ID:     0x98657f0d,
 			Name:   "TL_page",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:48@A-HEAD",
 		},
-		0x98e0d697: {
+		{Type: typeAction, ID: 0x98e0d697}: {
 			ID:     0x98e0d697,
 			Name:   "TL_messageActionGeoProximityReached",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26163@A-HEAD",
 		},
-		0x994c9882: {
+		{Type: "DocumentAttribute", ID: 0x994c9882}: {
 			ID:   0x994c9882,
 			Name: "TL_documentAttributeSticker_old2",
 			Type: "DocumentAttribute",
@@ -4634,7 +4634,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1891@A-HEAD",
 		},
-		0x9b69e34b: {
+		{Type: typeEntity, ID: 0x9b69e34b}: {
 			ID:   0x9b69e34b,
 			Name: "TL_messageEntityPhone",
 			Type: typeEntity,
@@ -4645,7 +4645,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33046@A-HEAD",
 		},
-		0x9ba29cc1: {
+		{Type: "Document", ID: 0x9ba29cc1}: {
 			ID:   0x9ba29cc1,
 			Name: "TL_document_layer113",
 			Type: "Document",
@@ -4664,7 +4664,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29270@A-HEAD",
 		},
-		0x9ba2d800: {
+		{Type: typeChat, ID: 0x9ba2d800}: {
 			ID:   0x9ba2d800,
 			Name: "TL_chatEmpty_layer131",
 			Type: typeChat,
@@ -4674,21 +4674,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61842@A-HEAD",
 		},
-		0x9bb3ef44: {
+		{Type: typeAction, ID: 0x9bb3ef44}: {
 			ID:     0x9bb3ef44,
 			Name:   "TL_messageActionStarGift_layer192",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67349@A-HEAD",
 		},
-		0x9bf8bb95: {
+		{Type: "TL_iv.RichText", ID: 0x9bf8bb95}: {
 			ID:     0x9bf8bb95,
 			Name:   "textStrike",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:400@A-HEAD",
 		},
-		0x9c477dd8: {
+		{Type: "Photo", ID: 0x9c477dd8}: {
 			ID:   0x9c477dd8,
 			Name: "TL_photo_layer97",
 			Type: "Photo",
@@ -4704,7 +4704,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33195@A-HEAD",
 		},
-		0x9c4e7e8b: {
+		{Type: typeEntity, ID: 0x9c4e7e8b}: {
 			ID:   0x9c4e7e8b,
 			Name: "TL_messageEntityUnderline",
 			Type: typeEntity,
@@ -4715,7 +4715,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32965@A-HEAD",
 		},
-		0x9c98bfc1: {
+		{Type: typeReply, ID: 0x9c98bfc1}: {
 			ID:   0x9c98bfc1,
 			Name: "TL_messageReplyStoryHeader_layer174",
 			Type: typeReply,
@@ -4726,7 +4726,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28170@A-HEAD",
 		},
-		0x9cb070d7: {
+		{Type: typeMedia, ID: 0x9cb070d7}: {
 			ID:   0x9cb070d7,
 			Name: "TL_messageMediaDocument_layer159",
 			Type: typeMedia,
@@ -4740,7 +4740,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7739@A-HEAD",
 		},
-		0x9cb490e9: {
+		{Type: typeMessage, ID: 0x9cb490e9}: {
 			ID:   0x9cb490e9,
 			Name: "TL_message_layer222",
 			Type: typeMessage,
@@ -4797,21 +4797,21 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:480@A-HEAD",
 		},
-		0x9d2eac97: {
+		{Type: "TL_iv.RichText", ID: 0x9d2eac97}: {
 			ID:     0x9d2eac97,
 			Name:   "textMath",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:554@A-HEAD",
 		},
-		0x9da1cd6c: {
+		{Type: typeAction, ID: 0x9da1cd6c}: {
 			ID:     0x9da1cd6c,
 			Name:   "TL_messageActionPollAppendAnswer",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25320@A-HEAD",
 		},
-		0x9db1bc6d: {
+		{Type: typePeer, ID: 0x9db1bc6d}: {
 			ID:   0x9db1bc6d,
 			Name: "TL_peerUser_layer131",
 			Type: typePeer,
@@ -4821,7 +4821,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:3915@A-HEAD",
 		},
-		0x9de7a269: {
+		{Type: "InputStickerSet", ID: 0x9de7a269}: {
 			ID:   0x9de7a269,
 			Name: "TL_inputStickerSetID",
 			Type: "InputStickerSet",
@@ -4832,7 +4832,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:30795@A-HEAD",
 		},
-		0x9e19a1f6: {
+		{Type: typeMessage, ID: 0x9e19a1f6}: {
 			ID:   0x9e19a1f6,
 			Name: "TL_messageService_layer118",
 			Type: typeMessage,
@@ -4855,7 +4855,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61486@A-HEAD",
 		},
-		0x9efc6326: {
+		{Type: "Document", ID: 0x9efc6326}: {
 			ID:   0x9efc6326,
 			Name: "TL_document_old",
 			Type: "Document",
@@ -4873,14 +4873,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29305@A-HEAD",
 		},
-		0x9f84f49e: {
+		{Type: typeMedia, ID: 0x9f84f49e}: {
 			ID:     0x9f84f49e,
 			Name:   "TL_messageMediaUnsupported",
 			Type:   typeMedia,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:7475@A-HEAD",
 		},
-		0x9f8d60bb: {
+		{Type: typeMessage, ID: 0x9f8d60bb}: {
 			ID:   0x9f8d60bb,
 			Name: "TL_messageService_old",
 			Type: typeMessage,
@@ -4896,14 +4896,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61006@A-HEAD",
 		},
-		0x9fbab604: {
+		{Type: typeAction, ID: 0x9fbab604}: {
 			ID:     0x9fbab604,
 			Name:   "TL_messageActionHistoryClear",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:25717@A-HEAD",
 		},
-		0x9fbbf1f7: {
+		{Type: typeReason, ID: 0x9fbbf1f7}: {
 			ID:   0x9fbbf1f7,
 			Name: "TL_phoneCallDiscardReasonMigrateConferenceCall",
 			Type: typeReason,
@@ -4913,14 +4913,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20966@A-HEAD",
 		},
-		0xa03e5b85: {
+		{Type: "ReplyMarkup", ID: 0xa03e5b85}: {
 			ID:     0xa03e5b85,
 			Name:   "TL_replyKeyboardHide",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10241@A-HEAD",
 		},
-		0xa14dca52: {
+		{Type: typeChat, ID: 0xa14dca52}: {
 			ID:   0xa14dca52,
 			Name: "TL_channel_layer67",
 			Type: typeChat,
@@ -4944,14 +4944,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42238@A-HEAD",
 		},
-		0xa26156c0: {
+		{Type: "TL_iv.RichText", ID: 0xa26156c0}: {
 			ID:     0xa26156c0,
 			Name:   "textCustomEmoji",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:573@A-HEAD",
 		},
-		0xa2a5371e: {
+		{Type: typePeer, ID: 0xa2a5371e}: {
 			ID:   0xa2a5371e,
 			Name: "TL_peerChannel",
 			Type: typePeer,
@@ -4961,7 +4961,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:3889@A-HEAD",
 		},
-		0xa2d24290: {
+		{Type: typeMedia, ID: 0xa2d24290}: {
 			ID:   0xa2d24290,
 			Name: "TL_messageMediaVideo_old",
 			Type: typeMedia,
@@ -4971,7 +4971,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7541@A-HEAD",
 		},
-		0xa31ea0b5: {
+		{Type: "WebPage", ID: 0xa31ea0b5}: {
 			ID:   0xa31ea0b5,
 			Name: "TL_webPage_old",
 			Type: "WebPage",
@@ -4995,7 +4995,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20248@A-HEAD",
 		},
-		0xa32dd600: {
+		{Type: typeMedia, ID: 0xa32dd600}: {
 			ID:   0xa32dd600,
 			Name: "TL_messageMediaWebPage_layer165",
 			Type: typeMedia,
@@ -5005,7 +5005,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8294@A-HEAD",
 		},
-		0xa367e716: {
+		{Type: typeMessage, ID: 0xa367e716}: {
 			ID:   0xa367e716,
 			Name: "TL_messageForwarded_old2",
 			Type: typeMessage,
@@ -5027,7 +5027,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60142@A-HEAD",
 		},
-		0xa3d1cb80: {
+		{Type: "ReactionCount", ID: 0xa3d1cb80}: {
 			ID:   0xa3d1cb80,
 			Name: "TL_reactionCount",
 			Type: "ReactionCount",
@@ -5041,14 +5041,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:45142@A-HEAD",
 		},
-		0xa43f30cc: {
+		{Type: typeAction, ID: 0xa43f30cc}: {
 			ID:     0xa43f30cc,
 			Name:   "TL_messageActionChatDeleteUser",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25663@A-HEAD",
 		},
-		0xa4e97f37: {
+		{Type: typeMessage, ID: 0xa4e97f37}: {
 			ID:   0xa4e97f37,
 			Name: "TL_message_layer179",
 			Type: typeMessage,
@@ -5095,14 +5095,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59522@A-HEAD",
 		},
-		0xa5b45e2b: {
+		{Type: "TL_iv.RichText", ID: 0xa5b45e2b}: {
 			ID:     0xa5b45e2b,
 			Name:   "textDate",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:736@A-HEAD",
 		},
-		0xa636a3e2: {
+		{Type: typeChat, ID: 0xa636a3e2}: {
 			ID:   0xa636a3e2,
 			Name: "TL_channel_layer167_2",
 			Type: typeChat,
@@ -5140,14 +5140,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:49322@A-11.4.2",
 		},
-		0xa6638b9a: {
+		{Type: typeAction, ID: 0xa6638b9a}: {
 			ID:     0xa6638b9a,
 			Name:   "TL_messageActionChatCreate_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25546@A-HEAD",
 		},
-		0xa66c7efc: {
+		{Type: typeMessage, ID: 0xa66c7efc}: {
 			ID:   0xa66c7efc,
 			Name: "TL_message_layer176",
 			Type: typeMessage,
@@ -5191,7 +5191,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2059@A-HEAD",
 		},
-		0xa6d57763: {
+		{Type: typeReply, ID: 0xa6d57763}: {
 			ID:   0xa6d57763,
 			Name: "TL_messageReplyHeader_layer165",
 			Type: typeReply,
@@ -5206,7 +5206,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28625@A-HEAD",
 		},
-		0xa7ab1991: {
+		{Type: typeMessage, ID: 0xa7ab1991}: {
 			ID:   0xa7ab1991,
 			Name: "TL_message_old3",
 			Type: typeMessage,
@@ -5229,56 +5229,56 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60911@A-HEAD",
 		},
-		0xa80f51e4: {
+		{Type: typeAction, ID: 0xa80f51e4}: {
 			ID:     0xa80f51e4,
 			Name:   "TL_messageActionGiveawayLaunch",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67240@A-HEAD",
 		},
-		0xa831bf37: {
+		{Type: typeMedia, ID: 0xa831bf37}: {
 			ID:     0xa831bf37,
 			Name:   "TL_messageMediaWidget_layer233",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66851@A-HEAD",
 		},
-		0xa8852491: {
+		{Type: typeMedia, ID: 0xa8852491}: {
 			ID:     0xa8852491,
 			Name:   "TL_messageMediaPaidMedia",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66749@A-HEAD",
 		},
-		0xa8a3c699: {
+		{Type: typeAction, ID: 0xa8a3c699}: {
 			ID:     0xa8a3c699,
 			Name:   "TL_messageActionGiftTon",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25476@A-HEAD",
 		},
-		0xaa073beb: {
+		{Type: typeMedia, ID: 0xaa073beb}: {
 			ID:     0xaa073beb,
 			Name:   "TL_messageMediaGiveaway",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66626@A-HEAD",
 		},
-		0xaa1afbfd: {
+		{Type: typeAction, ID: 0xaa1afbfd}: {
 			ID:     0xaa1afbfd,
 			Name:   "TL_messageActionSetMessagesTTL_layer149",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26101@A-HEAD",
 		},
-		0xaa786345: {
+		{Type: typeAction, ID: 0xaa786345}: {
 			ID:     0xaa786345,
 			Name:   "TL_messageActionSetChatTheme_layer213",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25612@A-HEAD",
 		},
-		0xabb5f120: {
+		{Type: typeUser, ID: 0xabb5f120}: {
 			ID:   0xabb5f120,
 			Name: "TL_user_layer165",
 			Type: typeUser,
@@ -5317,42 +5317,42 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23581@A-HEAD",
 		},
-		0xabe9affe: {
+		{Type: typeAction, ID: 0xabe9affe}: {
 			ID:     0xabe9affe,
 			Name:   "TL_messageActionBotAllowed_layer153",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26369@A-HEAD",
 		},
-		0xac1f1fcd: {
+		{Type: typeAction, ID: 0xac1f1fcd}: {
 			ID:     0xac1f1fcd,
 			Name:   "TL_messageActionPaidMessagesRefunded",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67952@A-HEAD",
 		},
-		0xac6a83aa: {
+		{Type: "TL_iv.RichText", ID: 0xac6a83aa}: {
 			ID:     0xac6a83aa,
 			Name:   "textAutoUrl",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:662@A-HEAD",
 		},
-		0xacdfcb81: {
+		{Type: typeAction, ID: 0xacdfcb81}: {
 			ID:     0xacdfcb81,
 			Name:   "TL_messageActionStarGiftUnique_layer202",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68493@A-HEAD",
 		},
-		0xae891bec: {
+		{Type: "TL_iv.Page", ID: 0xae891bec}: {
 			ID:     0xae891bec,
 			Name:   "TL_page_layer110",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:80@A-HEAD",
 		},
-		0xaed6dbb2: {
+		{Type: "TL_maskCoords", ID: 0xaed6dbb2}: {
 			ID:   0xaed6dbb2,
 			Name: "TL_maskCoords",
 			Type: "TL_maskCoords",
@@ -5365,14 +5365,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29623@A-HEAD",
 		},
-		0xaf746786: {
+		{Type: "Poll", ID: 0xaf746786}: {
 			ID:     0xaf746786,
 			Name:   "TL_poll_toDelete",
 			Type:   "Poll",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:34515@A-HEAD",
 		},
-		0xafbc09db: {
+		{Type: typeReply, ID: 0xafbc09db}: {
 			ID:   0xafbc09db,
 			Name: "TL_messageReplyHeader_layer207",
 			Type: typeReply,
@@ -5393,14 +5393,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28444@A-HEAD",
 		},
-		0xafc79cd6: {
+		{Type: "TL_iv.RichText", ID: 0xafc79cd6}: {
 			ID:     0xafc79cd6,
 			Name:   "textButton",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:794@A-HEAD",
 		},
-		0xafe2b839: {
+		{Type: typeReason, ID: 0xafe2b839}: {
 			ID:   0xafe2b839,
 			Name: "TL_phoneCallDiscardReasonAllowGroupCall",
 			Type: typeReason,
@@ -5410,28 +5410,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:12808@release-5.14.0_1851",
 		},
-		0xb00c47a2: {
+		{Type: typeAction, ID: 0xb00c47a2}: {
 			ID:     0xb00c47a2,
 			Name:   "TL_messageActionPrizeStars",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67317@A-HEAD",
 		},
-		0xb055eaee: {
+		{Type: typeAction, ID: 0xb055eaee}: {
 			ID:     0xb055eaee,
 			Name:   "TL_messageActionChannelMigrateFrom_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25890@A-HEAD",
 		},
-		0xb07ed085: {
+		{Type: typeAction, ID: 0xb07ed085}: {
 			ID:     0xb07ed085,
 			Name:   "TL_messageActionNewCreatorPending",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25461@A-HEAD",
 		},
-		0xb0d13e47: {
+		{Type: "WebPage", ID: 0xb0d13e47}: {
 			ID:   0xb0d13e47,
 			Name: "TL_webPagePending",
 			Type: "WebPage",
@@ -5444,7 +5444,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20395@A-HEAD",
 		},
-		0xb156fe9c: {
+		{Type: "MessagePeerReaction", ID: 0xb156fe9c}: {
 			ID:   0xb156fe9c,
 			Name: "TL_messagePeerReaction_layer154",
 			Type: "MessagePeerReaction",
@@ -5458,14 +5458,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:2658@A-HEAD",
 		},
-		0xb18a431c: {
+		{Type: typeAction, ID: 0xb18a431c}: {
 			ID:     0xb18a431c,
 			Name:   "TL_messageActionTopicEdit_layer149",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25825@A-HEAD",
 		},
-		0xb1b8cc83: {
+		{Type: typeUser, ID: 0xb1b8cc83}: {
 			ID:   0xb1b8cc83,
 			Name: "TL_user",
 			Type: typeUser,
@@ -5513,7 +5513,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:22059@A-HEAD",
 		},
-		0xb29ad7cc: {
+		{Type: typeUser, ID: 0xb29ad7cc}: {
 			ID:   0xb29ad7cc,
 			Name: "TL_userDeleted_old",
 			Type: typeUser,
@@ -5525,7 +5525,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24513@A-HEAD",
 		},
-		0xb2a2f663: {
+		{Type: "GeoPoint", ID: 0xb2a2f663}: {
 			ID:   0xb2a2f663,
 			Name: "TL_geoPoint",
 			Type: "GeoPoint",
@@ -5539,35 +5539,35 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:5121@A-HEAD",
 		},
-		0xb2ae9b0c: {
+		{Type: typeAction, ID: 0xb2ae9b0c}: {
 			ID:     0xb2ae9b0c,
 			Name:   "TL_messageActionChatDeleteUser_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25918@A-HEAD",
 		},
-		0xb2b15770: {
+		{Type: "ReplyMarkup", ID: 0xb2b15770}: {
 			ID:     0xb2b15770,
 			Name:   "TL_replyInlineMarkup",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10317@A-HEAD",
 		},
-		0xb3a07661: {
+		{Type: typeAction, ID: 0xb3a07661}: {
 			ID:     0xb3a07661,
 			Name:   "TL_messageActionGroupCallScheduled",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26658@A-HEAD",
 		},
-		0xb4c38cb5: {
+		{Type: typeAction, ID: 0xb4c38cb5}: {
 			ID:     0xb4c38cb5,
 			Name:   "TL_messageActionWebViewDataSent",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25972@A-HEAD",
 		},
-		0xb5223b0f: {
+		{Type: typeMedia, ID: 0xb5223b0f}: {
 			ID:   0xb5223b0f,
 			Name: "TL_messageMediaPhoto_layer74",
 			Type: typeMedia,
@@ -5580,35 +5580,35 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7941@A-HEAD",
 		},
-		0xb5a1ce5a: {
+		{Type: typeAction, ID: 0xb5a1ce5a}: {
 			ID:     0xb5a1ce5a,
 			Name:   "TL_messageActionChatEditTitle",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26247@A-HEAD",
 		},
-		0xb6aef7b0: {
+		{Type: typeAction, ID: 0xb6aef7b0}: {
 			ID:     0xb6aef7b0,
 			Name:   "TL_messageActionEmpty",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:26384@A-HEAD",
 		},
-		0xb7ed7b0d: {
+		{Type: typeMedia, ID: 0xb7ed7b0d}: {
 			ID:     0xb7ed7b0d,
 			Name:   "TL_messageMediaWidget_old",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66876@A-HEAD",
 		},
-		0xb8425be9: {
+		{Type: "Poll", ID: 0xb8425be9}: {
 			ID:     0xb8425be9,
 			Name:   "TL_poll_layer224",
 			Type:   "Poll",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:34377@A-HEAD",
 		},
-		0xb87a24d1: {
+		{Type: "MessageReactions", ID: 0xb87a24d1}: {
 			ID:   0xb87a24d1,
 			Name: "TL_messageReactions_layer137",
 			Type: "MessageReactions",
@@ -5620,7 +5620,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27623@A-HEAD",
 		},
-		0xb89bfccf: {
+		{Type: "TL_factCheck", ID: 0xb89bfccf}: {
 			ID:   0xb89bfccf,
 			Name: "TL_factCheck",
 			Type: "TL_factCheck",
@@ -5634,14 +5634,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:69998@A-HEAD",
 		},
-		0xb91bbd3a: {
+		{Type: typeAction, ID: 0xb91bbd3a}: {
 			ID:     0xb91bbd3a,
 			Name:   "TL_messageActionSetChatTheme",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25676@A-HEAD",
 		},
-		0xb92f76cf: {
+		{Type: typeMessage, ID: 0xb92f76cf}: {
 			ID:   0xb92f76cf,
 			Name: "TL_message_layer220",
 			Type: typeMessage,
@@ -5697,7 +5697,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:702@A-HEAD",
 		},
-		0xb940c666: {
+		{Type: typeMedia, ID: 0xb940c666}: {
 			ID:   0xb940c666,
 			Name: "TL_messageMediaGeoLive",
 			Type: typeMedia,
@@ -5711,28 +5711,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8032@A-HEAD",
 		},
-		0xb956812d: {
+		{Type: "TL_iv.RichText", ID: 0xb956812d}: {
 			ID:     0xb956812d,
 			Name:   "textBankCard",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:704@A-HEAD",
 		},
-		0xb98886cf: {
+		{Type: "InputUser", ID: 0xb98886cf}: {
 			ID:     0xb98886cf,
 			Name:   "TL_inputUserEmpty",
 			Type:   "InputUser",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:18951@A-HEAD",
 		},
-		0xba7bb15e: {
+		{Type: "PollResults", ID: 0xba7bb15e}: {
 			ID:     0xba7bb15e,
 			Name:   "TL_pollResults",
 			Type:   "PollResults",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:4336@A-HEAD",
 		},
-		0xbad0e5bb: {
+		{Type: typePeer, ID: 0xbad0e5bb}: {
 			ID:   0xbad0e5bb,
 			Name: "TL_peerChat_layer131",
 			Type: typePeer,
@@ -5742,21 +5742,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:3928@A-HEAD",
 		},
-		0xbadcc1a3: {
+		{Type: "PollResults", ID: 0xbadcc1a3}: {
 			ID:     0xbadcc1a3,
 			Name:   "TL_pollResults_layer131",
 			Type:   "PollResults",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:4295@A-HEAD",
 		},
-		0xbaf39d8b: {
+		{Type: "TL_iv.RichMessage", ID: 0xbaf39d8b}: {
 			ID:     0xbaf39d8b,
 			Name:   "RichMessage",
 			Type:   "TL_iv.RichMessage",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:195@A-HEAD",
 		},
-		0xbb92ba95: {
+		{Type: typeEntity, ID: 0xbb92ba95}: {
 			ID:   0xbb92ba95,
 			Name: "TL_messageEntityUnknown",
 			Type: typeEntity,
@@ -5767,7 +5767,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32598@A-HEAD",
 		},
-		0xbbb6b4a3: {
+		{Type: "TL_stars.StarsAmount", ID: 0xbbb6b4a3}: {
 			ID:   0xbbb6b4a3,
 			Name: "TL_starsAmount",
 			Type: "TL_stars.StarsAmount",
@@ -5778,14 +5778,14 @@ func newTable() tl.Table {
 			},
 			Source: "TL_stars.java:2563@A-HEAD",
 		},
-		0xbc44a927: {
+		{Type: typeAction, ID: 0xbc44a927}: {
 			ID:     0xbc44a927,
 			Name:   "TL_messageActionSetChatWallPaper_layer166",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25987@A-HEAD",
 		},
-		0xbc7fc6cd: {
+		{Type: "FileLocation", ID: 0xbc7fc6cd}: {
 			ID:   0xbc7fc6cd,
 			Name: "TL_fileLocationToBeDeprecated",
 			Type: "FileLocation",
@@ -5796,14 +5796,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44309@A-HEAD",
 		},
-		0xbcd71419: {
+		{Type: typeAction, ID: 0xbcd71419}: {
 			ID:     0xbcd71419,
 			Name:   "TL_messageActionPaidMessagesPrice_layer203",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67856@A-HEAD",
 		},
-		0xbce383d2: {
+		{Type: typeMessage, ID: 0xbce383d2}: {
 			ID:   0xbce383d2,
 			Name: "TL_message_layer131",
 			Type: typeMessage,
@@ -5841,14 +5841,14 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:2812@A-HEAD",
 		},
-		0xbd47cbad: {
+		{Type: typeAction, ID: 0xbd47cbad}: {
 			ID:     0xbd47cbad,
 			Name:   "TL_messageActionChatCreate",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25531@A-HEAD",
 		},
-		0xbd610bc9: {
+		{Type: typeEntity, ID: 0xbd610bc9}: {
 			ID:   0xbd610bc9,
 			Name: "TL_messageEntityBold",
 			Type: typeEntity,
@@ -5859,7 +5859,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32808@A-HEAD",
 		},
-		0xbddde532: {
+		{Type: typePeer, ID: 0xbddde532}: {
 			ID:   0xbddde532,
 			Name: "TL_peerChannel_layer131",
 			Type: typePeer,
@@ -5869,7 +5869,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:3863@A-HEAD",
 		},
-		0xbde09c2e: {
+		{Type: typeMessage, ID: 0xbde09c2e}: {
 			ID:   0xbde09c2e,
 			Name: "TL_message_layer180",
 			Type: typeMessage,
@@ -5917,7 +5917,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:1707@A-HEAD",
 		},
-		0xbf0693d4: {
+		{Type: typeEntity, ID: 0xbf0693d4}: {
 			ID:   0xbf0693d4,
 			Name: "TL_messageEntityStrike",
 			Type: typeEntity,
@@ -5928,14 +5928,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32889@A-HEAD",
 		},
-		0xbf7d6572: {
+		{Type: typeAction, ID: 0xbf7d6572}: {
 			ID:     0xbf7d6572,
 			Name:   "TL_messageActionNoForwardsToggle",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64858@A-HEAD",
 		},
-		0xc06b9607: {
+		{Type: typeMessage, ID: 0xc06b9607}: {
 			ID:   0xc06b9607,
 			Name: "TL_messageService_layer48",
 			Type: typeMessage,
@@ -5956,21 +5956,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60805@A-HEAD",
 		},
-		0xc0787d6d: {
+		{Type: typeAction, ID: 0xc0787d6d}: {
 			ID:     0xc0787d6d,
 			Name:   "TL_messageActionSetSameChatWallPaper",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25771@A-HEAD",
 		},
-		0xc0944820: {
+		{Type: typeAction, ID: 0xc0944820}: {
 			ID:     0xc0944820,
 			Name:   "TL_messageActionTopicEdit",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25784@A-HEAD",
 		},
-		0xc09be45f: {
+		{Type: typeMessage, ID: 0xc09be45f}: {
 			ID:   0xc09be45f,
 			Name: "TL_message_layer68",
 			Type: typeMessage,
@@ -6000,7 +6000,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59851@A-HEAD",
 		},
-		0xc10658a8: {
+		{Type: "Video", ID: 0xc10658a8}: {
 			ID:   0xc10658a8,
 			Name: "TL_videoEmpty_layer45",
 			Type: "Video",
@@ -6010,21 +6010,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27849@A-HEAD",
 		},
-		0xc12622c4: {
+		{Type: "TL_iv.RichText", ID: 0xc12622c4}: {
 			ID:     0xc12622c4,
 			Name:   "textUnderline",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:388@A-HEAD",
 		},
-		0xc1d2f1c6: {
+		{Type: typeAction, ID: 0xc1d2f1c6}: {
 			ID:     0xc1d2f1c6,
 			Name:   "TL_messageActionNoPaidMessagesTokenUsed",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:68343@A-HEAD",
 		},
-		0xc3060325: {
+		{Type: typeMessage, ID: 0xc3060325}: {
 			ID:   0xc3060325,
 			Name: "TL_message_old4",
 			Type: typeMessage,
@@ -6048,7 +6048,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60848@A-HEAD",
 		},
-		0xc3838076: {
+		{Type: "Photo", ID: 0xc3838076}: {
 			ID:   0xc3838076,
 			Name: "TL_photo_old2",
 			Type: "Photo",
@@ -6063,21 +6063,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33239@A-HEAD",
 		},
-		0xc516d679: {
+		{Type: typeAction, ID: 0xc516d679}: {
 			ID:     0xc516d679,
 			Name:   "TL_messageActionBotAllowed",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26335@A-HEAD",
 		},
-		0xc556a45d: {
+		{Type: "TL_iv.RichText", ID: 0xc556a45d}: {
 			ID:     0xc556a45d,
 			Name:   "textAutoEmail",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:676@A-HEAD",
 		},
-		0xc586da1c: {
+		{Type: "WebPage", ID: 0xc586da1c}: {
 			ID:   0xc586da1c,
 			Name: "TL_webPagePending_layer165",
 			Type: "WebPage",
@@ -6088,21 +6088,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20380@A-HEAD",
 		},
-		0xc624b16e: {
+		{Type: typeAction, ID: 0xc624b16e}: {
 			ID:     0xc624b16e,
 			Name:   "TL_messageActionPaymentSent",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26260@A-HEAD",
 		},
-		0xc6991068: {
+		{Type: typeMedia, ID: 0xc6991068}: {
 			ID:     0xc6991068,
 			Name:   "TL_messageMediaGiveawayResults_layer186",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66583@A-HEAD",
 		},
-		0xc6b68300: {
+		{Type: typeMedia, ID: 0xc6b68300}: {
 			ID:   0xc6b68300,
 			Name: "TL_messageMediaAudio_layer45",
 			Type: typeMedia,
@@ -6112,7 +6112,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7282@A-HEAD",
 		},
-		0xc6c1e5a7: {
+		{Type: typeEntity, ID: 0xc6c1e5a7}: {
 			ID:   0xc6c1e5a7,
 			Name: "TL_messageEntityDiffReplace",
 			Type: typeEntity,
@@ -6124,7 +6124,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:63888@A-HEAD",
 		},
-		0xc786ddcb: {
+		{Type: typeFwd, ID: 0xc786ddcb}: {
 			ID:   0xc786ddcb,
 			Name: "TL_messageFwdHeader_layer68",
 			Type: typeFwd,
@@ -6138,21 +6138,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:43828@A-HEAD",
 		},
-		0xc79aee1d: {
+		{Type: typeMedia, ID: 0xc79aee1d}: {
 			ID:     0xc79aee1d,
 			Name:   "MessageMediaStoryFull",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "MessageMediaStoryFull.java:11@A-HEAD",
 		},
-		0xc79aee1f: {
+		{Type: typeMedia, ID: 0xc79aee1f}: {
 			ID:     0xc79aee1f,
 			Name:   "MessageMediaStoryFull_old",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "MessageMediaStoryFull_old.java:9@A-HEAD",
 		},
-		0xc7ac6496: {
+		{Type: "Audio", ID: 0xc7ac6496}: {
 			ID:   0xc7ac6496,
 			Name: "TL_audio_old2",
 			Type: "Audio",
@@ -6169,35 +6169,35 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:9758@A-HEAD",
 		},
-		0xc7edbc83: {
+		{Type: typeAction, ID: 0xc7edbc83}: {
 			ID:     0xc7edbc83,
 			Name:   "TL_messageActionTodoAppendTasks",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67935@A-HEAD",
 		},
-		0xc7fb5e01: {
+		{Type: "TL_iv.RichText", ID: 0xc7fb5e01}: {
 			ID:     0xc7fb5e01,
 			Name:   "textSuperscript",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:478@A-HEAD",
 		},
-		0xc83d6aec: {
+		{Type: typeAction, ID: 0xc83d6aec}: {
 			ID:     0xc83d6aec,
 			Name:   "TL_messageActionGiftPremium_layer189",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26477@A-HEAD",
 		},
-		0xc87024a2: {
+		{Type: "PollResults", ID: 0xc87024a2}: {
 			ID:     0xc87024a2,
 			Name:   "TL_pollResults_layer111",
 			Type:   "PollResults",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:4262@A-HEAD",
 		},
-		0xc88974ac: {
+		{Type: typeChat, ID: 0xc88974ac}: {
 			ID:   0xc88974ac,
 			Name: "TL_channel_layer92",
 			Type: typeChat,
@@ -6219,14 +6219,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42731@A-HEAD",
 		},
-		0xc88b3b02: {
+		{Type: "InputStickerSet", ID: 0xc88b3b02}: {
 			ID:     0xc88b3b02,
 			Name:   "TL_inputStickerSetPremiumGifts",
 			Type:   "InputStickerSet",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:30729@A-HEAD",
 		},
-		0xc8c45a2a: {
+		{Type: typeMedia, ID: 0xc8c45a2a}: {
 			ID:   0xc8c45a2a,
 			Name: "TL_messageMediaPhoto_old",
 			Type: typeMedia,
@@ -6236,7 +6236,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7295@A-HEAD",
 		},
-		0xc8cf05f8: {
+		{Type: typeEntity, ID: 0xc8cf05f8}: {
 			ID:   0xc8cf05f8,
 			Name: "TL_messageEntityCustomEmoji",
 			Type: typeEntity,
@@ -6248,7 +6248,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:63760@A-HEAD",
 		},
-		0xc992e15c: {
+		{Type: typeMessage, ID: 0xc992e15c}: {
 			ID:   0xc992e15c,
 			Name: "TL_message_layer47",
 			Type: typeMessage,
@@ -6275,14 +6275,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:59952@A-HEAD",
 		},
-		0xca5cab89: {
+		{Type: typeMedia, ID: 0xca5cab89}: {
 			ID:     0xca5cab89,
 			Name:   "TL_messageMediaVideoStream",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:8180@A-HEAD",
 		},
-		0xca820ed7: {
+		{Type: "WebPage", ID: 0xca820ed7}: {
 			ID:   0xca820ed7,
 			Name: "TL_webPage_layer58",
 			Type: "WebPage",
@@ -6307,7 +6307,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20452@A-HEAD",
 		},
-		0xcab35e18: {
+		{Type: typeUser, ID: 0xcab35e18}: {
 			ID:   0xcab35e18,
 			Name: "TL_userContact_old2",
 			Type: typeUser,
@@ -6322,14 +6322,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:21962@A-HEAD",
 		},
-		0xcbb20d88: {
+		{Type: typeMedia, ID: 0xcbb20d88}: {
 			ID:     0xcbb20d88,
 			Name:   "TL_messageMediaStory_layer162",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65767@A-HEAD",
 		},
-		0xcbf24940: {
+		{Type: typeMedia, ID: 0xcbf24940}: {
 			ID:   0xcbf24940,
 			Name: "TL_messageMediaContact_layer131",
 			Type: typeMedia,
@@ -6343,28 +6343,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8138@A-HEAD",
 		},
-		0xcc02aa6d: {
+		{Type: typeAction, ID: 0xcc02aa6d}: {
 			ID:     0xcc02aa6d,
 			Name:   "TL_messageActionBoostApply",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26557@A-HEAD",
 		},
-		0xcc7c5c89: {
+		{Type: typeAction, ID: 0xcc7c5c89}: {
 			ID:     0xcc7c5c89,
 			Name:   "TL_messageActionTodoCompletions",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67915@A-HEAD",
 		},
-		0xcd24cf44: {
+		{Type: "TL_iv.RichText", ID: 0xcd24cf44}: {
 			ID:     0xcd24cf44,
 			Name:   "textMention",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:606@A-HEAD",
 		},
-		0xcded42fe: {
+		{Type: "Photo", ID: 0xcded42fe}: {
 			ID:   0xcded42fe,
 			Name: "TL_photo_layer55",
 			Type: "Photo",
@@ -6377,21 +6377,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33220@A-HEAD",
 		},
-		0xceaa3ea1: {
+		{Type: typeMedia, ID: 0xceaa3ea1}: {
 			ID:     0xceaa3ea1,
 			Name:   "TL_messageMediaGiveawayResults",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66517@A-HEAD",
 		},
-		0xcf6f6db8: {
+		{Type: "WebPageAttribute", ID: 0xcf6f6db8}: {
 			ID:     0xcf6f6db8,
 			Name:   "TL_webPageAttributeUniqueStarGift",
 			Type:   "WebPageAttribute",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10530@A-HEAD",
 		},
-		0xd072acb4: {
+		{Type: "RestrictionReason", ID: 0xd072acb4}: {
 			ID:   0xd072acb4,
 			Name: "TL_reastrictionReason",
 			Type: "RestrictionReason",
@@ -6403,7 +6403,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42864@A-HEAD",
 		},
-		0xd07504a5: {
+		{Type: "Photo", ID: 0xd07504a5}: {
 			ID:   0xd07504a5,
 			Name: "TL_photo_layer115",
 			Type: "Photo",
@@ -6420,7 +6420,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33300@A-HEAD",
 		},
-		0xd10d979a: {
+		{Type: typeUser, ID: 0xd10d979a}: {
 			ID:   0xd10d979a,
 			Name: "TL_user_layer65",
 			Type: typeUser,
@@ -6447,14 +6447,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24530@A-HEAD",
 		},
-		0xd2cfdb0e: {
+		{Type: typeAction, ID: 0xd2cfdb0e}: {
 			ID:     0xd2cfdb0e,
 			Name:   "TL_messageActionGiftCode_layer167",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:65985@A-HEAD",
 		},
-		0xd31a961e: {
+		{Type: typeChat, ID: 0xd31a961e}: {
 			ID:   0xd31a961e,
 			Name: "TL_channel_layer131",
 			Type: typeChat,
@@ -6484,7 +6484,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42371@A-HEAD",
 		},
-		0xd38ff1c2: {
+		{Type: "DocumentAttribute", ID: 0xd38ff1c2}: {
 			ID:   0xd38ff1c2,
 			Name: "TL_documentAttributeVideo_layer184",
 			Type: "DocumentAttribute",
@@ -6501,7 +6501,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1784@A-HEAD",
 		},
-		0xd3bc4b7a: {
+		{Type: typeUser, ID: 0xd3bc4b7a}: {
 			ID:   0xd3bc4b7a,
 			Name: "TL_userEmpty",
 			Type: typeUser,
@@ -6511,7 +6511,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:22014@A-HEAD",
 		},
-		0xd3d28540: {
+		{Type: typeMessage, ID: 0xd3d28540}: {
 			ID:   0xd3d28540,
 			Name: "TL_messageService_layer204",
 			Type: typeMessage,
@@ -6536,7 +6536,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:61376@A-HEAD",
 		},
-		0xd41a5167: {
+		{Type: "WebPage", ID: 0xd41a5167}: {
 			ID:   0xd41a5167,
 			Name: "TL_webPageUrlPending",
 			Type: "WebPage",
@@ -6546,7 +6546,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20367@A-HEAD",
 		},
-		0xd49f34c6: {
+		{Type: typeChat, ID: 0xd49f34c6}: {
 			ID:   0xd49f34c6,
 			Name: "TL_channel_layer232",
 			Type: typeChat,
@@ -6590,14 +6590,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40312@A-HEAD",
 		},
-		0xd5529d06: {
+		{Type: "Poll", ID: 0xd5529d06}: {
 			ID:     0xd5529d06,
 			Name:   "TL_poll_layer111",
 			Type:   "Poll",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:34549@A-HEAD",
 		},
-		0xd6016d7a: {
+		{Type: typeUser, ID: 0xd6016d7a}: {
 			ID:   0xd6016d7a,
 			Name: "TL_userDeleted_old2",
 			Type: typeUser,
@@ -6610,14 +6610,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24381@A-HEAD",
 		},
-		0xd7a19d69: {
+		{Type: "TL_iv.Page", ID: 0xd7a19d69}: {
 			ID:     0xd7a19d69,
 			Name:   "TL_pageFull_layer67",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:178@A-HEAD",
 		},
-		0xd8214d41: {
+		{Type: "PhotoSize", ID: 0xd8214d41}: {
 			ID:   0xd8214d41,
 			Name: "TL_photoPathSize",
 			Type: "PhotoSize",
@@ -6628,28 +6628,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:58903@A-HEAD",
 		},
-		0xd8292816: {
+		{Type: "InputUser", ID: 0xd8292816}: {
 			ID:     0xd8292816,
 			Name:   "TL_inputUser_layer132",
 			Type:   "InputUser",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:18979@A-HEAD",
 		},
-		0xd8f4f0a7: {
+		{Type: typeAction, ID: 0xd8f4f0a7}: {
 			ID:     0xd8f4f0a7,
 			Name:   "TL_messageActionStarGift_layer197",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67749@A-HEAD",
 		},
-		0xd912a59c: {
+		{Type: "TL_iv.RichText", ID: 0xd912a59c}: {
 			ID:     0xd912a59c,
 			Name:   "textItalic",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:376@A-HEAD",
 		},
-		0xd91cdd54: {
+		{Type: typeChat, ID: 0xd91cdd54}: {
 			ID:   0xd91cdd54,
 			Name: "TL_chat_layer92",
 			Type: typeChat,
@@ -6665,14 +6665,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:42808@A-HEAD",
 		},
-		0xd95c6154: {
+		{Type: typeAction, ID: 0xd95c6154}: {
 			ID:     0xd95c6154,
 			Name:   "TL_messageActionSecureValuesSent",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26140@A-HEAD",
 		},
-		0xd9ccc4ef: {
+		{Type: typeUser, ID: 0xd9ccc4ef}: {
 			ID:   0xd9ccc4ef,
 			Name: "TL_userRequest_old2",
 			Type: typeUser,
@@ -6687,7 +6687,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:24486@A-HEAD",
 		},
-		0xda2ad647: {
+		{Type: "TL_messages_emojiGameOutcome", ID: 0xda2ad647}: {
 			ID:   0xda2ad647,
 			Name: "TL_messages_emojiGameOutcome",
 			Type: "TL_messages_emojiGameOutcome",
@@ -6699,21 +6699,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:71378@A-HEAD",
 		},
-		0xdaad85b0: {
+		{Type: typeMedia, ID: 0xdaad85b0}: {
 			ID:     0xdaad85b0,
 			Name:   "TL_messageMediaGiveaway_layer186",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:66683@A-HEAD",
 		},
-		0xdb596550: {
+		{Type: typeAction, ID: 0xdb596550}: {
 			ID:     0xdb596550,
 			Name:   "TL_messageActionStarGift_layer219",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67502@A-HEAD",
 		},
-		0xdbbdf614: {
+		{Type: typeMedia, ID: 0xdbbdf614}: {
 			ID:   0xdbbdf614,
 			Name: "TL_messageMediaDocument_layer197_2",
 			Type: typeMedia,
@@ -6732,14 +6732,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7610@A-HEAD",
 		},
-		0xdc3d824f: {
+		{Type: "TL_iv.RichText", ID: 0xdc3d824f}: {
 			ID:     0xdc3d824f,
 			Name:   "textEmpty",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyFull,
 			Source: "TL_iv.java:343@A-HEAD",
 		},
-		0xdc7b1140: {
+		{Type: typeEntity, ID: 0xdc7b1140}: {
 			ID:   0xdc7b1140,
 			Name: "TL_messageEntityMentionName",
 			Type: typeEntity,
@@ -6751,14 +6751,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33073@A-HEAD",
 		},
-		0xdcb82ea3: {
+		{Type: "PollResults", ID: 0xdcb82ea3}: {
 			ID:     0xdcb82ea3,
 			Name:   "TL_pollResults_layer158",
 			Type:   "PollResults",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:4437@A-HEAD",
 		},
-		0xdd570bd5: {
+		{Type: typeMedia, ID: 0xdd570bd5}: {
 			ID:   0xdd570bd5,
 			Name: "TL_messageMediaDocument_layer197",
 			Type: typeMedia,
@@ -6776,7 +6776,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7657@A-HEAD",
 		},
-		0xddb5ab75: {
+		{Type: typeReply, ID: 0xddb5ab75}: {
 			ID:   0xddb5ab75,
 			Name: "TL_messageReplyHeader",
 			Type: typeReply,
@@ -6801,7 +6801,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:28201@A-HEAD",
 		},
-		0xddf10c3b: {
+		{Type: typeMedia, ID: 0xddf10c3b}: {
 			ID:   0xddf10c3b,
 			Name: "TL_messageMediaWebPage",
 			Type: typeMedia,
@@ -6816,7 +6816,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:8271@A-HEAD",
 		},
-		0xde33b094: {
+		{Type: "VideoSize", ID: 0xde33b094}: {
 			ID:   0xde33b094,
 			Name: "TL_videoSize",
 			Type: "VideoSize",
@@ -6831,14 +6831,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:19155@A-HEAD",
 		},
-		0xde5a0dd6: {
+		{Type: "TL_iv.RichText", ID: 0xde5a0dd6}: {
 			ID:     0xde5a0dd6,
 			Name:   "textEmail",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:440@A-HEAD",
 		},
-		0xded218e0: {
+		{Type: "DocumentAttribute", ID: 0xded218e0}: {
 			ID:   0xded218e0,
 			Name: "TL_documentAttributeAudio_layer45",
 			Type: "DocumentAttribute",
@@ -6850,7 +6850,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1855@A-HEAD",
 		},
-		0xe00998b7: {
+		{Type: typeChat, ID: 0xe00998b7}: {
 			ID:   0xe00998b7,
 			Name: "TL_channel_layer199",
 			Type: typeChat,
@@ -6889,14 +6889,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41110@A-HEAD",
 		},
-		0xe095c1a0: {
+		{Type: typeReason, ID: 0xe095c1a0}: {
 			ID:     0xe095c1a0,
 			Name:   "TL_phoneCallDiscardReasonDisconnect",
 			Type:   typeReason,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:20958@A-HEAD",
 		},
-		0xe0b0bc2e: {
+		{Type: "PhotoSize", ID: 0xe0b0bc2e}: {
 			ID:   0xe0b0bc2e,
 			Name: "TL_photoStrippedSize",
 			Type: "PhotoSize",
@@ -6907,21 +6907,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44455@A-HEAD",
 		},
-		0xe1037f92: {
+		{Type: typeAction, ID: 0xe1037f92}: {
 			ID:     0xe1037f92,
 			Name:   "TL_messageActionChatMigrateTo",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25864@A-HEAD",
 		},
-		0xe188503b: {
+		{Type: typeAction, ID: 0xe188503b}: {
 			ID:     0xe188503b,
 			Name:   "TL_messageActionChangeCreator",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25446@A-HEAD",
 		},
-		0xe216eb63: {
+		{Type: typeMedia, ID: 0xe216eb63}: {
 			ID:   0xe216eb63,
 			Name: "TL_messageMediaPhoto",
 			Type: typeMedia,
@@ -6936,7 +6936,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7832@A-HEAD",
 		},
-		0xe67f520e: {
+		{Type: "InputStickerSet", ID: 0xe67f520e}: {
 			ID:   0xe67f520e,
 			Name: "TL_inputStickerSetDice",
 			Type: "InputStickerSet",
@@ -6946,21 +6946,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:30761@A-HEAD",
 		},
-		0xe6c31522: {
+		{Type: typeAction, ID: 0xe6c31522}: {
 			ID:     0xe6c31522,
 			Name:   "TL_messageActionStarGiftUnique_layer228",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:68094@A-HEAD",
 		},
-		0xe7e75f97: {
+		{Type: typeAction, ID: 0xe7e75f97}: {
 			ID:     0xe7e75f97,
 			Name:   "TL_messageActionAttachMenuBotAllowed",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:64959@A-HEAD",
 		},
-		0xe831c556: {
+		{Type: "VideoSize", ID: 0xe831c556}: {
 			ID:   0xe831c556,
 			Name: "TL_videoSize_layer127",
 			Type: "VideoSize",
@@ -6976,7 +6976,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:19126@A-HEAD",
 		},
-		0xe89c45b2: {
+		{Type: "WebPage", ID: 0xe89c45b2}: {
 			ID:   0xe89c45b2,
 			Name: "TL_webPage",
 			Type: "WebPage",
@@ -7006,7 +7006,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:19932@A-HEAD",
 		},
-		0xe9a734fa: {
+		{Type: "PhotoSize", ID: 0xe9a734fa}: {
 			ID:   0xe9a734fa,
 			Name: "TL_photoCachedSize_layer127",
 			Type: "PhotoSize",
@@ -7020,21 +7020,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44529@A-HEAD",
 		},
-		0xea2c31d3: {
+		{Type: typeAction, ID: 0xea2c31d3}: {
 			ID:     0xea2c31d3,
 			Name:   "TL_messageActionStarGift",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67379@A-HEAD",
 		},
-		0xea3948e9: {
+		{Type: typeAction, ID: 0xea3948e9}: {
 			ID:     0xea3948e9,
 			Name:   "TL_messageActionChannelMigrateFrom",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25576@A-HEAD",
 		},
-		0xeabcdd4d: {
+		{Type: typeMessage, ID: 0xeabcdd4d}: {
 			ID:   0xeabcdd4d,
 			Name: "TL_message_layer205",
 			Type: typeMessage,
@@ -7086,7 +7086,7 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:1128@A-HEAD",
 		},
-		0xeb1477e8: {
+		{Type: "WebPage", ID: 0xeb1477e8}: {
 			ID:   0xeb1477e8,
 			Name: "TL_webPageEmpty_layer165",
 			Type: "WebPage",
@@ -7096,7 +7096,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20354@A-HEAD",
 		},
-		0xeb602f25: {
+		{Type: typeUser, ID: 0xeb602f25}: {
 			ID:   0xeb602f25,
 			Name: "TL_user_layer166",
 			Type: typeUser,
@@ -7135,14 +7135,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:23410@A-HEAD",
 		},
-		0xebbca3cb: {
+		{Type: typeAction, ID: 0xebbca3cb}: {
 			ID:     0xebbca3cb,
 			Name:   "TL_messageActionChatJoinedByRequest",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:25856@A-HEAD",
 		},
-		0xec338270: {
+		{Type: typeFwd, ID: 0xec338270}: {
 			ID:   0xec338270,
 			Name: "TL_messageFwdHeader_layer112",
 			Type: typeFwd,
@@ -7160,21 +7160,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44066@A-HEAD",
 		},
-		0xed6a8504: {
+		{Type: "TL_iv.RichText", ID: 0xed6a8504}: {
 			ID:     0xed6a8504,
 			Name:   "textSubscript",
 			Type:   "TL_iv.RichText",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:466@A-HEAD",
 		},
-		0xee7a1596: {
+		{Type: typeAction, ID: 0xee7a1596}: {
 			ID:     0xee7a1596,
 			Name:   "TL_messageActionSuggestedPostApproval",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64914@A-HEAD",
 		},
-		0xee9f4a4d: {
+		{Type: "Video", ID: 0xee9f4a4d}: {
 			ID:   0xee9f4a4d,
 			Name: "TL_video_old3",
 			Type: "Video",
@@ -7193,7 +7193,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27682@A-HEAD",
 		},
-		0xef00d448: {
+		{Type: "MessageReactor", ID: 0xef00d448}: {
 			ID:   0xef00d448,
 			Name: "TL_messageReactor_old",
 			Type: "MessageReactor",
@@ -7207,7 +7207,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27377@A-HEAD",
 		},
-		0xf07814c8: {
+		{Type: typeMessage, ID: 0xf07814c8}: {
 			ID:   0xf07814c8,
 			Name: "TL_message_old5",
 			Type: typeMessage,
@@ -7232,14 +7232,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:60736@A-HEAD",
 		},
-		0xf199a0a8: {
+		{Type: "TL_iv.Page", ID: 0xf199a0a8}: {
 			ID:     0xf199a0a8,
 			Name:   "TL_page_layer88",
 			Type:   "TL_iv.Page",
 			Body:   tl.BodyOpaque,
 			Source: "TL_iv.java:104@A-HEAD",
 		},
-		0xf1ccaaac: {
+		{Type: typeEntity, ID: 0xf1ccaaac}: {
 			ID:   0xf1ccaaac,
 			Name: "TL_messageEntityBlockquote",
 			Type: typeEntity,
@@ -7252,21 +7252,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32916@A-HEAD",
 		},
-		0xf21158c6: {
+		{Type: "InputUser", ID: 0xf21158c6}: {
 			ID:     0xf21158c6,
 			Name:   "TL_inputUser",
 			Type:   "InputUser",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:18936@A-HEAD",
 		},
-		0xf24de7fa: {
+		{Type: typeAction, ID: 0xf24de7fa}: {
 			ID:     0xf24de7fa,
 			Name:   "TL_messageActionStarGift_layer217",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:67595@A-HEAD",
 		},
-		0xf2fb8319: {
+		{Type: typeUser, ID: 0xf2fb8319}: {
 			ID:   0xf2fb8319,
 			Name: "TL_userContact_old",
 			Type: typeUser,
@@ -7280,7 +7280,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:21989@A-HEAD",
 		},
-		0xf3e02ea8: {
+		{Type: typeMedia, ID: 0xf3e02ea8}: {
 			ID:   0xf3e02ea8,
 			Name: "TL_messageMediaDocument_layer68",
 			Type: typeMedia,
@@ -7291,21 +7291,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:7817@A-HEAD",
 		},
-		0xf3f25f76: {
+		{Type: typeAction, ID: 0xf3f25f76}: {
 			ID:     0xf3f25f76,
 			Name:   "TL_messageActionContactSignUp",
 			Type:   typeAction,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:26043@A-HEAD",
 		},
-		0xf4108aa0: {
+		{Type: "ReplyMarkup", ID: 0xf4108aa0}: {
 			ID:     0xf4108aa0,
 			Name:   "TL_replyKeyboardForceReply_layer129",
 			Type:   "ReplyMarkup",
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:10300@A-HEAD",
 		},
-		0xf52e6b7f: {
+		{Type: typeMessage, ID: 0xf52e6b7f}: {
 			ID:   0xf52e6b7f,
 			Name: "TL_message_layer118",
 			Type: typeMessage,
@@ -7340,14 +7340,14 @@ func newTable() tl.Table {
 			},
 			Source: "TL_legacy_message.java:3076@A-HEAD",
 		},
-		0xf6a548d3: {
+		{Type: typeMedia, ID: 0xf6a548d3}: {
 			ID:     0xf6a548d3,
 			Name:   "TL_messageMediaInvoice",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:7386@A-HEAD",
 		},
-		0xf72887d3: {
+		{Type: "Video", ID: 0xf72887d3}: {
 			ID:   0xf72887d3,
 			Name: "TL_video_layer45",
 			Type: "Video",
@@ -7366,14 +7366,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:27713@A-HEAD",
 		},
-		0xf7c1b13f: {
+		{Type: "InputUser", ID: 0xf7c1b13f}: {
 			ID:     0xf7c1b13f,
 			Name:   "TL_inputUserSelf",
 			Type:   "InputUser",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:18928@A-HEAD",
 		},
-		0xf85c413c: {
+		{Type: "VideoSize", ID: 0xf85c413c}: {
 			ID:   0xf85c413c,
 			Name: "TL_videoSizeEmojiMarkup",
 			Type: "VideoSize",
@@ -7384,14 +7384,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:19015@A-HEAD",
 		},
-		0xf89cf5e8: {
+		{Type: typeAction, ID: 0xf89cf5e8}: {
 			ID:     0xf89cf5e8,
 			Name:   "TL_messageActionChatJoinedByLink_layer131",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26114@A-HEAD",
 		},
-		0xf9a39f4f: {
+		{Type: "Document", ID: 0xf9a39f4f}: {
 			ID:   0xf9a39f4f,
 			Name: "TL_document_layer53",
 			Type: "Document",
@@ -7408,7 +7408,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:29378@A-HEAD",
 		},
-		0xf9e35055: {
+		{Type: "Audio", ID: 0xf9e35055}: {
 			ID:   0xf9e35055,
 			Name: "TL_audio_layer45",
 			Type: "Audio",
@@ -7424,7 +7424,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:9679@A-HEAD",
 		},
-		0xfa04579d: {
+		{Type: typeEntity, ID: 0xfa04579d}: {
 			ID:   0xfa04579d,
 			Name: "TL_messageEntityMention",
 			Type: typeEntity,
@@ -7435,7 +7435,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:32680@A-HEAD",
 		},
-		0xfa3efb95: {
+		{Type: "PhotoSize", ID: 0xfa3efb95}: {
 			ID:   0xfa3efb95,
 			Name: "TL_photoSizeProgressive",
 			Type: "PhotoSize",
@@ -7448,7 +7448,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44588@A-HEAD",
 		},
-		0xfa64e172: {
+		{Type: "WebPage", ID: 0xfa64e172}: {
 			ID:   0xfa64e172,
 			Name: "TL_webPage_layer107",
 			Type: "WebPage",
@@ -7476,7 +7476,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:20041@A-HEAD",
 		},
-		0xfadff4ac: {
+		{Type: typeFwd, ID: 0xfadff4ac}: {
 			ID:   0xfadff4ac,
 			Name: "TL_messageFwdHeader_layer72",
 			Type: typeFwd,
@@ -7491,28 +7491,28 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:44125@A-HEAD",
 		},
-		0xfae69f56: {
+		{Type: typeAction, ID: 0xfae69f56}: {
 			ID:     0xfae69f56,
 			Name:   "TL_messageActionCustomAction",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:25518@A-HEAD",
 		},
-		0xfaf7e8c9: {
+		{Type: typeReason, ID: 0xfaf7e8c9}: {
 			ID:     0xfaf7e8c9,
 			Name:   "TL_phoneCallDiscardReasonBusy",
 			Type:   typeReason,
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:20942@A-HEAD",
 		},
-		0xfb0a5727: {
+		{Type: "DocumentAttribute", ID: 0xfb0a5727}: {
 			ID:     0xfb0a5727,
 			Name:   "TL_documentAttributeSticker_old",
 			Type:   "DocumentAttribute",
 			Body:   tl.BodyFull,
 			Source: "TLRPC.java:1872@A-HEAD",
 		},
-		0xfb0ccc41: {
+		{Type: typeChat, ID: 0xfb0ccc41}: {
 			ID:   0xfb0ccc41,
 			Name: "TL_chatForbidden_old",
 			Type: typeChat,
@@ -7523,7 +7523,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:39794@A-HEAD",
 		},
-		0xfb197a65: {
+		{Type: "Photo", ID: 0xfb197a65}: {
 			ID:   0xfb197a65,
 			Name: "TL_photo",
 			Type: "Photo",
@@ -7541,7 +7541,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33327@A-HEAD",
 		},
-		0xfd149899: {
+		{Type: "DocumentAttribute", ID: 0xfd149899}: {
 			ID:   0xfd149899,
 			Name: "TL_documentAttributeCustomEmoji",
 			Type: "DocumentAttribute",
@@ -7555,7 +7555,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:1954@A-HEAD",
 		},
-		0xfd3cdab8: {
+		{Type: typeChat, ID: 0xfd3cdab8}: {
 			ID:   0xfd3cdab8,
 			Name: "TL_communityForbidden",
 			Type: typeChat,
@@ -7568,7 +7568,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40682@A-HEAD",
 		},
-		0xfdabbfcd: {
+		{Type: typeEntity, ID: 0xfdabbfcd}: {
 			ID:   0xfdabbfcd,
 			Name: "TL_messageEntityTonAddress",
 			Type: typeEntity,
@@ -7579,14 +7579,14 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:33019@A-HEAD",
 		},
-		0xfdb19008: {
+		{Type: typeMedia, ID: 0xfdb19008}: {
 			ID:     0xfdb19008,
 			Name:   "TL_messageMediaGame",
 			Type:   typeMedia,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:8076@A-HEAD",
 		},
-		0xfe4478bd: {
+		{Type: typeChat, ID: 0xfe4478bd}: {
 			ID:   0xfe4478bd,
 			Name: "TL_channel_layer195",
 			Type: typeChat,
@@ -7625,7 +7625,7 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:41273@A-HEAD",
 		},
-		0xfe685355: {
+		{Type: typeChat, ID: 0xfe685355}: {
 			ID:   0xfe685355,
 			Name: "TL_channel_layer216",
 			Type: typeChat,
@@ -7668,21 +7668,21 @@ func newTable() tl.Table {
 			},
 			Source: "TLRPC.java:40756@A-HEAD",
 		},
-		0xfe77345d: {
+		{Type: typeAction, ID: 0xfe77345d}: {
 			ID:     0xfe77345d,
 			Name:   "TL_messageActionRequestedPeer_layer168",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:64970@A-HEAD",
 		},
-		0xffa00ccc: {
+		{Type: typeAction, ID: 0xffa00ccc}: {
 			ID:     0xffa00ccc,
 			Name:   "TL_messageActionPaymentSentMe",
 			Type:   typeAction,
 			Body:   tl.BodyOpaque,
 			Source: "TLRPC.java:26572@A-HEAD",
 		},
-		0xffb62b95: {
+		{Type: "InputStickerSet", ID: 0xffb62b95}: {
 			ID:     0xffb62b95,
 			Name:   "TL_inputStickerSetEmpty",
 			Type:   "InputStickerSet",

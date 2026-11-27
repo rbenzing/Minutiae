@@ -72,6 +72,18 @@ func (v view) ID(path string) (uint32, bool) {
 	return n.ID, true
 }
 
+// entryAt is the object read at path (a KObject) and its table entry, looked up by the type the walker read it as and
+// its ID (plan 4I4c P3, W1): never by the ID alone, since one ID can be a constructor of two types. ok is false when no
+// object was read at path or tab lacks its (type, ID); id is the ID read whenever an object was read.
+func entryAt(v view, tab tl.Table, path string) (id uint32, c tl.Constructor, ok bool) {
+	n, found := v.Named(path)
+	if !found || n.Kind != tl.KObject {
+		return 0, tl.Constructor{}, false
+	}
+	c, ok = tab[tl.Key{Type: n.Type, ID: n.ID}]
+	return n.ID, c, ok
+}
+
 // Bool is a boxed bool or a set flag-only true read at path (a flag-only true whose bit is clear is not read).
 func (v view) Bool(path string) (value, ok bool) {
 	n, found := v.Named(path)

@@ -6,8 +6,10 @@ import (
 	"math"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 // The synthetic table of the walker tests (plan 4I4 Task 3): it holds no Telegram fact.
@@ -20,26 +22,40 @@ import (
 //	blank                                                                          Point, BodyOpaque
 //	kinds{b:Bool, d:double, s:string, raw:bytes, v32:vec<i32>, cid:id64@channel}   Kinds
 //	crate{boxes:vec<Box>, nodes:vec<Node>}                                         Crate (vectors of objects with vectors)
+//	left{a:i32}                                                                    Left
+//	right{b:i64}                                                                   Right
+//	twin{x:i32} as Left, twin{y:i64} as Right                                      one ID in two types (W1)
+//	shared as Left (BodyOpaque), shared{c:i32} as Right                            one ID, opaque in the first type
+//	pair{l:Left, r:Right}                                                          Pair
+//	mixed{u:vec<Left|Right>}                                                       Mixed (a union vector, W2)
+//	bare{ids32:vec<id32@user>, ids64:vec<id64@channel>, strs:vec<str>}             Bare (bare vectors, W3)
 const (
-	idPoint uint32 = 0x0a0b0c01
-	idBox   uint32 = 0x0a0b0c02
-	idNode  uint32 = 0x0a0b0c03
-	idHalf  uint32 = 0x0a0b0c04
-	idBlank uint32 = 0x0a0b0c05
-	idKinds uint32 = 0x0a0b0c06
-	idCrate uint32 = 0x0a0b0c07
+	idPoint  uint32 = 0x0a0b0c01
+	idBox    uint32 = 0x0a0b0c02
+	idNode   uint32 = 0x0a0b0c03
+	idHalf   uint32 = 0x0a0b0c04
+	idBlank  uint32 = 0x0a0b0c05
+	idKinds  uint32 = 0x0a0b0c06
+	idCrate  uint32 = 0x0a0b0c07
+	idLeft   uint32 = 0x0a0b0c08
+	idRight  uint32 = 0x0a0b0c09
+	idTwin   uint32 = 0x0a0b0c0a
+	idShared uint32 = 0x0a0b0c0b
+	idPair   uint32 = 0x0a0b0c0c
+	idMixed  uint32 = 0x0a0b0c0d
+	idBare   uint32 = 0x0a0b0c0e
 )
 
 func synthTable() Table {
 	flags := Field{Name: "flags", Kind: KFlags}
 	return Table{
-		idPoint: {ID: idPoint, Name: "point", Type: "Point", Body: BodyFull, Source: "test", Fields: []Field{
+		{Type: "Point", ID: idPoint}: {ID: idPoint, Name: "point", Type: "Point", Body: BodyFull, Source: "test", Fields: []Field{
 			flags,
 			{Name: "x", Kind: KInt32, Flags: "flags", Bit: 0},
 			{Name: "y", Kind: KInt64},
 			{Name: "z", Kind: KTrue, Flags: "flags", Bit: 1},
 		}},
-		idBox: {ID: idBox, Name: "box", Type: "Box", Body: BodyFull, Source: "test", Fields: []Field{
+		{Type: "Box", ID: idBox}: {ID: idBox, Name: "box", Type: "Box", Body: BodyFull, Source: "test", Fields: []Field{
 			flags,
 			{Name: "inner", Kind: KObject, Of: "Point", Flags: "flags", Bit: 0},
 			{Name: "items", Kind: KVector, Of: "Point"},
@@ -47,15 +63,15 @@ func synthTable() Table {
 			{Name: "key", Kind: KSecret},
 			{Name: "who", Kind: KID32, Class: "user"},
 		}},
-		idNode: {ID: idNode, Name: "node", Type: "Node", Body: BodyFull, Source: "test", Fields: []Field{
+		{Type: "Node", ID: idNode}: {ID: idNode, Name: "node", Type: "Node", Body: BodyFull, Source: "test", Fields: []Field{
 			{Name: "next", Kind: KObject, Of: "Node"},
 		}},
-		idHalf: {ID: idHalf, Name: "half", Type: "Point", Body: BodyPrefix, Source: "test", Fields: []Field{
+		{Type: "Point", ID: idHalf}: {ID: idHalf, Name: "half", Type: "Point", Body: BodyPrefix, Source: "test", Fields: []Field{
 			flags,
 			{Name: "a", Kind: KInt32},
 		}},
-		idBlank: {ID: idBlank, Name: "blank", Type: "Point", Body: BodyOpaque, Source: "test"},
-		idKinds: {ID: idKinds, Name: "kinds", Type: "Kinds", Body: BodyFull, Source: "test", Fields: []Field{
+		{Type: "Point", ID: idBlank}: {ID: idBlank, Name: "blank", Type: "Point", Body: BodyOpaque, Source: "test"},
+		{Type: "Kinds", ID: idKinds}: {ID: idKinds, Name: "kinds", Type: "Kinds", Body: BodyFull, Source: "test", Fields: []Field{
 			{Name: "b", Kind: KBool},
 			{Name: "d", Kind: KDouble},
 			{Name: "s", Kind: KString},
@@ -63,9 +79,37 @@ func synthTable() Table {
 			{Name: "v32", Kind: KVecInt32},
 			{Name: "cid", Kind: KID64, Class: "channel"},
 		}},
-		idCrate: {ID: idCrate, Name: "crate", Type: "Crate", Body: BodyFull, Source: "test", Fields: []Field{
+		{Type: "Crate", ID: idCrate}: {ID: idCrate, Name: "crate", Type: "Crate", Body: BodyFull, Source: "test", Fields: []Field{
 			{Name: "boxes", Kind: KVector, Of: "Box"},
 			{Name: "nodes", Kind: KVector, Of: "Node"},
+		}},
+		{Type: "Left", ID: idLeft}: {ID: idLeft, Name: "left", Type: "Left", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "a", Kind: KInt32},
+		}},
+		{Type: "Right", ID: idRight}: {ID: idRight, Name: "right", Type: "Right", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "b", Kind: KInt64},
+		}},
+		{Type: "Left", ID: idTwin}: {ID: idTwin, Name: "twinLeft", Type: "Left", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "x", Kind: KInt32},
+		}},
+		{Type: "Right", ID: idTwin}: {ID: idTwin, Name: "twinRight", Type: "Right", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "y", Kind: KInt64},
+		}},
+		{Type: "Left", ID: idShared}: {ID: idShared, Name: "sharedLeft", Type: "Left", Body: BodyOpaque, Source: "test"},
+		{Type: "Right", ID: idShared}: {ID: idShared, Name: "sharedRight", Type: "Right", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "c", Kind: KInt32},
+		}},
+		{Type: "Pair", ID: idPair}: {ID: idPair, Name: "pair", Type: "Pair", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "l", Kind: KObject, Of: "Left"},
+			{Name: "r", Kind: KObject, Of: "Right"},
+		}},
+		{Type: "Mixed", ID: idMixed}: {ID: idMixed, Name: "mixed", Type: "Mixed", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "u", Kind: KVector, Of: "Left", Alt: "Right"},
+		}},
+		{Type: "Bare", ID: idBare}: {ID: idBare, Name: "bare", Type: "Bare", Body: BodyFull, Source: "test", Fields: []Field{
+			{Name: "ids32", Kind: KVecInt32, Class: "user"},
+			{Name: "ids64", Kind: KVecInt64, Class: "channel"},
+			{Name: "strs", Kind: KVecString},
 		}},
 	}
 }
@@ -366,7 +410,7 @@ func TestTLDecodePartialKeepsWhatWasRead(t *testing.T) {
 
 func sameNamed(a, b Named) bool {
 	return a.Path == b.Path && a.Kind == b.Kind && a.Int == b.Int && a.Bool == b.Bool &&
-		bytes.Equal(a.Bytes, b.Bytes) && a.Len == b.Len && a.ID == b.ID && a.Class == b.Class
+		bytes.Equal(a.Bytes, b.Bytes) && a.Len == b.Len && a.ID == b.ID && a.Type == b.Type && a.Class == b.Class
 }
 
 func checkStop(t *testing.T, name string, r Result, kind string, sentinel error, path string, off int) {
@@ -489,7 +533,9 @@ func TestTLDecodeStopKinds(t *testing.T) {
 	}
 
 	// A table defect (a gated field before its flags word, a KTrue with no gate, a flags word
-	// of another name) is ErrInternal at that field, never a guess.
+	// of another name; plan 4I4c P6: a union type on a kind other than KVector, a union of one
+	// type twice or without its first type, a class on a vector of objects or strings, a class
+	// outside the four on a bare id vector) is ErrInternal at that field, never a guess.
 	for name, c := range map[string]struct {
 		f   []Field
 		off int
@@ -499,8 +545,14 @@ func TestTLDecodeStopKinds(t *testing.T) {
 		"bit 32":            {[]Field{{Name: "flags", Kind: KFlags}, {Name: "x", Kind: KInt32, Flags: "flags", Bit: 32}}, 8},
 		"word name":         {[]Field{{Name: "other", Kind: KFlags}}, 4},
 		"kind 0":            {[]Field{{Name: "k"}}, 4},
+		"alt on object":     {[]Field{{Name: "o", Kind: KObject, Of: "T", Alt: "U"}}, 4},
+		"alt is of":         {[]Field{{Name: "u", Kind: KVector, Of: "U", Alt: "U"}}, 4},
+		"alt without of":    {[]Field{{Name: "u", Kind: KVector, Alt: "U"}}, 4},
+		"class on strings":  {[]Field{{Name: "s", Kind: KVecString, Class: "user"}}, 4},
+		"class on objects":  {[]Field{{Name: "v", Kind: KVector, Of: "U", Class: "user"}}, 4},
+		"class robot":       {[]Field{{Name: "i", Kind: KVecInt32, Class: "robot"}}, 4},
 	} {
-		bad := Table{1: {ID: 1, Type: "T", Body: BodyFull, Fields: c.f}}
+		bad := Table{{Type: "T", ID: 1}: {ID: 1, Type: "T", Body: BodyFull, Fields: c.f}}
 		r := Decode(cat(le32(1), make([]byte, 8)), "T", bad, open())
 		checkStop(t, name, r, StopMalformed, ErrInternal, c.f[len(c.f)-1].Name, c.off)
 		if te := new(Error); !errors.As(r.Stop.Err, &te) || !strings.HasPrefix(te.Detail, "table: ") || r.Stop.ID != 1 || r.Stop.Type != "T" {
@@ -508,25 +560,32 @@ func TestTLDecodeStopKinds(t *testing.T) {
 		}
 	}
 
-	// M6: the Stop names the ID read (the table key), never a differing Constructor.ID.
+	// M6, kept by ruling C1 (plan 4I4c P4): the Stop names the key read, never a differing
+	// Constructor.ID or Constructor.Type: the entries below sit under Key{"T", n} but say ID 99
+	// or 98 and type U, and every stop names T and the ID read; under U the ID is unknown.
 	skew := Table{
-		1: {ID: 99, Type: "T", Body: BodyPrefix, Fields: []Field{{Name: "a", Kind: KInt32}}},
-		2: {ID: 98, Type: "T", Body: BodyOpaque},
+		{Type: "T", ID: 1}: {ID: 99, Type: "U", Body: BodyPrefix, Fields: []Field{{Name: "a", Kind: KInt32}}},
+		{Type: "T", ID: 2}: {ID: 98, Type: "U", Body: BodyOpaque},
 	}
 	r = Decode(cat(le32(1), le32(5)), "T", skew, open())
 	checkStop(t, "prefix key", r, StopPrefix, nil, "", 8)
-	if r.Stop.ID != 1 {
-		t.Errorf("prefix key: stop ID %d, want 1", r.Stop.ID)
+	if r.Stop.ID != 1 || r.Stop.Type != "T" {
+		t.Errorf("prefix key: stop ID %d type %q, want 1 T", r.Stop.ID, r.Stop.Type)
 	}
 	r = Decode(le32(2), "T", skew, open())
 	checkStop(t, "opaque key", r, StopOpaque, nil, "", 0)
-	if r.Stop.ID != 2 {
-		t.Errorf("opaque key: stop ID %d, want 2", r.Stop.ID)
+	if r.Stop.ID != 2 || r.Stop.Type != "T" {
+		t.Errorf("opaque key: stop ID %d type %q, want 2 T", r.Stop.ID, r.Stop.Type)
 	}
 	r = Decode(cat(le32(1), le32(5)), "T", skew, &countBudget{limit: 0})
 	checkStop(t, "budget key", r, StopBudget, ErrNoBudget, "a", 4)
-	if r.Stop.ID != 1 {
-		t.Errorf("budget key: stop ID %d, want 1", r.Stop.ID)
+	if r.Stop.ID != 1 || r.Stop.Type != "T" {
+		t.Errorf("budget key: stop ID %d type %q, want 1 T", r.Stop.ID, r.Stop.Type)
+	}
+	r = Decode(cat(le32(1), le32(5)), "U", skew, open())
+	checkStop(t, "skew as U", r, StopUnknownConstructor, nil, "", 0)
+	if r.Stop.Type != "U" || len(r.Fields) != 0 {
+		t.Errorf("skew as U: stop %+v, %d fields; want unknown for U, none", *r.Stop, len(r.Fields))
 	}
 
 	// M4: ErrSteps through Decode, inside a vector of objects with vectors. A crate of 40
@@ -615,6 +674,17 @@ func TestTLDecodeTerminates(t *testing.T) {
 		t.Errorf("empty boxes: stop %v, end %d, steps %d", r.Stop, r.End, r.Steps)
 	}
 
+	// Plan 4I4c W3: a bare string vector of MaxVector empty strings (4 bytes each, about 40 KB)
+	// is read whole, one step per element, within len/4 + the table's fields.
+	blob = bareBlob(nil, nil, make([][]byte, MaxVector))
+	r = Decode(blob, "Bare", tab, open())
+	if r.Stop != nil || r.End != len(blob) || len(r.Fields) != 3+MaxVector {
+		t.Fatalf("empty strings: stop %v, end %d of %d, %d fields", r.Stop, r.End, len(blob), len(r.Fields))
+	}
+	if bound := len(blob)/4 + tableFields(tab); r.Steps > bound {
+		t.Errorf("empty strings: steps %d > %d", r.Steps, bound)
+	}
+
 	// Hostile declared sizes allocate nothing from the size (as TestTLReaderNeverAllocatesFromDeclaredSize).
 	vecBomb := cat(le32(idBox), le32(0), le32(IDVector), le32(MaxVector), make([]byte, 8))
 	strBomb := cat(le32(idKinds), le32(IDBoolTrue), le64(0), []byte{0xfe, 0xff, 0xff, 0x7f}, make([]byte, 8))
@@ -661,8 +731,9 @@ func TestTLDecodeFlagsUnknownBits(t *testing.T) {
 
 // liveFactor is the documented gap between the budget charge and the live heap of a result
 // (Task 3 review I1; docs/limitations/parsers.md, Decoders): the charge covers each Named
-// (104 bytes on 64-bit) and its path, while the Fields slice's append regrowth (spare
-// capacity up to a quarter of a large slice) and the allocator's size classes stay uncharged.
+// (120 bytes on 64-bit since plan 4I4c added Named.Type, ruling C5) and its path, while the
+// Fields slice's append regrowth (spare capacity up to a quarter of a large slice) and the
+// allocator's size classes stay uncharged. Measured 0.94 times with the 120-byte Named.
 const liveFactor = 1.25
 
 // Task 3 review I1 (F8): the charge bounds what a decode keeps alive. A large synthetic
@@ -690,4 +761,268 @@ func TestTLDecodeBudgetCoversLiveHeap(t *testing.T) {
 	}
 	t.Logf("live %d bytes, charged %d (%.2fx)", live, bud.held, float64(live)/float64(bud.held))
 	runtime.KeepAlive(r)
+}
+
+// bareBlob is a boxed bare: a vector of bare int32 ids, one of bare int64 ids and one of bare
+// TL strings.
+func bareBlob(ids32 []int32, ids64 []int64, strs [][]byte) []byte {
+	b := cat(le32(idBare), le32(IDVector), le32(uint32(len(ids32))))
+	for _, v := range ids32 {
+		b = append(b, le32(uint32(v))...)
+	}
+	b = append(b, cat(le32(IDVector), le32(uint32(len(ids64))))...)
+	for _, v := range ids64 {
+		b = append(b, le64(uint64(v))...)
+	}
+	b = append(b, cat(le32(IDVector), le32(uint32(len(strs))))...)
+	for _, s := range strs {
+		b = append(b, tlBytes(s)...)
+	}
+	return b
+}
+
+// mixedBlob is a boxed mixed whose union vector holds the boxed elements given.
+func mixedBlob(elems ...[]byte) []byte {
+	b := cat(le32(idMixed), le32(IDVector), le32(uint32(len(elems))))
+	for _, e := range elems {
+		b = append(b, e...)
+	}
+	return b
+}
+
+// Plan 4I4c W1, P4 (design section 6): an ID is looked up by (expected type, ID). One ID in
+// two types with different bodies reads by the field's type in each place, and the type it
+// was looked up under is returned on its Named; under a third type it is unknown-constructor.
+func TestTLDecodeKeysByTypeAndID(t *testing.T) {
+	tab := synthTable()
+	blob := cat(le32(idPair), le32(idTwin), le32(7), le32(idTwin), le64(1<<40))
+	r := Decode(blob, "Pair", tab, open())
+	if r.Stop != nil || r.End != len(blob) {
+		t.Fatalf("pair: stop %v, end %d of %d", r.Stop, r.End, len(blob))
+	}
+	if want := []string{"l", "l.x", "r", "r.y"}; !slices.Equal(paths(r.Fields), want) {
+		t.Fatalf("pair: paths %v, want %v", paths(r.Fields), want)
+	}
+	if f := field(t, r, "l"); f.Kind != KObject || f.ID != idTwin || f.Type != "Left" {
+		t.Errorf("l = %+v; want KObject %#x of type Left", f, idTwin)
+	}
+	if f := field(t, r, "r"); f.Kind != KObject || f.ID != idTwin || f.Type != "Right" {
+		t.Errorf("r = %+v; want KObject %#x of type Right", f, idTwin)
+	}
+	if f := field(t, r, "l.x"); f.Kind != KInt32 || f.Int != 7 || f.Type != "" {
+		t.Errorf("l.x = %+v; want KInt32 7, no type", f)
+	}
+	if f := field(t, r, "r.y"); f.Kind != KInt64 || f.Int != 1<<40 {
+		t.Errorf("r.y = %+v; want KInt64 1<<40", f)
+	}
+
+	// Under a third type the ID is unknown, at the top and nested.
+	r = Decode(cat(le32(idTwin), le32(7), le32(0)), "Point", tab, open())
+	if s := r.Stop; s == nil || s.Kind != StopUnknownConstructor || s.Type != "Point" || s.ID != idTwin || len(r.Fields) != 0 {
+		t.Errorf("twin as Point: stop %+v, %d fields", s, len(r.Fields))
+	}
+	r = Decode(boxBlob(cat(le32(idTwin), le32(7), le32(0)), nil, nil, nil, 0), "Box", tab, open())
+	if s := r.Stop; s == nil || s.Kind != StopUnknownConstructor || s.Type != "Point" || s.Path != "inner" {
+		t.Errorf("twin as inner Point: stop %+v", s)
+	}
+
+	// Every KObject carries the type it was read as (a field's Of, a vector element's Of).
+	r = Decode(fullBox(), "Box", tab, open())
+	objects := 0
+	for _, f := range r.Fields {
+		switch {
+		case f.Kind == KObject && f.Type != "Point":
+			t.Errorf("%s: KObject of type %q, want Point", f.Path, f.Type)
+		case f.Kind == KObject:
+			objects++
+		case f.Type != "":
+			t.Errorf("%s: kind %d carries type %q", f.Path, f.Kind, f.Type)
+		}
+	}
+	if objects != 3 {
+		t.Errorf("full box: %d objects, want 3", objects)
+	}
+}
+
+// Plan 4I4c W2, P5 (design section 6, Q3): a union element is read by the first of its two
+// types that holds the ID, never by the second when the first holds it (an opaque row there
+// stops, naming the first type); an ID in neither is unknown-constructor naming both.
+func TestTLDecodeUnionElement(t *testing.T) {
+	tab := synthTable()
+	left := cat(le32(idLeft), le32(5))
+	right := cat(le32(idRight), le64(6))
+	blob := mixedBlob(left, right)
+	r := Decode(blob, "Mixed", tab, open())
+	if r.Stop != nil || r.End != len(blob) {
+		t.Fatalf("left, right: stop %v, end %d of %d", r.Stop, r.End, len(blob))
+	}
+	if want := []string{"u", "u[0]", "u[0].a", "u[1]", "u[1].b"}; !slices.Equal(paths(r.Fields), want) {
+		t.Fatalf("left, right: paths %v, want %v", paths(r.Fields), want)
+	}
+	if f := field(t, r, "u"); f.Kind != KVector || f.Len != 2 || f.Type != "" {
+		t.Errorf("u = %+v; want KVector Len 2", f)
+	}
+	if f := field(t, r, "u[0]"); f.Kind != KObject || f.ID != idLeft || f.Type != "Left" {
+		t.Errorf("u[0] = %+v; want %#x of type Left", f, idLeft)
+	}
+	if f := field(t, r, "u[1]"); f.Kind != KObject || f.ID != idRight || f.Type != "Right" {
+		t.Errorf("u[1] = %+v; want %#x of type Right", f, idRight)
+	}
+	if f := field(t, r, "u[1].b"); f.Int != 6 {
+		t.Errorf("u[1].b = %+v; want 6", f)
+	}
+
+	// An ID in neither type: unknown at u[2], naming both types; u[0] and u[1] are kept.
+	const unknown uint32 = 0xdeadbeef
+	blob = mixedBlob(left, right, cat(le32(unknown), le32(0)))
+	off := len(blob) - 8
+	r = Decode(blob, "Mixed", tab, open())
+	checkStop(t, "neither", r, StopUnknownConstructor, nil, "u[2]", off)
+	var ue *UnknownConstructorError
+	if s := r.Stop; s.Type != "Left|Right" || s.ID != unknown || !errors.As(s.Err, &ue) ||
+		ue.Type != "Left|Right" || ue.ID != unknown || ue.Path != "u[2]" || ue.Offset != off {
+		t.Errorf("neither: stop %+v, err %v; want unknown %#x naming Left|Right", *s, s.Err, unknown)
+	}
+	if len(r.Fields) != 5 || r.End != off {
+		t.Errorf("neither: %d fields, end %d; want 5, %d", len(r.Fields), r.End, off)
+	}
+
+	// An ID whose first-type row is opaque stops there, naming the first type, though the
+	// second type holds a full row of the same ID.
+	blob = mixedBlob(cat(le32(idShared), le32(9)))
+	r = Decode(blob, "Mixed", tab, open())
+	checkStop(t, "shared", r, StopOpaque, nil, "u[0]", 12)
+	if s := r.Stop; s.Type != "Left" || s.ID != idShared || !slices.Equal(paths(r.Fields), []string{"u"}) {
+		t.Errorf("shared: stop %+v, paths %v; want opaque Left %#x after u", *s, paths(r.Fields), idShared)
+	}
+
+	// An ID both types hold is read as the first (Left: x, an int32), never the second.
+	blob = mixedBlob(cat(le32(idTwin), le32(3)))
+	r = Decode(blob, "Mixed", tab, open())
+	if r.Stop != nil || r.End != len(blob) {
+		t.Fatalf("twin: stop %v, end %d of %d", r.Stop, r.End, len(blob))
+	}
+	if f := field(t, r, "u[0]"); f.Type != "Left" || f.ID != idTwin {
+		t.Errorf("twin u[0] = %+v; want type Left", f)
+	}
+	if f := field(t, r, "u[0].x"); f.Kind != KInt32 || f.Int != 3 {
+		t.Errorf("twin u[0].x = %+v; want 3", f)
+	}
+}
+
+// Plan 4I4c W3, P6 (design section 6; VectorLegacy.java:27-37, 48-58 at A-HEAD): a bare id
+// vector carries its class on every element (the header keeps the field kind and no class);
+// each element consumes at least its minimum size (4 for int32, 8 for int64), and the header
+// and count fail as every vector does. A bare int vector without a class is unchanged.
+func TestTLDecodeBareIDVector(t *testing.T) {
+	tab := synthTable()
+	blob := bareBlob([]int32{7, -1}, []int64{1 << 40}, nil)
+	r := Decode(blob, "Bare", tab, open())
+	if r.Stop != nil || r.End != len(blob) {
+		t.Fatalf("ids: stop %v, end %d of %d", r.Stop, r.End, len(blob))
+	}
+	if want := []string{"ids32", "ids32[0]", "ids32[1]", "ids64", "ids64[0]", "strs"}; !slices.Equal(paths(r.Fields), want) {
+		t.Fatalf("ids: paths %v, want %v", paths(r.Fields), want)
+	}
+	if f := field(t, r, "ids32"); f.Kind != KVecInt32 || f.Len != 2 || f.Class != "" {
+		t.Errorf("ids32 = %+v; want KVecInt32 Len 2, no class", f)
+	}
+	if f := field(t, r, "ids32[0]"); f.Kind != KID32 || f.Int != 7 || f.Class != "user" {
+		t.Errorf("ids32[0] = %+v; want KID32 7 user", f)
+	}
+	if f := field(t, r, "ids32[1]"); f.Kind != KID32 || f.Int != -1 || f.Class != "user" {
+		t.Errorf("ids32[1] = %+v; want KID32 -1 user", f)
+	}
+	if f := field(t, r, "ids64"); f.Kind != KVecInt64 || f.Len != 1 || f.Class != "" {
+		t.Errorf("ids64 = %+v; want KVecInt64 Len 1, no class", f)
+	}
+	if f := field(t, r, "ids64[0]"); f.Kind != KID64 || f.Int != 1<<40 || f.Class != "channel" {
+		t.Errorf("ids64[0] = %+v; want KID64 1<<40 channel", f)
+	}
+
+	// Empty vectors.
+	blob = bareBlob(nil, nil, nil)
+	r = Decode(blob, "Bare", tab, open())
+	if want := []string{"ids32", "ids64", "strs"}; r.Stop != nil || r.End != len(blob) || !slices.Equal(paths(r.Fields), want) {
+		t.Errorf("empty: stop %v, end %d, paths %v", r.Stop, r.End, paths(r.Fields))
+	}
+
+	// A count past the end: truncated at the header, declared count and remainder kept.
+	r = Decode(cat(le32(idBare), le32(IDVector), le32(3), le32(1)), "Bare", tab, open())
+	checkStop(t, "ids32 past end", r, StopTruncated, ErrTruncated, "ids32", 4)
+	if te := new(Error); !errors.As(r.Stop.Err, &te) || te.Declared != 3 || te.Remaining != 4 || len(r.Fields) != 0 {
+		t.Errorf("ids32 past end: err %#v, %d fields; want declared 3, remaining 4, none", r.Stop.Err, len(r.Fields))
+	}
+	// Two int64 ids need 16 bytes: 12 remain (enough at 4 bytes each) is truncated.
+	r = Decode(cat(le32(idBare), le32(IDVector), le32(0), le32(IDVector), le32(2), make([]byte, 12)), "Bare", tab, open())
+	checkStop(t, "ids64 past end", r, StopTruncated, ErrTruncated, "ids64", 12)
+	if te := new(Error); !errors.As(r.Stop.Err, &te) || te.Declared != 2 || te.Remaining != 12 {
+		t.Errorf("ids64 past end: err %#v; want declared 2, remaining 12", r.Stop.Err)
+	}
+	// A count above MaxVector is a cap; a bad header is malformed.
+	r = Decode(cat(le32(idBare), le32(IDVector), le32(MaxVector+1), make([]byte, 4*(MaxVector+1))), "Bare", tab, open())
+	checkStop(t, "ids32 10001", r, StopCap, ErrVectorCount, "ids32", 4)
+	r = Decode(cat(le32(idBare), le32(0x1cb5c416), le32(0), make([]byte, 16)), "Bare", tab, open())
+	checkStop(t, "ids32 bad header", r, StopMalformed, ErrBadVector, "ids32", 4)
+
+	// A bare int vector without a class keeps KInt32 elements and no class.
+	kinds := cat(le32(idKinds), le32(IDBoolTrue), le64(0), tlBytes(nil), tlBytes(nil), le32(IDVector), le32(1), le32(9), le64(0))
+	r = Decode(kinds, "Kinds", tab, open())
+	if f := field(t, r, "v32[0]"); r.Stop != nil || f.Kind != KInt32 || f.Int != 9 || f.Class != "" {
+		t.Errorf("kinds v32[0] = %+v (stop %v); want KInt32 9, no class", f, r.Stop)
+	}
+}
+
+// Plan 4I4c W3, P6, Q4 (design section 6; Vector.java:161-177, 184-186 at A-HEAD): a bare
+// string vector is the boxed header, a count and bare TL strings; each element is a KString
+// whose Bytes is a sub-slice of the blob (capacity ending with it) with its length; its
+// encoding facts are stated as any string's; a string or count past the end is truncated.
+func TestTLDecodeBareStringVector(t *testing.T) {
+	tab := synthTable()
+	strs := [][]byte{{}, bytes.Repeat([]byte{'a'}, 253), bytes.Repeat([]byte{'b'}, 254)}
+	blob := bareBlob(nil, nil, strs)
+	r := Decode(blob, "Bare", tab, open())
+	if r.Stop != nil || r.End != len(blob) || len(r.Flags) != 0 {
+		t.Fatalf("strings: stop %v, end %d of %d, flags %v", r.Stop, r.End, len(blob), r.Flags)
+	}
+	if f := field(t, r, "strs"); f.Kind != KVecString || f.Len != 3 || f.Class != "" {
+		t.Errorf("strs = %+v; want KVecString Len 3", f)
+	}
+	for i, want := range strs {
+		f := field(t, r, "strs["+strconv.Itoa(i)+"]")
+		if f.Kind != KString || !bytes.Equal(f.Bytes, want) || f.Len != len(want) || cap(f.Bytes) != len(f.Bytes) || f.Class != "" {
+			t.Errorf("strs[%d]: kind %d, %d bytes (cap %d), Len %d; want KString of %d bytes, cap = len",
+				i, f.Kind, len(f.Bytes), cap(f.Bytes), f.Len, len(want))
+		}
+	}
+
+	// A non-zero padding byte is stated.
+	blob = cat(le32(idBare), le32(IDVector), le32(0), le32(IDVector), le32(0), le32(IDVector), le32(1), []byte{1, 'a', 0, 1})
+	r = Decode(blob, "Bare", tab, open())
+	if r.Stop != nil || !slices.Equal(r.Flags, []string{FlagPaddingNonzero}) || string(field(t, r, "strs[0]").Bytes) != "a" {
+		t.Errorf("padding: stop %v, flags %v", r.Stop, r.Flags)
+	}
+
+	// A length past the end: truncated at strs[1], strs[0] kept.
+	blob = cat(le32(idBare), le32(IDVector), le32(0), le32(IDVector), le32(0), le32(IDVector), le32(2), tlBytes([]byte("a")), []byte{200, 0, 0, 0})
+	r = Decode(blob, "Bare", tab, open())
+	checkStop(t, "strs[1] past end", r, StopTruncated, ErrTruncated, "strs[1]", len(blob)-4)
+	if te := new(Error); !errors.As(r.Stop.Err, &te) || te.Declared != 200 || te.Remaining != 3 || r.Fields[len(r.Fields)-1].Path != "strs[0]" {
+		t.Errorf("strs[1] past end: err %#v, paths %v; want declared 200, remaining 3, strs[0] last", r.Stop.Err, paths(r.Fields))
+	}
+	// A count whose 4-byte minimum overruns: truncated at strs before any element.
+	blob = cat(le32(idBare), le32(IDVector), le32(0), le32(IDVector), le32(0), le32(IDVector), le32(3), tlBytes(nil), tlBytes(nil))
+	r = Decode(blob, "Bare", tab, open())
+	checkStop(t, "strs count past end", r, StopTruncated, ErrTruncated, "strs", 20)
+	if want := []string{"ids32", "ids64"}; !slices.Equal(paths(r.Fields), want) {
+		t.Errorf("strs count past end: paths %v, want %v", paths(r.Fields), want)
+	}
+}
+
+// Ruling C5 (plan 4I4c W1): a Named, grown by its Type, still fits the fixed charge of one
+// returned field.
+func TestTLNamedFitsFieldOverhead(t *testing.T) {
+	if s := unsafe.Sizeof(Named{}); s > FieldOverhead {
+		t.Errorf("Named is %d bytes, FieldOverhead %d", s, FieldOverhead)
+	}
 }
