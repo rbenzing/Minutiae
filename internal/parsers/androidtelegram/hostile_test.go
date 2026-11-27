@@ -89,6 +89,7 @@ func TestTelegramHostileBlobsAreStated(t *testing.T) {
 	}
 
 	hostileCutsAndCaps(t, recs, blobs)
+	hostileStageB(t, recs, blobs)
 	blobKeysCovered(t)
 
 	// a blob above MaxBlob and one of exactly MaxBlob, in a Go-built database
@@ -480,6 +481,37 @@ func blobKeysCovered(t *testing.T) {
 	}
 }
 
+// valuesBeforeTheCut requires every raw value of a row cut at a boundary to equal the whole blob's (a field at or after
+// the cut is never stated; a list the cut reaches is its own _state partial and none of its entries, never a shorter
+// list). Shared by the 4I4b cuts and the 4I4c Stage B cuts (R83, R88).
+func valuesBeforeTheCut(t *testing.T, path string, cut, whole map[string]any) {
+	t.Helper()
+	for k, v := range cut {
+		if path == "" && !blobKey(k) {
+			continue // a plain column, or the cut's own statement about the cell
+		}
+		if (path == "media." || path == "reply_markup.") && k == "state" {
+			continue // the stop's own statement about the media or the markup (mediaStop, markupStop), not a value read
+		}
+		w, ok := whole[k]
+		if cm, isMap := v.(map[string]any); isMap {
+			wm, _ := w.(map[string]any)
+			valuesBeforeTheCut(t, path+k+".", cm, wm)
+			continue
+		}
+		switch {
+		case strings.HasSuffix(k, "_state") && v == "partial":
+			if _, listed := cut[strings.TrimSuffix(k, "_state")]; listed {
+				t.Errorf("%s%s partial but %s stated: a cut list shows no entry", path, k, strings.TrimSuffix(k, "_state"))
+			}
+		case strings.HasSuffix(k, "_state") && !ok:
+			// a state the whole blob does not need (an unread name, an unreached list): it states the cut, not a value
+		case !ok || jsonText(v) != jsonText(w):
+			t.Errorf("%s%s = %v at the cut, %v whole: a value at or after the cut was stated", path, k, v, w)
+		}
+	}
+}
+
 // hostileCutsAndCaps is plan 4I4b Task 7's part of TestTelegramHostileBlobsAreStated (spec 8.4, rulings P3, B1): every
 // H2401/H2601 row is R76's or R60's blob cut at a boundary, so it is a record that is truncated or partial, whose stop
 // lies within the cut, and that states no raw value the whole blob does not state identically (a field at or after the
@@ -488,33 +520,7 @@ func blobKeysCovered(t *testing.T) {
 func hostileCutsAndCaps(t *testing.T, recs map[string]records.Record, blobs map[int64][]byte) {
 	t.Helper()
 	full := byRow(parseFixture(t, "telegram-v181").Records)
-	var diff func(path string, cut, whole map[string]any)
-	diff = func(path string, cut, whole map[string]any) {
-		for k, v := range cut {
-			if path == "" && !blobKey(k) {
-				continue // a plain column, or the cut's own statement about the cell
-			}
-			if path == "media." && k == "state" {
-				continue // the stop's own statement about the media (mediaStop), not a value read
-			}
-			w, ok := whole[k]
-			if cm, isMap := v.(map[string]any); isMap {
-				wm, _ := w.(map[string]any)
-				diff(path+k+".", cm, wm)
-				continue
-			}
-			switch {
-			case strings.HasSuffix(k, "_state") && v == "partial":
-				if _, listed := cut[strings.TrimSuffix(k, "_state")]; listed {
-					t.Errorf("%s%s partial but %s stated: a cut list shows no entry", path, k, strings.TrimSuffix(k, "_state"))
-				}
-			case strings.HasSuffix(k, "_state") && !ok:
-				// a state the whole blob does not need (an unread name, an unreached list): it states the cut, not a value
-			case !ok || jsonText(v) != jsonText(w):
-				t.Errorf("%s%s = %v at the cut, %v whole: a value at or after the cut was stated", path, k, v, w)
-			}
-		}
-	}
+	diff := func(path string, cut, whole map[string]any) { valuesBeforeTheCut(t, path, cut, whole) }
 	cuts := 0
 	for id := int64(2401); id < 2801; id++ {
 		r, ok := recs["messages_v2/"+itoa(id)]
@@ -545,5 +551,64 @@ func hostileCutsAndCaps(t *testing.T, recs map[string]records.Record, blobs map[
 		if f, _ := rawOf(recs["messages_v2/"+id])["data_flags"].(string); !strings.Contains(f, "unknown-flag-bits") {
 			t.Errorf("H%s: data_flags %q, want unknown-flag-bits", id, f)
 		}
+	}
+}
+
+// hostileStageB is plan 4I4c Task 8's part of TestTelegramHostileBlobsAreStated (spec 8.4, rulings P3, B1, T2a; design
+// 9, 10). H2901 and H2908 stop at their button (unknown constructor; a client-to-server input class is opaque and names
+// its ID), H2902 is cap, H2903 and H2904 are truncated, and every list over its bound is read whole (H2905-H2907 and
+// H2909-H2912 are decoded: H2905 by ruling T2a reads an inline button through the union, never stops at it). Every
+// H3001+ (R83) and H3301+ (R88) row is the blob cut at a deep boundary: a record that is truncated or partial, whose
+// stop lies within the cut, and that states no value the whole blob does not state identically.
+func hostileStageB(t *testing.T, recs map[string]records.Record, blobs map[int64][]byte) {
+	t.Helper()
+	type stop struct{ state, kind, id, path string }
+	want := map[int64]stop{
+		2901: {"partial", "unknown-constructor", "0x0badb0b0", "reply_markup.rows[0].buttons[0]"},
+		2902: {"cap", "cap", "", "media.results.recent_voters"},
+		2903: {"truncated", "truncated", "", "media.poll.countries_iso2"},
+		2904: {"truncated", "truncated", "", "media.results.recent_voters"},
+		2905: {"decoded", "", "", ""}, 2906: {"decoded", "", "", ""}, 2907: {"decoded", "", "", ""},
+		2908: {"partial", "opaque", "0xd02e7fd4", "reply_markup.rows[0].buttons[0]"},
+		2909: {"decoded", "", "", ""}, 2910: {"decoded", "", "", ""}, 2911: {"decoded", "", "", ""}, 2912: {"decoded", "", "", ""},
+	}
+	str := func(v any) string { s, _ := v.(string); return s }
+	for id := int64(2901); id <= 2912; id++ {
+		r, ok := recs["messages_v2/"+itoa(id)]
+		if !ok {
+			t.Errorf("H%d: no record", id)
+			continue
+		}
+		raw, w := rawOf(r), want[id]
+		if str(raw["data_state"]) != w.state || str(raw["data_stop_kind"]) != w.kind || str(raw["data_stop_id"]) != w.id || str(raw["data_stop_path"]) != w.path {
+			t.Errorf("H%d: state %v kind %v id %v path %v, want %+v", id, raw["data_state"], raw["data_stop_kind"], raw["data_stop_id"], raw["data_stop_path"], w)
+		}
+		if off, err := strconv.Atoi(jsonText(raw["data_stop_offset"])); w.state != "decoded" && (err != nil || off > len(blobs[id])) {
+			t.Errorf("H%d: data_stop_offset %v beyond the blob's %d bytes", id, raw["data_stop_offset"], len(blobs[id]))
+		}
+	}
+	full := byRow(parseFixture(t, "telegram-v181").Records)
+	counts := map[string]int{}
+	for id := int64(3001); id < 3601; id++ {
+		r, ok := recs["messages_v2/"+itoa(id)]
+		if !ok {
+			continue
+		}
+		whole, name := rawOf(full["messages_v2/83"]), "R83"
+		if id >= 3301 {
+			whole, name = rawOf(full["messages_v2/88"]), "R88"
+		}
+		counts[name]++
+		raw := rawOf(r)
+		if st := raw["data_state"]; st != "truncated" && st != "partial" {
+			t.Errorf("H%d: data_state %v, want truncated or partial", id, st)
+		}
+		if off, err := strconv.Atoi(jsonText(raw["data_stop_offset"])); err != nil || off > len(blobs[id]) {
+			t.Errorf("H%d: data_stop_offset %v beyond the cut at %d", id, raw["data_stop_offset"], len(blobs[id]))
+		}
+		valuesBeforeTheCut(t, "", raw, whole)
+	}
+	if counts["R83"] != 44 || counts["R88"] != 80 {
+		t.Errorf("cut rows %v, want 44 of R83 and 80 of R88", counts)
 	}
 }

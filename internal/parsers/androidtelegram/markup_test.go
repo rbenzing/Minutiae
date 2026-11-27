@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
 // Wire builders for Go-built reply markup, written from the field order of the table's facts, independently of the
@@ -266,6 +268,70 @@ func TestTelegramCallbackDataIsDigestOnly(t *testing.T) {
 	if jsonText(btn["data_len"]) != "0" || btn["data_sha256"] != emptyDataSHA256Hex {
 		t.Errorf("an empty callback: data_len %v, data_sha256 %v; want 0 and the digest of zero bytes", btn["data_len"], btn["data_sha256"])
 	}
+
+	// the typed pass (android.telegram.recover) states the same: a deleted message whose callback button lies only in
+	// WAL frames is recovered with data_len and data_sha256 and no callback byte (Task 6 review, carried into Task 8)
+	t.Run("typed-pass/go-built-wal", func(t *testing.T) {
+		files := callbackRowInWAL(t)
+		if len(f.labels(string(files["wal"]))) == 0 {
+			t.Fatal("the WAL holds no callback pattern: the check proves nothing")
+		}
+		res := typedRun(t, files)
+		stated := 0
+		for _, r := range res.recs {
+			bs, _ := rawOf(r)["reply_markup_buttons"].([]any)
+			for _, b := range bs {
+				btn, _ := b.(map[string]any)
+				if jsonText(btn["data_len"]) == strconv.Itoa(len(callbackData)) && btn["data_sha256"] == sha256Bytes([]byte(callbackData)) {
+					stated++
+				}
+			}
+		}
+		if stated != 1 {
+			t.Fatalf("the typed pass states %d callback buttons with the digest (%d records): the check proves nothing", stated, len(res.recs))
+		}
+		for _, s := range res.texts(t) {
+			if name, form, ok := f.find(s); ok {
+				t.Errorf("the typed pass's output holds %s (form %q)", name, form)
+			}
+		}
+	})
+}
+
+// callbackData is the bytes of the deleted message's callback button: the fixtures' callback pattern, 88 bytes.
+var callbackData = strings.Repeat("SYNTHETIC-CALLBACK-07-", 4)
+
+// callbackRowInWAL is a Go-built database whose main file holds one live message and whose WAL holds, in a first
+// committed frame set, a second message with an inline callback button (data callbackData) and in a second the same
+// pages after that row was deleted: the recovered row and its callback bytes lie only in WAL frames (as secretRowsInWAL).
+func callbackRowInWAL(t *testing.T) map[string][]byte {
+	t.Helper()
+	live := tlMessage{id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "live"}
+	gone := tlMessage{
+		id: 2, from: idAnn, peer: idSelf, date: baseDate, text: "deleted",
+		markup: inlineMarkup(buttonRow(idInlineRow, callbackButton("Go", callbackData))),
+	}
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096, UserVersion: 181})
+	b.CreateTable("users", ddlUsers)
+	v2 := b.CreateTable("messages_v2", ddlV2Full)
+	v2.Insert(1, msgCells{mid: 1, uid: idAnn, data: live.bytes()}.v2Values()...)
+	main := b.Bytes()
+	w := b.NewWAL(false, 1, 2, 0)
+	frameAll := func() {
+		n := b.Snapshot().Pages()
+		for p := uint32(1); p <= n; p++ {
+			commit := uint32(0)
+			if p == n {
+				commit = n
+			}
+			w.Frame(p, b.PageBytes(p), commit)
+		}
+	}
+	v2.Insert(2, msgCells{mid: 2, uid: idAnn, data: gone.bytes()}.v2Values()...)
+	frameAll()
+	v2.Delete(2)
+	frameAll()
+	return map[string][]byte{"db": main, "wal": w.Bytes()}
 }
 
 // markupMappedAfterMedia is the part of TestTelegramBlobStatesArePinned for the mapped list and the stop at the markup
@@ -300,6 +366,74 @@ func markupCaps4I4c(t *testing.T) {
 	b := l[0].(map[string]any)
 	if n := len(strings.Split(b["peer_types"].(string), ",")); n != 8 || jsonText(b["peer_types_total"]) != "9" || b["peer_types_truncated"] != true {
 		t.Errorf("H2910: %d peer types kept, total %v, truncated %v; want 8 of 9 stated", n, b["peer_types_total"], b["peer_types_truncated"])
+	}
+	markupTextCaps(t)
+}
+
+// markupTextCaps is a Go-built message whose button texts are one byte over their caps (ruling T5r1, plan Raw shapes:
+// text, fwd_text-like names, query and the suggested names 1 KiB; url and copy_text 4 KiB; the keyboard placeholder
+// 1 KiB): each is kept at its cap and named in raw.text_flags, never cut silently.
+func markupTextCaps(t *testing.T) {
+	t.Helper()
+	const (
+		idButtonURL     = 0x258aff05 // TL_keyboardButtonUrl_layer223: text, url
+		idButtonCopy    = 0xbcc4af10 // TL_keyboardButtonCopy_layer228: flags, text, copy_text
+		idButtonSwitch  = 0x991399fc // TL_keyboardButtonSwitchInline_layer228: flags, text, query
+		idButtonRequest = 0x5b0f15f5 // TL_keyboardButtonRequestPeer_layer228: flags, text, button_id, peer_type, max_quantity
+		idCreateBot     = 0x3e81e078 // TL_requestPeerTypeCreateBot: flags, suggested_name (F.1), suggested_username (F.2)
+	)
+	over := func(n int) string { return strings.Repeat("a", n+1) }
+	url := append(append(le32(idButtonURL), tlStr(over(1<<10))...), tlStr(over(4<<10))...)
+	cp := append(append(append(le32(idButtonCopy), le32(0)...), tlStr("c")...), tlStr(over(4<<10))...)
+	sw := append(append(append(le32(idButtonSwitch), le32(0)...), tlStr("s")...), tlStr(over(1<<10))...)
+	bot := append(append(append(le32(idCreateBot), le32(6)...), tlStr(over(1<<10))...), tlStr(over(1<<10))...)
+	req := append(append(append(append(append(le32(idButtonRequest), le32(0)...), tlStr("r")...), le32(1)...), bot...), le32(1)...)
+	// the keyboard markup with F.3 placeholder, over its cap
+	kb := append(append(append(le32(idKeyboardMarkup), le32(8)...), tlVec(buttonRow(idKeyboardRow, req))...), tlStr(over(1<<10))...)
+	inline := inlineMarkup(buttonRow(idInlineRow, url, cp, sw))
+	cells := []msgCells{
+		{mid: 1, uid: idAnn, data: tlMessage{id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: inline}.bytes()},
+		{mid: 2, uid: idAnn, data: tlMessage{id: 2, from: idAnn, peer: idSelf, date: baseDate, text: "y", markup: kb}.bytes()},
+	}
+	got := byRow(parseAt(t, remoteApp, dbOnly(goBuiltMessages(181, nil, cells))).Records)
+	length := func(m map[string]any, k string) int { s, _ := m[k].(string); return len(s) }
+	buttons := func(row string) []map[string]any {
+		var out []map[string]any
+		l, _ := rawOf(got["messages_v2/"+row])["reply_markup_buttons"].([]any)
+		for _, b := range l {
+			out = append(out, b.(map[string]any))
+		}
+		return out
+	}
+	b1 := buttons("1")
+	if len(b1) != 3 {
+		t.Fatalf("%d inline buttons, want 3", len(b1))
+	}
+	if length(b1[0], "text") != 1<<10 || length(b1[0], "url") != 4<<10 || length(b1[1], "copy_text") != 4<<10 || length(b1[2], "query") != 1<<10 {
+		t.Errorf("kept lengths text %d url %d copy_text %d query %d; want 1024, 4096, 4096, 1024",
+			length(b1[0], "text"), length(b1[0], "url"), length(b1[1], "copy_text"), length(b1[2], "query"))
+	}
+	flags1, _ := rawOf(got["messages_v2/1"])["text_flags"].(string)
+	for _, want := range []string{"reply_markup_buttons.text", "reply_markup_buttons.url", "reply_markup_buttons.copy_text", "reply_markup_buttons.query"} {
+		if !slices.Contains(strings.Split(flags1, ","), want) {
+			t.Errorf("text_flags %q does not name %s", flags1, want)
+		}
+	}
+	b2 := buttons("2")
+	if len(b2) != 1 {
+		t.Fatalf("%d keyboard buttons, want 1", len(b2))
+	}
+	raw2 := rawOf(got["messages_v2/2"])
+	m2, _ := raw2["reply_markup"].(map[string]any)
+	if length(b2[0], "suggested_name") != 1<<10 || length(b2[0], "suggested_username") != 1<<10 || length(m2, "placeholder") != 1<<10 {
+		t.Errorf("kept lengths suggested_name %d suggested_username %d placeholder %d; want 1024 each",
+			length(b2[0], "suggested_name"), length(b2[0], "suggested_username"), length(m2, "placeholder"))
+	}
+	flags2, _ := raw2["text_flags"].(string)
+	for _, want := range []string{"reply_markup_buttons.suggested_name", "reply_markup_buttons.suggested_username", "reply_markup.placeholder"} {
+		if !slices.Contains(strings.Split(flags2, ","), want) {
+			t.Errorf("text_flags %q does not name %s", flags2, want)
+		}
 	}
 }
 

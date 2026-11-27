@@ -115,6 +115,13 @@ func keyInt64s(t *testing.T) (required, searched map[string]uint64) {
 			searched["i64:"+strconv.FormatUint(n, 10)] = secretI64Base + n
 		}
 	}
+	// plan 4I4c: every new access_hash is secret_i64(n) for n in 4401 up (STAGE_B_SECRETS = range(4401, 4500) in the
+	// generator); searched, so a Stage B credential no literal names is still covered (R7)
+	for n := uint64(4401); n < 4500; n++ {
+		if _, ok := required["i64:"+strconv.FormatUint(n, 10)]; !ok {
+			searched["i64:"+strconv.FormatUint(n, 10)] = secretI64Base + n
+		}
+	}
 	if len(required) < 10 {
 		t.Fatalf("the generator names only %d secret_i64 numbers: the patterns are not derived from it", len(required))
 	}
