@@ -3530,7 +3530,9 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   --self-test` prints `ok` (the framing, the boxed bool, the empty vector, a Peer, a Message round trip, flag handling).
   Task 5 tightened it: a string or bytes value of 2^24 bytes or more raises `ValueError` (never cut); `i32`/`i64`
   fields take the signed range only and the unsigned range is for flags words and ids alone (both pinned by the
-  self-test).
+  self-test). Plan 4I4b Task 4: `field_offsets(type, value, deep=True)` also lists every nested object, vector and
+  vector element by its dotted path (`media.photo.sizes[0].type`) at the offset where its own bytes begin, in wire
+  order; the self-test pins it against the blob and the shallow form.
 - Telegram fixtures (plan 4I4 Task 5): `telegram_android.py` (family `telegram-android`) writes twelve variants into
   `internal/parsers/androidtelegram/testdata`:
 
@@ -3567,7 +3569,24 @@ and removes them; set `TMP` (or `TMPDIR`) to a project scratch directory to keep
   Task 8 amended two of the oracle's open choices to the spec (only `telegram-hostile.expect.json` changed; the WAL
   variants were not regenerated, so their random WAL salts and pins stand): a NULL `mid`, `uid`, `date` or `out` is
   `unknown_columns` `null`, never a stored NULL (spec 12), and a vector's bad count stops at the offset where the
-  vector starts, as every failed read of `decode/tl`. Not part of `gen.sh all`; no Docker.
+  vector starts, as every failed read of `decode/tl`. Not part of `gen.sh all`; no Docker. Plan 4I4b Task 4 restated
+  the 4I4b mapping in the oracle (the media summary with its lists at the top of raw, the attachment name from exactly
+  the document's filename attributes, the tail objects, `replies_data` decoded as `MessageReplies`, the fourteen tail
+  names in `MESSAGE_MAPPED`) and added the scenario rows of its plan: `telegram-v181` R60-R80 (a document with a file
+  name and every plain tail field, a forward-count conflict, reactions of every kind, replies with an agreeing and a
+  disagreeing `replies_data` cell, restriction reason, fact check and suggested posts, a reply quoting a photo, a
+  sticker, a custom emoji, a voice note, a round video, a dice with its game outcome, three file-name states, a live
+  photo with every size kind, a web page with a document, alternative documents, an opaque cached page and a secret
+  document read to its key and iv), `telegram-v64` P7, P8 (the 5.14.0 media path), `telegram-v84` V5-V8 (legacy photo
+  caption, video, audio, an old document), `telegram-hostile` H2401-H2468 and H2601-H2651 (R76's and R60's blob cut at
+  every boundary of `field_offsets(deep=True)`) and H2801-H2814 (every cap of the raw lists, a count over the vector
+  bound, unknown flag bits in a video size and a video attribute, a NaN duration, `0x6fb250d1` in both readings), and
+  `telegram-layers` rows from 1701: one per full row of the 4I4b types no other row reads (an object field of a
+  layers row now holds its type's smallest full row, so the layers rows read past their objects). Every new
+  `access_hash` and `FileLocation.secret` is an int64 `0x7E575EC2E7A10000 + n` (`secret_i64`), every new file
+  reference, key and iv a literal `secret("4i4b-<site>", 24)`, and thumbnail, waveform and seed content the ASCII
+  `SYNTHETIC-THUMB-nn-`, `SYNTHETIC-WAVE-nn-` and `SYNTHETIC-SEED-0001`. `TestTelegramFixturesReadEveryStageAFullRow`
+  requires every full row of the 4I4b types to be read by some committed cell.
 - Google Messages facts and DDL (plan 4I5 Task 1): `schemas/google-messages/facts.tsv` (header `key value constant contract pin
   source note`: the AOSP Messaging `message_protocol` and `message_status` codes with their constant names and the
   channel or direction each maps to, the self-participant, time, trigger, URI, deletion and path facts, each with its pin

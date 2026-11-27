@@ -171,6 +171,11 @@ def encode_kind(kind, v):
 
 def chunks(row, value):
     """[(field name, bytes)] of the body of one constructor row, in wire order (flag-only trues write nothing)."""
+    return [(f.name, b) for f, b in _chunks(row, value)]
+
+
+def _chunks(row, value):
+    """[(field, bytes)] of chunks."""
     typ, _cid, cls, body, fields = row
     names = {f.name for f in fields} | {"_", "flags", "flags2"}
     for k in value:
@@ -196,9 +201,9 @@ def chunks(row, value):
         if f.kind is None:
             continue
         if f.kind == "#" and f.name in bits:
-            out.append((f.name, u32(bits[f.name] if value.get(f.name) is None else value[f.name])))
+            out.append((f, u32(bits[f.name] if value.get(f.name) is None else value[f.name])))
         elif present(f):
-            out.append((f.name, encode_kind(f.kind, value[f.name])))
+            out.append((f, encode_kind(f.kind, value[f.name])))
         elif f.gate is None:
             raise ValueError("%s: ungated field %r is not given" % (cls, f.name))
     return out
@@ -223,9 +228,62 @@ def encode(typ, value):
     return head + b"".join(b for _, b in chunks(row, value))
 
 
-def field_offsets(typ, value):
+def _deep_kind(kind, v, path, pos, out):
+    """The bytes of one field value of kind at pos, appending (path, offset) for every nested object, vector and vector
+    element it holds (encode_kind's bytes, with the boundaries recorded)."""
+    raw = _raw(v)
+    if raw is not None or not kind.startswith("vec<") and (kind in ("i32", "id32", "i64", "dbl", "bool", "str", "bytes", "secret", "#")
+                                                          or kind.startswith(("id32@", "id64@"))):
+        return encode_kind(kind, v)
+    if kind in ("vec<i32>", "vec<i64>"):
+        pack = i32 if kind == "vec<i32>" else i64
+        b = u32(VECTOR_ID) + i32(len(v))
+        for i, x in enumerate(v):
+            out.append(("%s[%d]" % (path, i), pos + len(b)))
+            b += pack(x)
+        return b
+    if kind.startswith("vec<"):
+        b = u32(VECTOR_ID) + i32(len(v))
+        for i, x in enumerate(v):
+            out.append(("%s[%d]" % (path, i), pos + len(b)))
+            b += _deep_obj(kind[4:-1], x, "%s[%d]" % (path, i), pos + len(b), out)
+        return b
+    return _deep_obj(kind, v, path, pos, out)
+
+
+def _deep_obj(typ, value, path, pos, out):
+    """The boxed bytes of an object at pos (encode's bytes), appending the boundaries of its fields and what they hold."""
+    row, head = _start(typ, value)
+    if row is None:
+        return head
+    if row[3] == "opaque":
+        return head + bytes(value.get("_body", b""))
+    b = head
+    for f, chunk in _chunks(row, value):
+        p = path + "." + f.name if path else f.name
+        out.append((p, pos + len(b)))
+        if f.kind == "#":
+            b += chunk
+            continue
+        nested = _deep_kind(f.kind, value[f.name], p, pos + len(b), out)
+        if nested != chunk:
+            raise AssertionError("deep offsets: %s encodes differently" % p)
+        b += nested
+    return b
+
+
+def field_offsets(typ, value, deep=False):
     """[(field name, start offset)] of every field that writes bytes, the constructor id first as "<constructor>",
-    then ("<end>", length of the blob): Task 5's truncation rows cut a blob at these offsets."""
+    then ("<end>", length of the blob): Task 5's truncation rows cut a blob at these offsets. With deep (plan 4I4b Task
+    4) every nested object, vector and vector element is listed too, by its dotted path ("media.photo.sizes[0].type"),
+    at the offset where its own bytes begin (an object's at its constructor id, a vector's at its vector id), in wire
+    order."""
+    if deep:
+        out = [("<constructor>", 0)]
+        blob = _deep_obj(typ, value, "", 0, out)
+        if blob != encode(typ, value):
+            raise AssertionError("deep offsets: the blob differs from encode's")
+        return out + [("<end>", len(blob))]
     row, head = _start(typ, value)
     if row is None:
         return [("<constructor>", 0), ("<end>", len(head))]
@@ -307,6 +365,32 @@ def self_test():
             continue
         raise SystemExit("self-test: %s accepted an out-of-range value" % kind)
     eq(encode_kind("bytes", bytes((1 << 24) - 1))[:4], bytes([254, 255, 255, 255]), "the largest framed value")
+    # plan 4I4b Task 4: deep offsets name every nested object, vector and vector element by its dotted path, in wire
+    # order, each at the offset where its own bytes begin; the shallow form is unchanged
+    photo = {"_": "TL_messageMediaPhoto", "photo": {
+        "_": "TL_photo", "id": 1, "access_hash": 2, "file_reference": synthetic_secret(24), "date": 3, "dc_id": 2,
+        "sizes": [{"_": "TL_photoSize", "type": "m", "w": 1, "h": 2, "size": 3},
+                  {"_": "TL_photoSizeProgressive", "type": "y", "w": 1, "h": 2, "sizes": [4, 5]}]}}
+    deep_value = dict(value, media=photo)
+    blob = encode("Message", deep_value)
+    deep = field_offsets("Message", deep_value, deep=True)
+    if field_offsets("Message", deep_value) != [(n, o) for n, o in deep if "." not in n and "[" not in n]:
+        raise SystemExit("self-test deep offsets: the shallow form is not the top-level part of the deep one")
+    names = [n for n, _ in deep]
+    for want in ("media", "media.flags", "media.photo", "media.photo.sizes", "media.photo.sizes[0]",
+                 "media.photo.sizes[0].type", "media.photo.sizes[1].sizes", "media.photo.sizes[1].sizes[1]",
+                 "media.photo.dc_id"):
+        if want not in names:
+            raise SystemExit("self-test deep offsets: no %s in %r" % (want, names))
+    offs = [o for _, o in deep]
+    if offs != sorted(offs) or deep[-1] != ("<end>", len(blob)):
+        raise SystemExit("self-test deep offsets: not in wire order or not ending at the blob's end: %r" % (deep,))
+    at = dict(deep)
+    eq(blob[at["media"]:at["media"] + 4], u32(0xE216EB63), "deep: media starts at its constructor")
+    eq(blob[at["media.photo.sizes"]:at["media.photo.sizes"] + 4], u32(VECTOR_ID), "deep: a vector starts at its id")
+    eq(blob[at["media.photo.sizes[1]"]:at["media.photo.sizes[1]"] + 4], u32(0xFA3EFB95), "deep: an element")
+    eq(blob[at["media.photo.sizes[1].sizes[1]"]:at["media.photo.sizes[1].sizes[1]"] + 4], i32(5), "deep: an int element")
+    eq(blob[at["media.photo.dc_id"]:at["media.photo.dc_id"] + 4], i32(2), "deep: the field after a vector")
     print("ok")
     return 0
 

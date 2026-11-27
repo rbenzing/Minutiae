@@ -84,5 +84,28 @@ func (lostRowid) Recovered() *sqlitedb.RecoveredInfo { return &sqlitedb.Recovere
 // PutReinserts is putReinserts (facts.tsv write_verb.*.put).
 const PutReinserts = putReinserts
 
+// Table is the parser's constructor table.
+func Table() tl.Table { return newTable() }
+
 // TableEntry is the constructor table's entry of id (the zero Constructor when the table lacks it).
 func TableEntry(id uint32) tl.Constructor { return newTable()[id] }
+
+// SeenConstructors is every constructor ID tl.Decode read in b as the TL type typ with the parser's table (plan 4I4b
+// P10): the top object's when the table knows it for typ, and every nested object's (a field or a vector element of
+// kind KObject), in decode order. An object whose body then stops still had its ID read (a TL_messageMediaPoll can be
+// read no further than its opaque Poll).
+func SeenConstructors(b []byte, typ string) []uint32 {
+	bud := parse.NewBudget(1 << 30).View()
+	r := tl.Decode(b, typ, newTable(), bud)
+	defer bud.Free(r.Charged())
+	var out []uint32
+	if c, ok := newTable()[r.Top]; ok && c.Type == typ {
+		out = append(out, r.Top)
+	}
+	for _, n := range r.Fields {
+		if n.Kind == tl.KObject {
+			out = append(out, n.ID)
+		}
+	}
+	return out
+}

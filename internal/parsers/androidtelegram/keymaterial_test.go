@@ -210,10 +210,11 @@ func outputTexts(t *testing.T, res parsertest.Result) []string {
 // keyBearing are the variants that hold key material by design (I2): telegram-v181 (the CORE enc_chats rows and secret
 // documents), telegram-hostile (enc_chats rows and secret documents whose key and IV bytes lie in the cell (the decode stops at media.document.thumbs, T5)), telegram-layers
 // (one row per constructor: a secret-kind field filled with the 4i4-layers chain) and telegram-deleted (live enc_chats
-// rows and a deleted secret message with a secret document in its WAL, plan 4I4 Task 14 C1). Every other variant holds
-// none by design, and the test fails when a variant's files say otherwise either way.
+// rows and a deleted secret message with a secret document in its WAL, plan 4I4 Task 14 C1) and telegram-v64 (plan
+// 4I4b P7, P8: the file references of a layer-115 photo, its layer-97 location and a layer-113 document). Every other
+// variant holds none by design, and the test fails when a variant's files say otherwise either way.
 func keyBearing() []string {
-	return []string{"telegram-v181", "telegram-hostile", "telegram-layers", "telegram-deleted"}
+	return []string{"telegram-v181", "telegram-hostile", "telegram-layers", "telegram-deleted", "telegram-v64"}
 }
 
 // Spec 9 (call 6), ruling T1: no key material reaches any output of android.telegram. The live pass over every

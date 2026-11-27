@@ -27,7 +27,8 @@ func hostileStopRows() []int64 {
 func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 	res := parseFixture(t, "telegram-hostile")
 	exp := parsertest.LoadFixture(t, "testdata", "telegram-hostile").Expect
-	if len(res.Records) != len(exp.Records) || res.Notes["rows.messages_v2"] != "26" || len(res.Records) != 26 {
+	// 26 rows of plan 4I4, then plan 4I4b's 68 cuts of R76 (H2401-H2468), 51 of R60 (H2601-H2651) and H2801-H2814
+	if len(res.Records) != len(exp.Records) || res.Notes["rows.messages_v2"] != "159" || len(res.Records) != 159 {
 		t.Errorf("%d records, the engine counts %s rows (oracle %d)", len(res.Records), res.Notes["rows.messages_v2"], len(exp.Records))
 	}
 	rows := byRow(res.Records)
@@ -60,32 +61,55 @@ func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 	}
 }
 
-// topFields are TL_message's top-level fields that carry bytes, in wire order, with their flags bit (-1: ungated),
-// from constructors.tsv (TLRPC.java:60187@A-HEAD): what lies after a stop is decided from them.
+// topFields are TL_message's top-level fields that carry bytes, in wire order, with their flags word (2: flags2) and
+// bit (-1: ungated), from constructors.tsv (TLRPC.java:60187@A-HEAD): what lies after a stop is decided from them. Plan
+// 4I4b Task 4: every field of the row, the tail included (the H2601 cuts stop in it).
 func topFields() []struct {
 	name string
+	word int
 	bit  int
 } {
 	return []struct {
 		name string
+		word int
 		bit  int
 	}{
-		{"flags", -1},
-		{"flags2", -1},
-		{"id", -1},
-		{"from_id", 8},
-		{"peer_id", -1},
-		{"fwd_from", 2},
-		{"via_bot_id", 11},
-		{"reply_to", 3},
-		{"date", -1},
-		{"message", -1},
-		{"media", 9},
-		{"entities", 7},
-		{"views", 10},
-		{"edit_date", 15},
-		{"grouped_id", 17},
-		{"ttl_period", 25},
+		{"flags", 1, -1},
+		{"flags2", 1, -1},
+		{"id", 1, -1},
+		{"from_id", 1, 8},
+		{"from_boosts_applied", 1, 29},
+		{"from_rank", 2, 12},
+		{"peer_id", 1, -1},
+		{"saved_peer_id", 1, 28},
+		{"fwd_from", 1, 2},
+		{"via_bot_id", 1, 11},
+		{"via_business_bot_id", 2, 0},
+		{"guestchat_via_from", 2, 19},
+		{"reply_to", 1, 3},
+		{"date", 1, -1},
+		{"message", 1, -1},
+		{"media", 1, 9},
+		{"reply_markup", 1, 6},
+		{"entities", 1, 7},
+		{"views", 1, 10},
+		{"forwards", 1, 10},
+		{"replies", 1, 23},
+		{"edit_date", 1, 15},
+		{"post_author", 1, 16},
+		{"grouped_id", 1, 17},
+		{"reactions", 1, 20},
+		{"restriction_reason", 1, 22},
+		{"ttl_period", 1, 25},
+		{"quick_reply_shortcut_id", 1, 30},
+		{"effect", 2, 2},
+		{"factcheck", 2, 3},
+		{"report_delivery_until_date", 2, 5},
+		{"paid_message_stars", 2, 6},
+		{"suggested_post", 2, 7},
+		{"schedule_repeat_period", 2, 10},
+		{"summary_from_language", 2, 11},
+		{"rich_message", 2, 13},
 	}
 }
 
@@ -112,6 +136,7 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 		stop, _ := raw["data_stop_path"].(string)
 		head, _, _ := strings.Cut(strings.SplitN(stop, "[", 2)[0], ".")
 		flags, flagsRead := raw["blob_flags"].(int64)
+		flags2, flags2Read := raw["blob_flags2"].(int64)
 		at := -1
 		var want []string
 		for i, f := range topFields() {
@@ -133,7 +158,11 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 				t.Errorf("%s: kind media, at or after the stop %q", key, stop)
 			}
 			// the stopped field itself is undecided when the stop is its own read (path == head; review M2)
-			if (i > at || stop == head) && slices.Contains(mapped, f.name) && (f.bit < 0 || !flagsRead || flags>>f.bit&1 == 1) {
+			word, read := flags, flagsRead
+			if f.word == 2 {
+				word, read = flags2, flags2Read
+			}
+			if (i > at || stop == head) && slices.Contains(mapped, f.name) && (f.bit < 0 || !read || word>>f.bit&1 == 1) {
 				want = append(want, f.name)
 			}
 		}
@@ -145,8 +174,8 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 			t.Errorf("%s: data_undecided %q, want %q", key, got, strings.Join(want, ","))
 		}
 	}
-	if n != 10 {
-		t.Errorf("%d truncated rows, want 10 (H2: nine cuts and the string past the end)", n)
+	if n != 129 {
+		t.Errorf("%d truncated rows, want 129 (H2: nine cuts and the string past the end; plan 4I4b: 68 deep cuts of R76, 51 of R60)", n)
 	}
 	// review M3: a head spread over several fields (TL_messageForwarded_old's fwd_from.from_id, fwd_from.date) ends
 	// with its last field, and the stop's own head is never listed as after it
@@ -368,13 +397,14 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 			got = append(got, w.Locator+": "+w.Reason)
 		}
 	}
-	want := "sqlite:table=messages_v2: telegram-blob-undecoded: messages_v2.data: 16 records (partial:2,unknown-constructor:1,truncated:10,malformed:2,cap:1)"
+	// plan 4I4b Task 4: the 119 cut rows (truncated), H2802 (cap) and H2806, H2807 (partial) join the 4I4 rows
+	want := "sqlite:table=messages_v2: telegram-blob-undecoded: messages_v2.data: 138 records (partial:4,unknown-constructor:1,truncated:129,malformed:2,cap:2)"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("warnings %q, want one %q", got, want)
 	}
 	notes := map[string]string{
-		"blob_states":       "messages_v2.data=decoded:9,partial:2,unknown-constructor:1,truncated:10,malformed:2,cap:1",
-		"constructors_seen": "0x7600b9d3:20,0x555555f9:2,0x0badf00d:1,0x22eb6aba:1",
+		"blob_states":       "messages_v2.data=decoded:20,partial:4,unknown-constructor:1,truncated:129,malformed:2,cap:2",
+		"constructors_seen": "0x7600b9d3:151,0x555555f9:2,0x0badf00d:1,0x22eb6aba:1",
 	}
 	for k, v := range notes {
 		if res.Notes[k] != v {
@@ -386,8 +416,11 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	if v181.Notes["constructors_seen"] != exp.Notes["constructors_seen"] {
 		t.Errorf("telegram-v181: constructors_seen %q, the oracle %q", v181.Notes["constructors_seen"], exp.Notes["constructors_seen"])
 	}
-	// plan 4I4b: R29's Dice is full and well-formed, so it decodes (49 decoded and 7 partial before)
-	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:50,partial:6,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" {
+	// plan 4I4b: R29's Dice is full and well-formed, so it decodes (49 decoded and 7 partial before); R60-R80 add 20
+	// decoded rows and R79 (partial). The oracle also counts replies_data (P6), which Task 6 maps: pendingOracle takes
+	// that segment out until then.
+	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:70,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" ||
+		got != pendingOracle(exp).Notes["blob_states"] {
 		t.Errorf("telegram-v181: blob_states %q (the oracle: %q)", got, exp.Notes["blob_states"])
 	}
 }

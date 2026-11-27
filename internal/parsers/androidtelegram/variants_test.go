@@ -1,10 +1,17 @@
 package androidtelegram_test
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/decode/tl"
+	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidtelegram"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
@@ -58,5 +65,101 @@ func TestParserCoversEveryVariant(t *testing.T) {
 	}
 	if used[""] {
 		t.Error("a fixture names no DDL snapshot")
+	}
+}
+
+// stageATypes are the types plan 4I4b adds to the table or grows (design D1): every full row of these is a 4I4b row
+// the fixtures must read (P10). MessageMedia, Photo, Document, WebPage and MessageAction keep their 4I4 full rows,
+// which are among them.
+func stageATypes() []string {
+	return []string{
+		"PhotoSize", "VideoSize", "DocumentAttribute", "FileLocation", "InputStickerSet", "TL_maskCoords", "Video", "Audio",
+		"MessageReplies", "MessageReactions", "Reaction", "ReactionCount", "MessagePeerReaction", "MessageReactor",
+		"RestrictionReason", "TL_factCheck", "TL_textWithEntities", "SuggestedPost", "TL_stars.StarsAmount",
+		"TL_messages_emojiGameOutcome", "WebPageAttribute", "TL_iv.RichText", "InputUser", "MessageMedia", "Photo",
+		"Document", "WebPage", "MessageAction",
+	}
+}
+
+// tlCells are the TL cells of a committed fixture database (its main file; a WAL frame is not committed to it), each
+// with the type it is decoded as: messages and messages_v2 data and replydata as Message, replies_data as
+// MessageReplies, users and chats data as User and Chat. A table or column the variant lacks gives nothing.
+func tlCells(t *testing.T, db []byte) map[string][][]byte {
+	t.Helper()
+	d, err := sqlitedb.Open(t.Context(), sqlitedb.Files{DB: bytes.NewReader(db), DBSize: int64(len(db))}, parse.NewBudget(1<<30).View())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Release()
+	out := map[string][][]byte{}
+	read := func(table, col, typ string) {
+		tb, err := d.Table(t.Context(), table, nil, []string{col})
+		if errors.Is(err, sqlitedb.ErrNoSuchTable) {
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := tb.Col(col)
+		if i < 0 {
+			return
+		}
+		if err := tb.Scan(t.Context(), func(row sqlitedb.Row) error {
+			if b, ok := row.Blob(i); ok {
+				out[typ] = append(out[typ], bytes.Clone(b))
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, table := range []string{"messages", "messages_v2"} {
+		read(table, "data", androidtelegram.TypeMessage)
+		read(table, "replydata", androidtelegram.TypeMessage)
+		read(table, "replies_data", "MessageReplies")
+	}
+	read("users", "data", androidtelegram.TypeUser)
+	read("chats", "data", "Chat")
+	return out
+}
+
+// Plan 4I4b P10 (design 10, first bullet): the committed fixtures read every full row of the 4I4b types at least once.
+// The union of SeenConstructors over every TL cell of every variant's database (messages and messages_v2 data,
+// replydata and replies_data, users and chats data) holds every full row of stageATypes: the 32 full MessageMedia,
+// every full Photo, Document and WebPage row, every full MessageAction row and every full row of the new types. A miss
+// is listed by type, ID and class.
+func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
+	seen := map[uint32]bool{}
+	for _, v := range variants {
+		for typ, cells := range tlCells(t, fixtureFiles(t, v)["db"]) {
+			for _, b := range cells {
+				for _, id := range androidtelegram.SeenConstructors(b, typ) {
+					seen[id] = true
+				}
+			}
+		}
+	}
+	var missing []string
+	media, actions := 0, 0
+	for id, c := range androidtelegram.Table() {
+		if c.Body != tl.BodyFull || !slices.Contains(stageATypes(), c.Type) {
+			continue
+		}
+		switch c.Type {
+		case "MessageMedia":
+			media++
+		case "MessageAction":
+			actions++
+		}
+		if !seen[id] {
+			missing = append(missing, fmt.Sprintf("%s 0x%08x %s", c.Type, id, c.Name))
+		}
+	}
+	slices.Sort(missing)
+	if media != 32 || actions != 13 {
+		t.Errorf("%d full MessageMedia and %d full MessageAction rows, want the 32 and 13 of the emitted table (ruling T1d)", media, actions)
+	}
+	if len(missing) > 0 {
+		t.Errorf("%d full 4I4b rows no committed fixture reads:\n%s", len(missing), strings.Join(missing, "\n"))
 	}
 }

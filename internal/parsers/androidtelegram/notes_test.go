@@ -17,8 +17,8 @@ func TestAndroidTelegramNotesStateTheStore(t *testing.T) {
 		{"telegram-v181", remoteApp, map[string]string{
 			"database_version": "181", "account": "0", "database_user": "0", "generation": "messages_v2",
 			// the census counts the live view: R1-R59 less R52, whose WAL frame is uncommitted. Ruling F1 gave 55 on
-			// R1-R56; R57-R59 (F33, F22) add three.
-			"rows.messages_v2": "58",
+			// R1-R56; R57-R59 (F33, F22) add three; plan 4I4b's R60-R80 add 21.
+			"rows.messages_v2": "79",
 			"rows.users":       "10", "rows.enc_chats": "2", "rows.chats": "5", "rows.contacts": "3", "rows.users_data": "1",
 			"rows.dialogs": "0", "rows.media_v4": "0", "rows.messages_topics": "0", "rows.scheduled_messages_v2": "0",
 			"rows.user_contacts_v7": "0",
@@ -26,7 +26,7 @@ func TestAndroidTelegramNotesStateTheStore(t *testing.T) {
 		}},
 		{"telegram-both", remoteApp, map[string]string{"generation": "both", "rows.messages": "2", "rows.messages_v2": "2"}},
 		{"telegram-v64", remoteApp, map[string]string{
-			"database_version": "64", "generation": "messages", "rows.messages": "6", "rows.media_v2": "0",
+			"database_version": "64", "generation": "messages", "rows.messages": "8", "rows.media_v2": "0", // P1-P6, plan 4I4b P7, P8
 			"unmapped_tables": "dialogs,media_v2,messages_holes,messages_seq,user_contacts_v7,user_phones_v7",
 		}},
 		{"telegram-v181", remoteAccount1, map[string]string{"account": "1", "database_user": "0"}},

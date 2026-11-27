@@ -36,11 +36,24 @@ Choices this oracle states where the spec leaves the detail to the plan (the Go 
   - a CORE message row has no trailer unless the row states one (R3, R41, R42).
   - secret fields hold SYNTHETIC-NOT-A-KEY- plus a SHA-256 chain of the scenario seed (the encoder refuses anything
     else); enc_chats key columns hold the SHA-256 chains of their seeds (spec 9, the key-material test's targets).
+Choices this oracle states where plan 4I4b's "Raw shapes" contract leaves the detail (Tasks 5 and 6 follow them, or the
+coordinator rules):
+  - a class label (attributes, sticker sets, web page attributes, entities, reactions) treats a run of capitals as one
+    word: TL_inputStickerSetID is "id", as the contract's examples say.
+  - a list read whole states <key>_total (0 included) and <key>_truncated when cut; an empty list and an empty entry
+    are absent. A stop at or inside a list or a tail object (its own read included) is <key>_state "partial".
+  - a document's attribute scalars (P5) and its labels are stated only when the attributes vector was read whole;
+    file_names lists the distinct names in wire order (file_names_total counts them).
+  - raw.media.caption is captionLegacy when the wrapper read it, else a legacy Photo or Video caption.
+  - raw.replies_data (the replies shape) is stated when the cell decoded whole.
+  - the text-flag names: media.<key>, <list>.type of a size entry, post_author, summary_from_language,
+    restriction_reason.<key>, factcheck.<key>, entities.<key>, reactions.emoticon.
 Every value here is fictional (example.test, 1555 numbers, invented names).
 """
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -75,8 +88,16 @@ MAX_PARAMS = 64
 MAX_NOTE = 512
 MAX_SEEN_NOTE = 1000
 
+MAX_TINY = 64  # plan 4I4b "Raw shapes": emoticons, a size type, video_codec, language, country, summary_from_language
+MAX_SIZES, MAX_LABELS, MAX_FILE_NAMES = 16, 32, 8
+MAX_REACTIONS, MAX_TOP_REACTORS, MAX_REPLIERS, MAX_RESTRICTIONS, MAX_ENTITIES = 64, 16, 16, 16, 64
+
 MESSAGE_MAPPED = ("out", "id", "from_id", "peer_id", "fwd_from", "via_bot_id", "reply_to", "date", "message", "media",
-                  "action", "views", "edit_date", "grouped_id", "ttl_period")
+                  "action", "views", "edit_date", "grouped_id", "ttl_period",
+                  # plan 4I4b "Raw shapes": the tail, in this order after ttl_period
+                  "forwards", "post_author", "replies", "reactions", "restriction_reason", "quick_reply_shortcut_id", "effect",
+                  "factcheck", "report_delivery_until_date", "paid_message_stars", "suggested_post", "schedule_repeat_period",
+                  "summary_from_language", "entities")
 USER_MAPPED = ("id", "access_hash", "first_name", "last_name", "username", "phone")
 BLOB_STATES = ("decoded", "decoded-prefix", "partial", "unknown-constructor", "truncated", "malformed", "cap", "budget", "null")
 COUNTED_STATES = BLOB_STATES[2:8]
@@ -579,6 +600,7 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                 times["edited"] = C.iso(ed, "s")
             else:
                 raw["edit_date_status"] = st
+        map_tail(b, raw)
         bdate = b.val("date")
         if bdate is not None:
             raw["date"] = bdate
@@ -757,9 +779,18 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
         if not is_blob(v):
             unknown[table + "." + col] = "type-mismatch"
             continue
-        raw[col + "_len"], raw[col + "_sha256"] = len(v), sha(v)
-        if col == "replies_data" and len(v) >= 4:
-            raw[col + "_constructor"] = hx(struct.unpack_from("<I", v)[0])
+        if col == "custom_params":
+            raw[col + "_len"], raw[col + "_sha256"] = len(v), sha(v)
+            continue
+        # design D13, P6: the replies_data cell is the serialized message.replies, decoded as MessageReplies with the
+        # blob keys (no _undecided); the replies shape when it decoded whole, and replies_conflict when the blob's own
+        # replies was read whole and the two differ (B8: by decoded values)
+        rb = Blob(v, "MessageReplies")
+        blob_raw(raw, "replies_data", rb)
+        if rb.state == "decoded" and rb.cls is not None:
+            raw["replies_data"] = replies_shape(rb, "")
+            if isinstance(raw.get("replies"), dict) and raw["replies"] != raw["replies_data"]:
+                raw["replies_conflict"] = True
 
     # reply copy (spec 8.5)
     rd = r.get("replydata")
@@ -873,17 +904,311 @@ def map_message(table, r, env, remote, file, nan=frozenset()):
                   times)
 
 
+def inside(b, path):
+    """The decode's stop lies at path or inside what starts there (a nested field or a vector element)."""
+    s = b.res["stop"]
+    return s is not None and s["kind"] != "prefix" and (
+        s["path"] == path or s["path"].startswith(path + ".") or s["path"].startswith(path + "["))
+
+
+def whole(b, path):
+    """The value at path was read and the stop lies neither at nor inside it (P3: read whole)."""
+    return b.has(path) and not inside(b, path)
+
+
+def vec_len(b, path):
+    e = b.f.get(path)
+    return e["len"] if e is not None and e["kind"] == "vector" else None
+
+
+def class_label(cls, prefix):
+    """classLabel (plan "Raw shapes" Labels): the class name after prefix up to the first "_", in snake case, a run of
+    capitals one word (TL_inputStickerSetID "id", TL_documentAttributeImageSize "image_size"); "" for another prefix."""
+    if cls is None or not cls.startswith(prefix):
+        return ""
+    name = cls[len(prefix):].split("_")[0]
+    return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name).lower()
+
+
+def entity_label(cls):
+    if cls is not None and cls.startswith("TL_inputMessageEntity"):
+        return "input_" + class_label(cls, "TL_inputMessageEntity")
+    return class_label(cls, "TL_messageEntity")
+
+
+def bits(x):
+    return "0x%016x" % struct.unpack("<Q", struct.pack("<d", x))[0]
+
+
+def finite_into(m, key, v):
+    """A number at m[key]; a double that is not finite is <key>_state out-of-range with its bits (the coordinate rule
+    without a range)."""
+    if isinstance(v, float) and not math.isfinite(v):
+        m[key + "_state"], m[key + "_bits"] = "out-of-range", bits(v)
+    else:
+        m[key] = gofloat(v) if isinstance(v, float) else v
+
+
+def clean_into(m, raw, key, flag, value, limit):
+    """A cleaned text at m[key] (absent when empty); flag names it in raw.text_flags when cleaning altered or cut it."""
+    t = cleaned(raw, flag, value, limit)
+    if t:
+        m[key] = t
+    return t
+
+
+def ident_into(m, raw, key, flag, v, limit):
+    """An identifier at m[key], never cut: over limit bytes it is absent with <key>_state too-long, _len, _sha256."""
+    c = C.clean(bytes(v), 1 << 30)
+    if len(c.text.encode("utf-8")) > limit:
+        m[key + "_state"], m[key + "_len"], m[key + "_sha256"] = "too-long", len(v), sha(v)
+        return None
+    if c.text:
+        m[key] = c.text
+        if c.flags:
+            mark(raw, flag)
+    return c.text or None
+
+
+def put_list(b, m, key, path, cap, entry):
+    """A list of entry(element path) at m[key] when the vector at path was read whole (P3): at most cap entries, empty
+    ones and an empty list absent, <key>_total the count read, <key>_truncated when cut; a stop at or inside it is
+    m[<key>_state] partial and no entry."""
+    if whole(b, path):
+        n = vec_len(b, path)
+        out = [x for x in (entry("%s[%d]" % (path, i)) for i in range(min(n, cap))) if x]
+        if out:
+            m[key] = out
+        m[key + "_total"] = n
+        if n > cap:
+            m[key + "_truncated"] = True
+    elif inside(b, path):
+        m[key + "_state"] = "partial"
+
+
+def field_kind(b, path):
+    """The kind the row of the object holding path gives the field at path (None when that object was not read)."""
+    parent, _, name = path.rpartition(".")
+    row = O.table().get(b.obj_id(parent)) if parent else b.row
+    for it in row.items if row else []:
+        if it.name == name and it.kind is not None:
+            return it.kind
+    return None
+
+
+SIZE_KINDS = {"TL_photoSize": "size", "TL_photoCachedSize": "cached", "TL_photoStrippedSize": "stripped",
+              "TL_photoPathSize": "path", "TL_photoSizeProgressive": "progressive", "TL_photoSizeEmpty": "empty",
+              "TL_videoSize": "video", "TL_videoSizeEmojiMarkup": "emoji_markup",
+              "TL_videoSizeStickerMarkup": "sticker_markup"}
+
+
+def size_entry(b, raw, p, flag):
+    """One scalar-only size entry (plan "Raw shapes" Size entry) of the PhotoSize or VideoSize object at p."""
+    cls = b.obj_cls(p)
+    if cls is None:
+        return None
+    e = {"kind": SIZE_KINDS.get(cls.split("_layer")[0], "unknown")}
+    if b.val(p + ".type") is not None:
+        clean_into(e, raw, "type", flag + ".type", b.val(p + ".type"), MAX_TINY)
+    for k in ("w", "h", "size", "emoji_id", "sticker_id"):
+        if b.val(p + "." + k) is not None:
+            e[k] = b.val(p + "." + k)
+    if b.val(p + ".bytes") is not None:
+        e["bytes_len"], e["bytes_sha256"] = len(b.val(p + ".bytes")), sha(b.val(p + ".bytes"))
+    for k, key in (("sizes", "progressive_total"), ("background_colors", "background_colors_total")):
+        if vec_len(b, p + "." + k) is not None:
+            e[key] = vec_len(b, p + "." + k)
+    if b.obj_cls(p + ".location") is not None:
+        e["location_class"] = b.obj_cls(p + ".location")  # the class only: never a FileLocation value (D12)
+    if b.val(p + ".video_start_ts") is not None:
+        finite_into(e, "video_start_ts", b.val(p + ".video_start_ts"))
+    if b.obj_cls(p + ".stickerset") is not None:
+        e["stickerset_kind"] = class_label(b.obj_cls(p + ".stickerset"), "TL_inputStickerSet")
+    return e
+
+
+def size_list(b, raw, key, path):
+    """raw.<key> (B1: at the top of raw) of the sizes at path: a vector, or the single PhotoSize of old classes as one
+    entry (plan "Raw shapes")."""
+    kind = field_kind(b, path)
+    if kind is None:
+        return
+    if kind.startswith("vec<"):
+        put_list(b, raw, key, path, MAX_SIZES, lambda p: size_entry(b, raw, p, key))
+    elif whole(b, path):
+        raw[key] = [size_entry(b, raw, path, key)]
+        raw[key + "_total"] = 1
+    elif inside(b, path):
+        raw[key + "_state"] = "partial"
+
+
+def canon(v):
+    if isinstance(v, float):
+        return ("n", v) if math.isfinite(v) else ("f", bits(v))
+    if isinstance(v, tuple):
+        return tuple(canon(x) for x in v)
+    return ("n", v) if is_int(v) else ("o", v)
+
+
+def file_name(b, m, raw, doc, key):
+    """D10, R6, B6: the name of the document at doc from exactly its filename attributes (or the inline file_name of an
+    old class): m[key] when every one holds the same bytes and they clean to a text; else m[<key>_state] absent, empty,
+    conflict (with <key>s, at most 8 distinct names in wire order, and <key>s_total) or undecided. Returns the name."""
+    row = O.table().get(b.obj_id(doc))
+    names = [it.name for it in row.items] if row else []
+    if "file_name" in names:
+        if not b.has(doc + ".file_name"):
+            m[key + "_state"] = "undecided"
+            return None
+        values = [b.val(doc + ".file_name")]
+    elif "attributes" in names:
+        p = doc + ".attributes"
+        if not whole(b, p):
+            m[key + "_state"] = "undecided"
+            return None
+        values = [b.val("%s[%d].file_name" % (p, i)) for i in range(vec_len(b, p))
+                  if b.obj_cls("%s[%d]" % (p, i)) == "TL_documentAttributeFilename"]
+    else:
+        return None
+    distinct = []
+    for v in values:
+        if v not in distinct:
+            distinct.append(v)
+    if not distinct:
+        m[key + "_state"] = "absent"
+        return None
+    if len(distinct) > 1:
+        m[key + "_state"] = "conflict"
+        m[key + "s"] = [cleaned(raw, "media." + key, v, MAX_NAME) or "" for v in distinct[:MAX_FILE_NAMES]]
+        m[key + "s_total"] = len(distinct)
+        return None
+    t = cleaned(raw, "media." + key, distinct[0], MAX_NAME)
+    if not t:
+        m[key + "_state"] = "empty"
+        return None
+    m[key] = t
+    return t
+
+
+def attribute_scalars(b, m, raw, path):
+    """P5: the scalars of the attributes at path (read whole): a key every carrier holds the same decoded value of is
+    stated, carriers that disagree give <key>_state conflict; a boolean is true when any carrier sets it."""
+    vals, bools = {}, set()
+
+    def add(k, v):
+        vals.setdefault(k, []).append(v)
+    for i in range(vec_len(b, path)):
+        a = "%s[%d]" % (path, i)
+        lab = class_label(b.obj_cls(a), "TL_documentAttribute")
+        g = lambda f: b.val(a + "." + f)
+        flags = {"video": ("round_message", "supports_streaming", "nosound"), "audio": ("voice",), "sticker": ("mask",)}
+        for f in flags.get(lab, ()):
+            if b.flag(a + "." + f):
+                bools.add(f)
+        fields = {"image_size": ("w", "h"), "video": ("duration", "w", "h", "preload_prefix_size", "video_start_ts", "video_codec"),
+                  "audio": ("duration", "title", "performer", "waveform")}
+        for f in fields.get(lab, ()):
+            if g(f) is not None:
+                add(f, g(f))
+        if lab in ("sticker", "custom_emoji"):
+            if g("alt") is not None:
+                add("sticker_alt", g("alt"))
+            s = a + ".stickerset"
+            if b.obj_cls(s) is not None:
+                add("stickerset_kind", class_label(b.obj_cls(s), "TL_inputStickerSet"))
+                for f, key in (("id", "stickerset_id"), ("short_name", "stickerset_short_name"), ("emoticon", "stickerset_emoticon")):
+                    if b.val(s + "." + f) is not None:
+                        add(key, b.val(s + "." + f))
+                if b.has(s + ".access_hash"):
+                    add("stickerset_access_hash_present", True)
+            if b.has(a + ".mask_coords"):
+                add("mask_coords", tuple(b.val(a + ".mask_coords." + f) for f in ("n", "x", "y", "zoom")))
+    for k in sorted(vals):
+        lst = vals[k]
+        if any(canon(v) != canon(lst[0]) for v in lst):
+            m[k + "_state"] = "conflict"
+            continue
+        v = lst[0]
+        if k == "duration":
+            finite_into(m, k, v)
+            m["duration_unit"] = "unestablished"
+        elif k == "video_start_ts":
+            finite_into(m, k, v)
+        elif k in ("title", "performer", "sticker_alt"):
+            clean_into(m, raw, k, "media." + k, v, MAX_NAME)
+        elif k in ("video_codec", "stickerset_emoticon"):
+            clean_into(m, raw, k, "media." + k, v, MAX_TINY)
+        elif k == "stickerset_short_name":
+            ident_into(m, raw, k, "media." + k, v, MAX_ID)
+        elif k == "waveform":
+            m["waveform_len"], m["waveform_sha256"] = len(v), sha(v)  # content never shown (D11)
+        elif k == "mask_coords":
+            mc = {}
+            for f, x in zip(("n", "x", "y", "zoom"), v):
+                if x is not None:
+                    finite_into(mc, f, x)
+            m[k] = mc
+        else:
+            m[k] = v
+    for f in sorted(bools):
+        m[f] = True
+
+
+def label_list(b, m, key, path, prefix):
+    if whole(b, path):
+        n = vec_len(b, path)
+        labels = [class_label(b.obj_cls("%s[%d]" % (path, i)), prefix) for i in range(min(n, MAX_LABELS))]
+        if labels:
+            m[key] = labels
+        m[key + "_total"] = n
+        if n > MAX_LABELS:
+            m[key + "_truncated"] = True
+    elif inside(b, path):
+        m[key + "_state"] = "partial"
+
+
+def presence(b, m, prefix):
+    for k, key in (("access_hash", "access_hash_present"), ("file_reference", "file_reference_present"), ("key", "key_present"), ("iv", "iv_present")):
+        if b.has(prefix + k):
+            m[key] = True
+
+
 def map_media(b, media, attachments, raw):
+    """raw.media (4I4 spec 8.5, plan 4I4b "Raw shapes"): what was read of the media object, with the lists at the top
+    of raw (B1); a document's (and a legacy video's or audio's) attachment {name, mime, size}, each only when read and
+    valid, the name by D10 from the wrapper's own document only."""
     cls = b.obj_cls("media")
+    W = "media."
+    for f in ("spoiler", "video", "round", "voice", "nopremium", "live_photo"):
+        if b.flag(W + f):
+            media[f] = True
+    if b.val(W + "ttl_seconds") is not None:
+        media["ttl_seconds"] = b.val(W + "ttl_seconds")
+    if b.has(W + "captionLegacy"):
+        clean_into(media, raw, "caption", "media.caption", b.val(W + "captionLegacy"), MAX_SHORT)
+    else:
+        for p in (W + "photo.caption", W + "video_unused.caption"):
+            if b.has(p):
+                clean_into(media, raw, "caption", "media.caption", b.val(p), MAX_SHORT)
+                break
     if cls.startswith("TL_messageMediaPhoto"):
         if b.has("media.photo"):
-            for k in ("id", "date"):
-                if b.val("media.photo." + k) is not None:
-                    media[k] = b.val("media.photo." + k)
-            if b.has("media.photo.access_hash"):
-                media["access_hash_present"] = True
-            if b.has("media.photo.file_reference"):
-                media["file_reference_present"] = True
+            P = "media.photo."
+            for k in ("id", "date", "dc_id", "user_id"):
+                if b.val(P + k) is not None:
+                    media[k] = b.val(P + k)
+            presence(b, media, P)
+            if b.flag(P + "has_stickers"):
+                media["has_stickers"] = True
+            coordinate(b, media, "geo_lat", P + "geo.lat", 90)
+            coordinate(b, media, "geo_long", P + "geo._long", 180)
+            size_list(b, raw, "media_sizes", P + "sizes")
+            size_list(b, raw, "media_video_sizes", P + "video_sizes")
+        if b.has("media.document"):  # P9: a live photo's document names no attachment
+            if b.val("media.document.id") is not None:
+                media["live_photo_document_id"] = b.val("media.document.id")
+            if b.val("media.document.mime_type") is not None:
+                clean_into(media, raw, "live_photo_mime_type", "media.live_photo_mime_type", b.val("media.document.mime_type"), MAX_SHORT)
     elif cls.startswith("TL_messageMediaDocument"):
         if b.has("media.document"):
             d = "media.document."
@@ -892,12 +1217,43 @@ def map_media(b, media, attachments, raw):
                     media[k] = b.val(d + k)
             mime = b.val(d + "mime_type")
             if mime is not None:
-                media["mime_type"] = cleaned(raw, "media.mime_type", mime, MAX_SHORT) or ""
-                if not media["mime_type"]:
-                    del media["mime_type"]
-            for k, key in (("access_hash", "access_hash_present"), ("file_reference", "file_reference_present"), ("key", "key_present"), ("iv", "iv_present")):
-                if b.has(d + k):
-                    media[key] = True
+                clean_into(media, raw, "mime_type", "media.mime_type", mime, MAX_SHORT)
+            presence(b, media, d)
+            name = file_name(b, media, raw, "media.document", "file_name")
+            label_list(b, media, "attributes", d + "attributes", "TL_documentAttribute")
+            if whole(b, d + "attributes"):
+                attribute_scalars(b, media, raw, d + "attributes")
+            size_list(b, raw, "media_thumbs", d + "thumbs")
+            size_list(b, raw, "media_video_thumbs", d + "video_thumbs")
+            att = {}
+            if name:
+                att["name"] = name
+            if media.get("mime_type"):
+                att["mime"] = media["mime_type"]
+            if is_int(media.get("size")) and media["size"] >= 0:
+                att["size"] = media["size"]
+            if att:
+                attachments.append(att)
+        if vec_len(b, W + "alt_documents") is not None and whole(b, W + "alt_documents"):
+            media["alt_documents_total"] = vec_len(b, W + "alt_documents")
+        elif b.obj_cls(W + "alt_documents") is not None and whole(b, W + "alt_documents"):
+            media["alt_documents_total"] = 1
+        if b.val(W + "video_cover.id") is not None:
+            media["video_cover_photo_id"] = b.val(W + "video_cover.id")
+        if b.val(W + "video_timestamp") is not None:
+            media["video_timestamp"] = b.val(W + "video_timestamp")
+    elif cls.startswith(("TL_messageMediaVideo", "TL_messageMediaAudio")):
+        o = "media.video_unused." if cls.startswith("TL_messageMediaVideo") else "media.audio_unused."
+        if b.has(o[:-1]):
+            for k in ("id", "date", "size", "dc_id", "w", "h", "user_id"):
+                if b.val(o + k) is not None:
+                    media[k] = b.val(o + k)
+            if b.val(o + "duration") is not None:
+                media["duration"], media["duration_unit"] = b.val(o + "duration"), "unestablished"
+            if b.val(o + "mime_type") is not None:
+                clean_into(media, raw, "mime_type", "media.mime_type", b.val(o + "mime_type"), MAX_SHORT)
+            presence(b, media, o)
+            size_list(b, raw, "media_thumbs", o + "thumb")
             att = {}
             if media.get("mime_type"):
                 att["mime"] = media["mime_type"]
@@ -906,44 +1262,245 @@ def map_media(b, media, attachments, raw):
             if att:
                 attachments.append(att)
     elif cls.startswith(("TL_messageMediaGeo", "TL_messageMediaVenue")):
-        for k, wire, lim in (("lat", "lat", 90), ("long", "_long", 180)):
-            v = b.val("media.geo." + wire)
-            if v is None:
-                continue
-            if v == v and abs(v) <= lim and abs(v) != float("inf"):
-                media[k] = gofloat(v)
-            else:  # the stored value as its IEEE-754 bits: never shown as a coordinate (plan 4I4 Task 9)
-                media[k + "_state"] = "out-of-range"
-                media[k + "_bits"] = "0x%016x" % struct.unpack("<Q", struct.pack("<d", v))[0]
+        coordinate(b, media, "lat", "media.geo.lat", 90)
+        coordinate(b, media, "long", "media.geo._long", 180)
         if cls.startswith("TL_messageMediaVenue"):
             for k in ("title", "address"):
                 if b.val("media." + k) is not None:
-                    t = cleaned(raw, "media." + k, b.val("media." + k), MAX_SHORT)
-                    if t:
-                        media[k] = t
+                    clean_into(media, raw, k, "media." + k, b.val("media." + k), MAX_SHORT)
     elif cls.startswith("TL_messageMediaContact"):
         if b.val("media.phone_number") is not None:  # an identifier: never cut (spec 12; plan 4I4 Task 9)
-            v = b.val("media.phone_number")
-            c = C.clean(bytes(v), 1 << 30)
-            if len(c.text.encode("utf-8")) > MAX_ID:
-                media["phone_number_state"], media["phone_number_len"], media["phone_number_sha256"] = "too-long", len(v), sha(v)
-            elif c.text:
-                media["phone_number"] = c.text
-                if c.flags:
-                    mark(raw, "media.phone_number")
+            ident_into(media, raw, "phone_number", "media.phone_number", b.val("media.phone_number"), MAX_ID)
         for k, lim in (("first_name", MAX_NAME), ("last_name", MAX_NAME), ("vcard", MAX_VCARD)):
             if b.val("media." + k) is not None:
-                t = cleaned(raw, "media." + k, b.val("media." + k), lim)
-                if t:
-                    media[k] = t
+                clean_into(media, raw, k, "media." + k, b.val("media." + k), lim)
         if b.val("media.user_id") is not None:
             media["user_id"] = b.val("media.user_id")
     elif cls.startswith("TL_messageMediaWebPage"):
-        for k in ("url", "display_url"):
-            if b.val("media.webpage." + k) is not None:
-                t = cleaned(raw, "media." + k, b.val("media.webpage." + k), MAX_SHORT)
-                if t:
-                    media[k] = t
+        w = "media.webpage."
+        for k, key in (("url", "url"), ("display_url", "display_url"), ("type", "webpage_type"), ("site_name", "site_name"),
+                       ("title", "title"), ("description", "description"), ("author", "author"), ("embed_url", "embed_url"),
+                       ("embed_type", "embed_type")):
+            if b.val(w + k) is not None:
+                clean_into(media, raw, key, "media." + key, b.val(w + k), MAX_SHORT)
+        for k in ("embed_width", "embed_height", "duration"):
+            if b.val(w + k) is not None:
+                media[k] = b.val(w + k)
+        if b.val(w + "photo.id") is not None:
+            media["photo_id"] = b.val(w + "photo.id")
+        if b.has(w + "document"):  # a link preview's document: never an attachment (spec 8.1)
+            if b.val(w + "document.id") is not None:
+                media["document_id"] = b.val(w + "document.id")
+            if b.val(w + "document.mime_type") is not None:
+                clean_into(media, raw, "document_mime_type", "media.document_mime_type", b.val(w + "document.mime_type"), MAX_SHORT)
+            file_name(b, media, raw, w + "document", "document_file_name")
+        label_list(b, media, "webpage_attributes", w + "attributes", "TL_webPageAttribute")
+        s = b.stop_at(w + "cached_page")
+        if s and s["id"] is not None and O.table().get(s["id"]) is not None:
+            media["cached_page_class"] = O.table()[s["id"]].cls
+    elif cls.startswith("TL_messageMediaDice"):
+        if b.val(W + "emoticon") is not None:
+            clean_into(media, raw, "emoticon", "media.emoticon", b.val(W + "emoticon"), MAX_TINY)
+        if b.val(W + "value") is not None:
+            media["value"] = b.val(W + "value")
+        if b.has(W + "game_outcome"):
+            g = {}
+            for k in ("stake_ton_amount", "ton_amount"):
+                if b.val(W + "game_outcome." + k) is not None:
+                    g[k] = b.val(W + "game_outcome." + k)
+            if b.val(W + "game_outcome.seed") is not None:
+                g["seed_len"] = len(b.val(W + "game_outcome.seed"))  # the seed itself never (D11)
+            media["game_outcome"] = g
+
+
+def coordinate(b, m, key, path, lim):
+    """A coordinate read at path: within +-lim and finite as read, else <key>_state out-of-range and its IEEE-754 bits
+    (plan 4I4 Task 9: never shown as a coordinate)."""
+    v = b.val(path)
+    if v is None:
+        return
+    if v == v and abs(v) <= lim and abs(v) != float("inf"):
+        m[key] = gofloat(v)
+    else:
+        m[key + "_state"], m[key + "_bits"] = "out-of-range", bits(v)
+
+
+def reaction_of(b, raw, path):
+    """A reaction (plan "Raw shapes"): emoji:<emoticon> of a boxed TL_reactionEmoji or of an inline reaction.emoticon,
+    custom:<document_id>, paid, empty; None when nothing was read."""
+    cls = b.obj_cls(path)
+    if cls is None:
+        if b.val(path + ".emoticon") is None:
+            return None
+        return "emoji:" + (cleaned(raw, "reactions.emoticon", b.val(path + ".emoticon"), MAX_TINY) or "")
+    lab = class_label(cls, "TL_reaction")
+    if lab == "emoji":
+        return "emoji:" + (cleaned(raw, "reactions.emoticon", b.val(path + ".emoticon") or b"", MAX_TINY) or "")
+    if lab == "custom_emoji":
+        return "custom:%d" % b.val(path + ".document_id")
+    return lab
+
+
+def join(p, k):
+    return p + "." + k if p else k
+
+
+def replies_shape(b, p):
+    """The replies object (plan "Raw shapes") of the MessageReplies read whole at p ("" for a replies_data cell)."""
+    r = {}
+    for k in ("replies", "replies_pts", "max_id", "read_max_id"):
+        if b.val(join(p, k)) is not None:
+            r[k] = b.val(join(p, k))
+    if b.flag(join(p, "comments")):
+        r["comments"] = True
+    if b.val(join(p, "channel_id")) is not None:
+        r["channel"] = "channel:%d" % b.val(join(p, "channel_id"))
+    rp = join(p, "recent_repliers")
+    n = vec_len(b, rp)
+    if n is not None:
+        addrs = [a for a in (address(b, "%s[%d]" % (rp, i)) for i in range(min(n, MAX_REPLIERS))) if a]
+        if addrs:
+            r["recent_repliers"] = addrs
+        r["recent_repliers_total"] = n
+        if n > MAX_REPLIERS:
+            r["recent_repliers_truncated"] = True
+    return r
+
+
+def map_tail(b, raw):
+    """The tail of a message blob (plan "Raw shapes" Tail): raw only, never a record field or a participant. An object
+    or list is stated when read whole; a stop at or inside it is <key>_state partial (P3); one never reached is
+    nothing here (data_undecided names it)."""
+    fw = b.val("forwards")
+    if fw is not None:  # B10: the column-mapped forwards stays raw.forwards
+        raw["blob_forwards"] = fw
+        if is_int(raw.get("forwards")) and raw["forwards"] != fw:
+            raw["forwards_conflict"] = True
+    if b.val("post_author") is not None:
+        clean_into(raw, raw, "post_author", "post_author", b.val("post_author"), MAX_NAME)
+    for k in ("quick_reply_shortcut_id", "effect", "paid_message_stars"):
+        if b.val(k) is not None:
+            raw[k] = b.val(k)
+    for k in ("report_delivery_until_date", "schedule_repeat_period"):  # P8: no unit is pinned for these
+        if b.val(k) is not None:
+            raw[k], raw[k + "_unit"] = b.val(k), "unestablished"
+    if b.val("summary_from_language") is not None:
+        ident_into(raw, raw, "summary_from_language", "summary_from_language", b.val("summary_from_language"), MAX_TINY)
+    if whole(b, "replies"):
+        raw["replies"] = replies_shape(b, "replies")
+    elif inside(b, "replies"):
+        raw["replies_state"] = "partial"
+    if whole(b, "reactions"):
+        p, o = "reactions", {}
+        for f in ("min", "can_see_list", "reactions_as_tags"):
+            if b.flag(p + "." + f):
+                o[f] = True
+
+        def result(e):
+            x = {}
+            r = reaction_of(b, raw, e + ".reaction")
+            if r is not None:
+                x["reaction"] = r
+            for k in ("count", "chosen_order"):
+                if b.val(e + "." + k) is not None:
+                    x[k] = b.val(e + "." + k)
+            return x
+
+        def recent(e):
+            x = {}
+            a = address(b, e + ".peer_id")
+            if a:
+                x["peer"] = a
+            r = reaction_of(b, raw, e + ".reaction")
+            if r is not None:
+                x["reaction"] = r
+            for f in ("big", "unread"):
+                if b.flag(e + "." + f):
+                    x[f] = True
+            if b.val(e + ".date") is not None:  # P4: no unit is invented
+                x["date"], x["date_unit"] = b.val(e + ".date"), "unestablished"
+            return x
+
+        def reactor(e):
+            x = {}
+            a = address(b, e + ".peer_id")
+            if a:
+                x["peer"] = a
+            if b.val(e + ".count") is not None:
+                x["count"] = b.val(e + ".count")
+            for f in ("top", "my", "anonymous"):
+                if b.flag(e + "." + f):
+                    x[f] = True
+            return x
+        for sub, key, cap, fn in (("results", "results", MAX_REACTIONS, result), ("recent_reactions", "recent", MAX_REACTIONS, recent),
+                                  ("top_reactors", "top_reactors", MAX_TOP_REACTORS, reactor)):
+            q = p + "." + sub
+            n = vec_len(b, q)
+            if n is None:
+                continue
+            entries = [x for x in (fn("%s[%d]" % (q, i)) for i in range(min(n, cap))) if x]
+            if entries:
+                raw["reactions_" + key] = entries
+            o[key + "_total"] = n
+            if n > cap:
+                o[key + "_truncated"] = True
+        raw["reactions"] = o
+    elif inside(b, "reactions"):
+        raw["reactions_state"] = "partial"
+
+    def restriction(e):
+        x = {}
+        for k in ("platform", "reason", "text"):
+            if b.val(e + "." + k) is not None:
+                clean_into(x, raw, k, "restriction_reason." + k, b.val(e + "." + k), MAX_NAME)
+        return x
+    put_list(b, raw, "restriction_reason", "restriction_reason", MAX_RESTRICTIONS, restriction)
+    if whole(b, "factcheck"):
+        p, o = "factcheck.", {}
+        if b.flag(p + "need_check"):
+            o["need_check"] = True
+        if b.val(p + "country") is not None:
+            clean_into(o, raw, "country", "factcheck.country", b.val(p + "country"), MAX_TINY)
+        if b.val(p + "text.text") is not None:
+            clean_into(o, raw, "text", "factcheck.text", b.val(p + "text.text"), MAX_SHORT)
+        if vec_len(b, p + "text.entities") is not None:
+            o["entities_total"] = vec_len(b, p + "text.entities")
+        if b.val(p + "hash") is not None:
+            o["hash"] = b.val(p + "hash")
+        raw["factcheck"] = o
+    elif inside(b, "factcheck"):
+        raw["factcheck_state"] = "partial"
+    if whole(b, "suggested_post"):
+        p, o = "suggested_post.", {}
+        for f in ("accepted", "rejected"):
+            if b.flag(p + f):
+                o[f] = True
+        if b.obj_cls(p + "price") is not None:
+            price = {"kind": {"TL_starsAmount": "stars", "TL_starsTonAmount": "ton"}.get(b.obj_cls(p + "price"), "unknown")}
+            for k in ("amount", "nanos"):
+                if b.val(p + "price." + k) is not None:
+                    price[k] = b.val(p + "price." + k)
+            o["price"] = price
+        if b.val(p + "schedule_date") is not None:
+            o["schedule_date"], o["schedule_date_unit"] = b.val(p + "schedule_date"), "unestablished"
+        raw["suggested_post"] = o
+    elif inside(b, "suggested_post"):
+        raw["suggested_post_state"] = "partial"
+
+    def entity(e):
+        x = {"type": entity_label(b.obj_cls(e))}
+        for k in ("offset", "length", "document_id"):
+            if b.val(e + "." + k) is not None:
+                x[k] = b.val(e + "." + k)
+        if b.val(e + ".url") is not None:
+            clean_into(x, raw, "url", "entities.url", b.val(e + ".url"), MAX_SHORT)
+        if b.val(e + ".language") is not None:
+            clean_into(x, raw, "language", "entities.language", b.val(e + ".language"), MAX_TINY)
+        uid = b.f.get(e + ".user_id")
+        if uid is not None and uid["kind"] in ("i32", "i64"):
+            x["user"] = "user:%d" % uid["value"]
+        return x
+    put_list(b, raw, "entities", "entities", MAX_ENTITIES, entity)
 
 
 def trailer(raw, b, cls):
@@ -1189,7 +1746,7 @@ def oracle(files, ddl_name, variant, user_version, refused=False, nan=frozenset(
             rec = map_message(table, r, env, remote, file, nan)
             exp["records"].append(rec)
             raw = rec["payload"]["raw"]
-            for col in ("data", "replydata"):
+            for col in ("data", "replydata", "replies_data"):
                 st = raw.get(col + "_state")
                 if st:
                     counts.setdefault((table, col), {}).setdefault(st, 0)
@@ -1226,7 +1783,7 @@ def oracle(files, ddl_name, variant, user_version, refused=False, nan=frozenset(
         if t in present:
             notes["rows." + t] = str(len(view.get(t, [])))
     states = []
-    for (table, col) in [(t, c) for t in ("messages", "messages_v2", "users") for c in ("data", "replydata")]:
+    for (table, col) in [(t, c) for t in ("messages", "messages_v2", "users") for c in ("data", "replydata", "replies_data")]:
         if (table, col) in counts:
             states.append("%s.%s=%s" % (table, col, ",".join("%s:%d" % (s, counts[(table, col)][s]) for s in BLOB_STATES if s in counts[(table, col)])))
     if states:
@@ -1247,7 +1804,7 @@ def oracle(files, ddl_name, variant, user_version, refused=False, nan=frozenset(
     if len(held) == 2:
         exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:schema", "contains": "telegram-both-generations: messages=%d messages_v2=%d" % (
             len(view["messages"]), len(view["messages_v2"]))})
-    for (table, col) in [(t, c) for t in ("messages", "messages_v2", "users") for c in ("data", "replydata")]:
+    for (table, col) in [(t, c) for t in ("messages", "messages_v2", "users") for c in ("data", "replydata", "replies_data")]:
         cnt = counts.get((table, col), {})
         bad = [(s, cnt[s]) for s in COUNTED_STATES if cnt.get(s)]
         if bad:
@@ -1333,8 +1890,156 @@ def row(rid, mid, uid, data, out=0, **cols):
     return r
 
 
+def secret_i64(n):
+    """A distinctive int64 for every new access_hash and FileLocation.secret (plan 4I4b "Fixture scenario"; R7)."""
+    return 0x7E575EC2E7A10000 + n
+
+
+def thumb(n, k):
+    """k bytes of thumbnail content: SYNTHETIC-THUMB-<n>- repeated (D11: only its length and SHA-256 are ever shown)."""
+    unit = ("SYNTHETIC-THUMB-%02d-" % n).encode("ascii")
+    return (unit * (k // len(unit) + 1))[:k]
+
+
+def wave(n, k):
+    unit = ("SYNTHETIC-WAVE-%02d-" % n).encode("ascii")
+    return (unit * (k // len(unit) + 1))[:k]
+
+
+SEED = b"SYNTHETIC-SEED-0001"
+
+
+def fname(name):
+    return {"_": "TL_documentAttributeFilename", "file_name": name}
+
+
+def document(n, mime, attributes, ref, size=1000, **kw):
+    """A TL_document of id n (its access_hash secret_i64(n), its file_reference ref: a literal secret("4i4b-<site>",
+    24) at the call, so the key-material test derives it)."""
+    d = {"_": "TL_document", "id": n, "access_hash": secret_i64(n), "file_reference": ref, "date": D, "mime_type": mime,
+         "size": size, "dc_id": 2, "attributes": attributes}
+    d.update(kw)
+    return d
+
+
+def doc_media(doc, **kw):
+    m = {"_": "TL_messageMediaDocument", "document": doc}
+    m.update(kw)
+    return m
+
+
+def stage_a_messages(R):
+    """R60-R80 of the plan 4I4b "Fixture scenario" (telegram-v181; mid = 100 + rowid)."""
+    def m(rid, text, uid=ANN, cols=None, **kw):
+        R[rid] = row(rid, 100 + rid, uid, enc(tlmsg(100 + rid, rid, text, frm=pu(ANN), **kw)), **(cols or {}))
+    R[60] = row(60, 160, ANN, enc(r60_value()), forwards=4)
+    m(61, "Forward count", cols={"forwards": 4}, views=1, forwards=5)
+    emoji = lambda e: {"_": "TL_reactionEmoji", "emoticon": e}
+    custom = {"_": "TL_reactionCustomEmoji", "document_id": 5000000001}
+    m(62, "Reactions", reactions={"_": "TL_messageReactions", "results": [
+        {"_": "TL_reactionCount", "chosen": True, "chosen_order": 1, "reaction": emoji("\U0001F44D"), "count": 2},
+        {"_": "TL_reactionCount", "reaction": custom, "count": 1},
+        {"_": "TL_reactionCount", "reaction": {"_": "TL_reactionPaid"}, "count": 3},
+        {"_": "TL_reactionCount", "reaction": {"_": "TL_reactionEmpty"}, "count": 0}],
+        "recent_reactions": [
+            {"_": "TL_messagePeerReaction", "big": True, "peer_id": pu(ANN), "date": D + 800, "reaction": emoji("❤")},
+            {"_": "TL_messagePeerReaction_layer154", "unread": True, "peer_id": pu(SELF), "reaction": custom},
+            {"_": "TL_messagePeerReaction_layer144", "peer_id": pu(ANN), "reaction.emoticon": "\U0001F525"},
+            {"_": "TL_messagePeerReaction_layer137", "peer_id": 1000009, "reaction.emoticon": "\U0001F602"}],
+        "top_reactors": [
+            {"_": "TL_messageReactor", "top": True, "peer_id": pu(ANN), "count": 2},
+            {"_": "TL_messageReactor", "anonymous": True, "count": 1},
+            {"_": "TL_messageReactor_old", "my": True, "peer_id": pu(SELF), "count": 1}]})
+    replies = lambda n: {"_": "TL_messageReplies", "comments": True, "replies": n, "replies_pts": 77, "recent_repliers": [pu(ANN)],
+                         "channel_id": 3000001, "max_id": 300, "read_max_id": 299}
+    m(63, "Thread root", cols={"replies_data": E.encode("MessageReplies", replies(3))}, replies=replies(3))
+    m(64, "Thread root", cols={"replies_data": E.encode("MessageReplies", replies(4))}, replies=replies(3))
+    m(65, "Checked",
+      restriction_reason=[{"_": "TL_reastrictionReason", "platform": "android", "reason": "sensitive", "text": "Hidden on Android"}],
+      factcheck={"_": "TL_factCheck", "need_check": True, "country": "US", "hash": 99, "text": {
+          "_": "TL_textWithEntities", "text": "Context added", "entities": [{"_": "TL_messageEntityBold", "offset": 0, "length": 7}]}},
+      suggested_post={"_": "SuggestedPost", "accepted": True, "price": {"_": "TL_starsAmount", "amount": 50, "nanos": 0},
+                      "schedule_date": D + 900})
+    m(66, "Suggested", suggested_post={"_": "SuggestedPost", "rejected": True, "price": {"_": "TL_starsTonAmount", "amount": 1000000000}})
+    m(67, "Nice photo", cols={"reply_to_message_id": 117}, reply_to={
+        "_": "TL_messageReplyHeader", "reply_to_msg_id": 117, "reply_media": {"_": "TL_messageMediaPhoto", "photo": {
+            "_": "TL_photo", "id": 9001, "access_hash": secret_i64(9001), "file_reference": secret("4i4b-r67-fileref", 24), "date": D,
+            "sizes": [{"_": "TL_photoSize", "type": "m", "w": 320, "h": 240, "size": 12345}], "dc_id": 2}}})
+    m(68, "", media=doc_media(document(9102, "image/webp", [
+        {"_": "TL_documentAttributeSticker", "mask": True, "alt": "\U0001F600",
+         "stickerset": {"_": "TL_inputStickerSetID", "id": 7000001, "access_hash": secret_i64(7000001)},
+         "mask_coords": {"_": "TL_maskCoords", "n": 1, "x": 0.5, "y": -0.25, "zoom": 1.5}},
+        {"_": "TL_documentAttributeImageSize", "w": 512, "h": 512}], secret("4i4b-r68-fileref", 24))))
+    m(69, "", media=doc_media(document(9103, "application/x-tgsticker", [
+        {"_": "TL_documentAttributeCustomEmoji", "free": True, "alt": "⭐",
+         "stickerset": {"_": "TL_inputStickerSetShortName", "short_name": "FixtureSet"}}], secret("4i4b-r69-fileref", 24))))
+    m(70, "", media=doc_media(document(9104, "audio/ogg", [
+        {"_": "TL_documentAttributeAudio", "voice": True, "duration": 12, "title": "Memo", "performer": "Ann", "waveform": wave(1, 63)}],
+        secret("4i4b-r70-fileref", 24)), voice=True))
+    m(71, "", media=doc_media(document(9105, "video/mp4", [
+        {"_": "TL_documentAttributeVideo", "round_message": True, "supports_streaming": True, "video_codec": "h264", "duration": 7.5,
+         "w": 240, "h": 240, "video_start_ts": 0.5}], secret("4i4b-r71-fileref", 24),
+        video_thumbs=[{"_": "TL_videoSize", "type": "u", "w": 240, "h": 240, "size": 3000, "video_start_ts": 0.5}]), round=True))
+    m(72, "", media={"_": "TL_messageMediaDice", "value": 5, "emoticon": "\U0001F3B2", "game_outcome": {
+        "_": "TL_messages_emojiGameOutcome", "seed": SEED, "stake_ton_amount": 100, "ton_amount": 200}})
+    m(73, "", media=doc_media(document(9106, "text/plain", [fname("a.txt"), fname("b.txt")], secret("4i4b-r73-fileref", 24))))
+    m(74, "", media=doc_media(document(9107, "text/plain", [fname("same.txt"), fname("same.txt")], secret("4i4b-r74-fileref", 24))))
+    m(75, "", media=doc_media(document(9108, "text/plain", [fname("")], secret("4i4b-r75-fileref", 24))))
+    R[76] = row(76, 176, ANN, enc(r76_value()))
+    m(77, "", media={"_": "TL_messageMediaWebPage", "webpage": {
+        "_": "TL_webPage", "id": 9300, "url": "fixture.invalid/p", "display_url": "fixture.invalid/p", "hash": 0, "type": "article",
+        "site_name": "Fixture", "title": "A page", "description": "Words",
+        "document": document(9301, "application/zip", [fname("bundle.zip")], secret("4i4b-r77-fileref", 24)),
+        "attributes": [{"_": "TL_webPageAttributeStickerSet", "stickers": []}]}})
+    m(78, "", media=doc_media(document(9401, "video/mp4", [fname("main.mp4")], secret("4i4b-r78-fileref", 24)),
+                              alt_documents=[document(9402, "video/mp4", [fname("alt.mp4")], secret("4i4b-r78-altref", 24))]))
+    m(79, "", edit_date=D + 50, media={"_": "TL_messageMediaWebPage", "webpage": {
+        "_": "TL_webPage", "id": 9500, "url": "fixture.invalid/c", "display_url": "fixture.invalid/c", "hash": 0,
+        "cached_page": {"_": "TL_page_layer110"}}})
+    R[80] = row(80, -13, S77, enc({"_": "TL_message_secret", "id": -13, "ttl": 0, "from_id": ANN, "peer_id": pu(SELF), "date": D + 80,
+                                   "message": "", "entities": [], "media": doc_media({
+                                       "_": "TL_documentEncrypted", "id": 7002, "access_hash": secret_i64(7002), "date": D,
+                                       "mime_type": "application/pdf", "size": 4096, "dc_id": 1, "attributes": [fname("secret.pdf")],
+                                       "thumbs": {"_": "TL_photoCachedSize_layer127", "type": "s", "w": 90, "h": 90, "bytes": thumb(5, 32),
+                                                  "location": {"_": "TL_fileEncryptedLocation", "dc_id": 1, "volume_id": 5, "local_id": 6,
+                                                               "secret": secret_i64(7003), "key": secret("4i4b-r80-lockey", 24),
+                                                               "iv": secret("4i4b-r80-lociv", 24)}},
+                                       "key": secret("4i4b-r80-key", 24), "iv": secret("4i4b-r80-iv", 24)})}))
+
+
+def r60_value():
+    """R60: a document with a file name, two thumbs, edit_date, every plain tail field and a text_url entity."""
+    doc = document(9101, "application/pdf", [fname("report.pdf"), {"_": "TL_documentAttributeImageSize", "w": 800, "h": 600}],
+                   secret("4i4b-r60-fileref", 24), size=48213,
+                   thumbs=[{"_": "TL_photoStrippedSize", "type": "i", "bytes": thumb(1, 40)},
+                           {"_": "TL_photoSize", "type": "m", "w": 320, "h": 240, "size": 12345}])
+    return tlmsg(160, 60, "Report attached", frm=pu(ANN), media=doc_media(doc), edit_date=D + 700, views=9, forwards=4,
+                 post_author="Desk", quick_reply_shortcut_id=7, effect=5000000002, report_delivery_until_date=D + 1000,
+                 paid_message_stars=10, schedule_repeat_period=86400, summary_from_language="en",
+                 entities=[{"_": "TL_messageEntityTextUrl", "offset": 0, "length": 6, "url": "fixture.invalid/r"}])
+
+
+def r76_value():
+    return tlmsg(176, 76, "", frm=pu(ANN), media=r76_media())
+
+
+def r76_media():
+    """R76: a photo with every PhotoSize kind of the plan and three video sizes, and its live-photo document (P9)."""
+    return {"_": "TL_messageMediaPhoto", "live_photo": True, "photo": {
+        "_": "TL_photo", "id": 9200, "access_hash": secret_i64(9200), "file_reference": secret("4i4b-r76-fileref", 24), "date": D, "dc_id": 2,
+        "sizes": [{"_": "TL_photoStrippedSize", "type": "i", "bytes": thumb(2, 24)},
+                  {"_": "TL_photoCachedSize", "type": "s", "w": 90, "h": 90, "bytes": thumb(3, 48)},
+                  {"_": "TL_photoSizeProgressive", "type": "y", "w": 1280, "h": 960, "sizes": [1000, 5000, 20000]},
+                  {"_": "TL_photoPathSize", "type": "j", "bytes": thumb(4, 16)}],
+        "video_sizes": [{"_": "TL_videoSize", "type": "u", "w": 800, "h": 800, "size": 4000},
+                        {"_": "TL_videoSizeEmojiMarkup", "emoji_id": 5000000003, "background_colors": [1, 2]},
+                        {"_": "TL_videoSizeStickerMarkup", "stickerset": {"_": "TL_inputStickerSetEmpty"}, "sticker_id": 5000000004,
+                         "background_colors": [3]}]},
+        "document": document(9201, "video/mp4", [fname("live.mov")], secret("4i4b-r76-liveref", 24))}
+
+
 def core_messages():
-    """R1-R59 of the plan's CORE table (R51, R52 are written to the WAL by variant_v181)."""
+    """R1-R59 of the plan's CORE table (R51, R52 are written to the WAL by variant_v181), and R60-R80 of plan 4I4b."""
     R = {}
     R[1] = row(1, 101, ANN, enc(tlmsg(101, 1, "Hello Ann here", frm=pu(ANN))))
     R[2] = row(2, 102, ANN, enc(tlmsg(102, 2, "Hi Ann", peer=pu(ANN), out=True)), out=1)
@@ -1414,6 +2119,7 @@ def core_messages():
     R[58] = row(58, 153, ANN, enc(tlmsg(153, 58, "Flagged", flags=1 << 12, flags2=0)))
     R[59] = row(59, -11, S77, enc({"_": "TL_message_secret_layer72", "out": True, "id": -11, "ttl": 0, "from_id": SELF, "peer_id": pu(ANN),
                                    "date": D + 59, "message": "", "media": enc_document([{"_raw": u32le(0x0BAD0006)}]), "entities": []}), out=1)
+    stage_a_messages(R)
     return R
 
 
@@ -1475,23 +2181,67 @@ def pre84_rows():
     P[5] = m(101, ANN, enc(l104(101, "Hello Ann here", {"_": "TL_peerUser_layer131", "user_id": SELF}, from_id=ANN)))
     P[6] = m(107, ANN, enc({"_": "TL_messageService_layer118", "id": 107, "from_id": ANN, "peer_id": {"_": "TL_peerUser_layer131", "user_id": SELF},
                             "date": D + 1, "action": call_action(9201, "TL_phoneCallDiscardReasonMissed")}))
+    # plan 4I4b P7, P8: the 5.14.0 media path (recon 2), a TL_message_layer117 photo and document
+    l117 = lambda mid, media: {"_": "TL_message_layer117", "id": mid, "from_id": ANN, "peer_id": {"_": "TL_peerUser_layer131", "user_id": SELF},
+                               "date": D + 1, "message": "", "media": media}
+    P[7] = m(108, ANN, enc(l117(108, {"_": "TL_messageMediaPhoto_layer223", "photo": {
+        "_": "TL_photo_layer115", "id": 9601, "access_hash": secret_i64(9601), "file_reference": secret("4i4b-p7-fileref", 24), "date": D,
+        "sizes": [{"_": "TL_photoSize_layer127", "type": "m", "w": 320, "h": 240, "size": 12345, "location": {
+                      "_": "TL_fileLocation_layer97", "dc_id": 2, "volume_id": 1, "local_id": 2, "secret": secret_i64(9602),
+                      "file_reference": secret("4i4b-p7-locref", 24)}},
+                  {"_": "TL_photoStrippedSize", "type": "i", "bytes": thumb(6, 24)},
+                  {"_": "TL_photoCachedSize_layer127", "type": "s", "w": 90, "h": 90, "bytes": thumb(7, 32), "location": {
+                      "_": "TL_fileLocation_layer82", "dc_id": 2, "volume_id": 1, "local_id": 3, "secret": secret_i64(9603)}}],
+        "dc_id": 2}})))
+    P[8] = m(109, ANN, enc(l117(109, {"_": "TL_messageMediaDocument_layer159", "document": {
+        "_": "TL_document_layer113", "id": 9604, "access_hash": secret_i64(9604), "file_reference": secret("4i4b-p8-fileref", 24),
+        "date": D, "mime_type": "video/mp4", "size": 1000000, "dc_id": 2, "attributes": [
+            fname("IMG_0001.mp4"), {"_": "TL_documentAttributeVideo_layer159", "duration": 30, "w": 1280, "h": 720},
+            {"_": "TL_documentAttributeImageSize", "w": 1280, "h": 720}]}})))
     return P
 
 
 def v84_rows():
-    """R1, R2, R4 as the 8.1.1 app wrote them: TL_message_layer123 blobs with layer-131 peers."""
+    """R1, R2, R4 as the 8.1.1 app wrote them: TL_message_layer123 blobs with layer-131 peers; V5-V8 of plan 4I4b."""
     l123 = lambda mid, rid, text, peer, **kw: dict({"_": "TL_message_layer123", "id": mid, "peer_id": peer, "date": D + rid, "message": text}, **kw)
     lu = lambda i: {"_": "TL_peerUser_layer131", "user_id": i}
-    return {1: row(1, 101, ANN, enc(l123(101, 1, "Hello Ann here", lu(SELF), from_id=lu(ANN)))),
-            2: row(2, 102, ANN, enc(l123(102, 2, "Hi Ann", lu(ANN), out=True)), out=1),
-            4: row(4, 103, -2000001, enc(l123(103, 4, "Group hello", {"_": "TL_peerChat_layer131", "chat_id": 2000001}, from_id=lu(BOT))))}
+    R = {1: row(1, 101, ANN, enc(l123(101, 1, "Hello Ann here", lu(SELF), from_id=lu(ANN)))),
+         2: row(2, 102, ANN, enc(l123(102, 2, "Hi Ann", lu(ANN), out=True)), out=1),
+         4: row(4, 103, -2000001, enc(l123(103, 4, "Group hello", {"_": "TL_peerChat_layer131", "chat_id": 2000001}, from_id=lu(BOT))))}
+    # plan 4I4b V5-V8: legacy media with captionLegacy and an empty message, legacy video, audio and an old document
+    empty_thumb = {"_": "TL_photoSizeEmpty", "type": "s"}
+    legacy = {
+        5: {"_": "TL_messageMediaPhoto_layer74", "captionLegacy": "Old caption", "photo": {
+            "_": "TL_photo_layer55", "id": 9701, "access_hash": secret_i64(9701), "date": D, "sizes": []}},
+        6: {"_": "TL_messageMediaVideo_layer45", "captionLegacy": "", "video_unused": {
+            "_": "TL_video_layer45", "id": 9702, "access_hash": secret_i64(9702), "date": D, "duration": 5, "mime_type": "video/mp4",
+            "size": 2000, "thumb": empty_thumb, "dc_id": 2, "w": 640, "h": 480}},
+        7: {"_": "TL_messageMediaAudio_layer45", "audio_unused": {
+            "_": "TL_audio_layer45", "id": 9703, "access_hash": secret_i64(9703), "date": D, "duration": 9, "mime_type": "audio/mpeg",
+            "size": 3000, "dc_id": 2}},
+        8: {"_": "TL_messageMediaDocument_old", "document": {
+            "_": "TL_document_old", "id": 9704, "access_hash": secret_i64(9704), "user_id": ANN, "date": D, "file_name": "old.doc",
+            "mime_type": "application/msword", "size": 4000, "thumbs": empty_thumb, "dc_id": 2}}}
+    for rid, media in legacy.items():
+        R[rid] = row(rid, 99 + rid, ANN, enc(l123(99 + rid, rid, "", lu(SELF), from_id=lu(ANN), media=media)))
+    return R
 
 
 # ---------------------------------------------------------------- layers and hostile rows
 
 
-def mandatory(r, typ, i, text):
-    """A value of row r with only its ungated fields (a flags word computed), the text given where it has message."""
+def minimal_row(typ):
+    """The full row of typ with the fewest ungated fields (the first in table order on a tie), or None."""
+    tab = O.table()
+    rows = [r for r in tab.values() if r.typ == typ and r.body == "full"]
+    return min(rows, key=lambda r: len([it for it in r.items if it.kind is not None and it.word is None])) if rows else None
+
+
+def mandatory(r, typ, i, text, nested=False, depth=0):
+    """A value of row r with only its ungated fields (a flags word computed), the text given where it has message. An
+    object field of a type with a full row holds that type's smallest full row, filled the same way (plan 4I4b Task 4:
+    the layers rows reach past their objects); a type with none holds an ID the table lacks. In a nested object an
+    access_hash or a FileLocation secret is a secret_i64 (R7)."""
     v = {"_": r.cls}
     for it in r.items:
         if it.kind is None or it.word is not None or it.kind == "#":
@@ -1500,6 +2250,7 @@ def mandatory(r, typ, i, text):
         k = it.kind
         if name in v:
             continue
+        last = name.split(".")[-1]
         if name == "message":
             v[name] = text
         elif name == "media":
@@ -1513,8 +2264,11 @@ def mandatory(r, typ, i, text):
         elif k == "bool":
             v[name] = False
         elif k in ("i32", "i64") or k.startswith(("id32@", "id64@")):
-            v[name] = {"id": i, "date": D, "user_id": ANN, "chat_id": 2000001, "channel_id": 3000001}.get(name.split(".")[-1], 0)
-            if name.split(".")[-1] == "from_id":
+            if nested and k == "i64" and last in ("access_hash", "secret"):
+                v[name] = secret_i64(i)
+            else:
+                v[name] = {"id": i, "date": D, "user_id": ANN, "chat_id": 2000001, "channel_id": 3000001}.get(last, 0)
+            if last == "from_id":
                 v[name] = ANN
         elif k == "dbl":
             v[name] = 0.0
@@ -1524,13 +2278,77 @@ def mandatory(r, typ, i, text):
             v[name] = pu(SELF) if name == "peer_id" else pu(ANN)
         elif k == "GeoPoint":
             v[name] = {"_": "TL_geoPointEmpty"}
-        elif k == "WebPage":
-            # the bare ID, as written while TL_webPageEmpty was opaque (plan 4I4b Task 1: it is full now; Task 4
-            # rewrites the layers rows)
-            v[name] = {"_raw": u32le(0x211A1788)}
         else:
-            v[name] = {"_raw": u32le(0x0BAD0100)}
+            obj = minimal_row(k) if depth < 8 else None
+            v[name] = mandatory(obj, k, i, "", True, depth + 1) if obj is not None else {"_raw": u32le(0x0BAD0100)}
     return v
+
+
+def filled(cls, i, **kw):
+    """The value of class cls with its ungated fields filled (mandatory, nested), then kw."""
+    r = [x for x in O.table().values() if x.cls == cls][0]
+    v = mandatory(r, r.typ, i, "", True)
+    v.update(kw)
+    return v
+
+
+def embed(r, rid):
+    """A message whose blob reads the full row r (plan 4I4b P10): r with its mandatory fields, in the smallest
+    container its type allows."""
+    v = mandatory(r, r.typ, rid, "", True)
+    msg = lambda **kw: tlmsg(rid, rid, "row " + r.cls, frm=pu(ANN), **kw)
+    photo = lambda **kw: {"_": "TL_messageMediaPhoto", "photo": filled("TL_photo", rid, **kw)}
+    doc = lambda **kw: doc_media(filled("TL_document", rid, **kw))
+    reacts = lambda **kw: filled("TL_messageReactions", rid, **kw)
+    by_type = {
+        "MessageAction": lambda: service(rid, rid, v, frm=pu(ANN)),
+        "MessageMedia": lambda: msg(media=v),
+        "Photo": lambda: msg(media={"_": "TL_messageMediaPhoto", "photo": v}),
+        "Document": lambda: msg(media=doc_media(v)),
+        "WebPage": lambda: msg(media={"_": "TL_messageMediaWebPage", "webpage": v}),
+        "PhotoSize": lambda: msg(media=photo(sizes=[v])),
+        "VideoSize": lambda: msg(media=photo(video_sizes=[v])),
+        "FileLocation": lambda: msg(media=photo(sizes=[filled("TL_photoSize_layer127", rid, location=v)])),
+        "DocumentAttribute": lambda: msg(media=doc(attributes=[v])),
+        "InputStickerSet": lambda: msg(media=doc(attributes=[filled("TL_documentAttributeSticker_layer55", rid, stickerset=v)])),
+        "TL_maskCoords": lambda: msg(media=doc(attributes=[filled("TL_documentAttributeSticker", rid, mask_coords=v)])),
+        "Video": lambda: msg(media={"_": "TL_messageMediaVideo_old", "video_unused": v}),
+        "Audio": lambda: msg(media={"_": "TL_messageMediaAudio_layer45", "audio_unused": v}),
+        "MessageReplies": lambda: msg(replies=v),
+        "MessageReactions": lambda: msg(reactions=v),
+        "ReactionCount": lambda: msg(reactions=reacts(results=[v])),
+        "Reaction": lambda: msg(reactions=reacts(results=[filled("TL_reactionCount", rid, reaction=v)])),
+        "MessagePeerReaction": lambda: msg(reactions=reacts(recent_reactions=[v])),
+        "MessageReactor": lambda: msg(reactions=reacts(top_reactors=[v])),
+        "RestrictionReason": lambda: msg(restriction_reason=[v]),
+        "TL_factCheck": lambda: msg(factcheck=v),
+        "TL_textWithEntities": lambda: msg(factcheck=filled("TL_factCheck", rid, country="", text=v)),
+        "SuggestedPost": lambda: msg(suggested_post=v),
+        "TL_stars.StarsAmount": lambda: msg(suggested_post=filled("SuggestedPost", rid, price=v)),
+        "TL_messages_emojiGameOutcome": lambda: msg(media=filled("TL_messageMediaDice", rid, game_outcome=v)),
+        "WebPageAttribute": lambda: msg(media={"_": "TL_messageMediaWebPage", "webpage": filled("TL_webPage", rid, attributes=[v])}),
+        "TL_iv.RichText": lambda: msg(reply_to={"_": "TL_messageReplyHeader", "reply_to_msg_id": 101, "quote_rich": [v]}),
+        "InputUser": lambda: msg(entities=[{"_": "TL_inputMessageEntityMentionName", "offset": 0, "length": 1, "user_id": v}]),
+    }
+    return by_type[r.typ]()
+
+
+STAGE_A_TYPES = ("PhotoSize", "VideoSize", "DocumentAttribute", "FileLocation", "InputStickerSet", "TL_maskCoords", "Video", "Audio",
+                 "MessageReplies", "MessageReactions", "Reaction", "ReactionCount", "MessagePeerReaction", "MessageReactor",
+                 "RestrictionReason", "TL_factCheck", "TL_textWithEntities", "SuggestedPost", "TL_stars.StarsAmount",
+                 "TL_messages_emojiGameOutcome", "WebPageAttribute", "TL_iv.RichText", "InputUser", "MessageMedia", "Photo",
+                 "Document", "WebPage", "MessageAction")
+
+
+def seen_ids(blobs, typ):
+    """The constructor IDs the oracle reads in blobs as typ (the top's and every nested object's)."""
+    out = set()
+    for b in blobs:
+        res = O.decode(b, typ)
+        if res["top"] is not None and O.row_of(res["top"], typ) is not None:
+            out.add(res["top"])
+        out |= {f["id"] for f in res["fields"] if f["kind"] == "object"}
+    return out
 
 
 def layers_rows():
@@ -1568,6 +2386,15 @@ def layers_rows():
     allow = call_action(9601)
     allow["reason"] = {"_": "TL_phoneCallDiscardReasonAllowGroupCall", "encrypted_key": secret("4i4-layers", 8)}
     rows.append(row(1601, 1601, ANN, enc(service(1601, 1601, allow, frm=pu(ANN)))))
+    # plan 4I4b P10: one row per full row of the 4I4b types the scenario rows (and the media rows above) do not read
+    scenario = [r["data"] for r in list(core_messages().values()) + list(pre84_rows().values()) + list(v84_rows().values()) + rows
+                if isinstance(r.get("data"), (bytes, bytearray))]
+    seen = seen_ids(scenario, "Message")
+    todo = [r for r in ordered if r.typ in STAGE_A_TYPES and r.body == "full" and r.cid not in seen]
+    for i, r in enumerate(todo):
+        rid = 1701 + i
+        rows.append(row(rid, rid, ANN, enc(embed(r, rid))))
+    assert 1701 + len(todo) <= 2001
     for i, r in enumerate([r for r in ordered if r.typ == "User"]):
         uid = 5000001 + i
         v = mandatory(r, "User", uid, "")
@@ -1587,7 +2414,7 @@ NAN_BITS = struct.pack(">Q", 0x7FF8000000000001)
 
 
 def hostile_rows():
-    """H1-H12 of the plan; rowids from 2001. Returns (rows, [(rowid, column) that hold NaN])."""
+    """H1-H12 of the plan; rowids from 2001; plan 4I4b's from 2401. Returns (rows, [(rowid, column) that hold NaN])."""
     out = []
     base = enc(tlmsg(2000, 0, "Hello Ann here", frm=pu(ANN)))
     rid = [2000]
@@ -1625,7 +2452,65 @@ def hostile_rows():
                "date": D + 20, "message": "", "media": enc_document([]), "entities": []})
     for field in (secret("4i4-dockey", 32), secret("4i4-dociv", 32)):
         h(doc[:doc.index(field) + len(E.SYNTHETIC_PREFIX) + 6], uid=S77, out=1, read_state=0)
+    out.extend(stage_a_hostile_rows())
     return out, frozenset({(nan_row["rowid"], "uid")})
+
+
+def cuts(rid, value):
+    """R<n>'s blob cut at every distinct boundary of field_offsets(deep=True) before its end, in offset order, as rows
+    from rid (plan 4I4b H2401, H2601)."""
+    blob = enc(value)
+    offs = sorted({o for _, o in E.field_offsets("Message", value, deep=True) if o < len(blob)})
+    return [row(rid + i, rid + i, ANN, blob[:o]) for i, o in enumerate(offs)]
+
+
+def stage_a_hostile_rows():
+    """H2401... (R76 cut at every deep boundary), H2601... (R60 likewise) and H2801-H2814 of plan 4I4b."""
+    rows = cuts(2401, r76_value())
+    assert len(rows) < 200, len(rows)
+    rows += cuts(2601, r60_value())
+    assert rows[-1]["rowid"] < 2801, rows[-1]["rowid"]
+
+    def photo_with(**kw):
+        p = {"_": "TL_photo", "id": 9800, "access_hash": secret_i64(9800), "file_reference": secret("4i4b-h28-fileref", 24), "date": D,
+             "dc_id": 2, "sizes": []}
+        p.update(kw)
+        return {"_": "TL_messageMediaPhoto", "photo": p}
+
+    def doc_with(attributes):
+        return doc_media(document(9801, "video/mp4", attributes, secret("4i4b-h28-docref", 24)))
+    size = lambda i: {"_": "TL_photoSize", "type": "m", "w": i, "h": i, "size": i}
+    video = {"_": "TL_documentAttributeVideo", "duration": 1.0, "w": 2, "h": 2}
+    old_count = u32le(0x6FB250D1) + u32le(0) + E.tl_bytes("👍".encode("utf-8")) + struct.pack("<i", 2)
+    new_count = u32le(0x6FB250D1) + u32le(0) + E.encode("Reaction", {"_": "TL_reactionEmoji", "emoticon": "👍"}) + struct.pack("<i", 2)
+    one = lambda i: {"_": "TL_reactionCount", "reaction": {"_": "TL_reactionEmoji", "emoticon": "e%d" % i}, "count": i}
+    reactions = lambda **kw: dict({"_": "TL_messageReactions", "results": []}, **kw)
+    media_rows = [
+        photo_with(sizes=[size(i) for i in range(17)]),  # 2801: 17 sizes, 16 kept
+        photo_with(sizes={"_raw": u32le(E.VECTOR_ID) + struct.pack("<i", 10001)}),  # 2802: a count over MaxVector
+        photo_with(video_sizes=[{"_": "TL_videoSize", "flags": 1 << 5, "type": "u", "w": 1, "h": 1, "size": 1}]),  # 2803
+        doc_with([dict(video, flags=1 << 9)]),  # 2804: a Video attribute with flags bit 9
+        doc_with([dict(video, duration=float("nan"))]),  # 2805: a NaN duration
+    ]
+    kw_rows = [
+        {"reactions": reactions(results=[{"_raw": old_count}])},  # 2806: 0x6fb250d1 as the older pins read it
+        {"reactions": reactions(results=[{"_raw": new_count}])},  # 2807: as A-HEAD reads it
+        {"reactions": reactions(results=[one(i) for i in range(65)])},  # 2808
+        {"restriction_reason": [{"_": "TL_reastrictionReason", "platform": "android", "reason": "r%d" % i, "text": "t"} for i in range(17)]},
+        {"entities": [{"_": "TL_messageEntityBold", "offset": i, "length": 1} for i in range(65)]},  # 2810
+        {"reactions": reactions(top_reactors=[{"_": "TL_messageReactor", "peer_id": pu(ANN), "count": i} for i in range(17)])},
+        {"replies": {"_": "TL_messageReplies", "replies": 17, "replies_pts": 1, "recent_repliers": [pu(1000100 + i) for i in range(17)]}},
+    ]
+    attr_rows = [
+        [{"_": "TL_documentAttributeImageSize", "w": i, "h": i} for i in range(33)],  # 2813: 33 attributes
+        [fname("f%d.txt" % i) for i in range(9)],  # 2814: 9 distinct filename attributes
+    ]
+    values = [dict(media=m) for m in media_rows] + kw_rows + [dict(media=doc_with(a)) for a in attr_rows]
+    for i, kw in enumerate(values):
+        rid = 2801 + i
+        rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "hostile %d" % rid, frm=pu(ANN), **kw))))
+    assert rows[-1]["rowid"] == 2814
+    return rows
 
 
 # ---------------------------------------------------------------- writing
