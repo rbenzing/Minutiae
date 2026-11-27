@@ -64,7 +64,8 @@ func TestTelegramBlobStatesArePinned(t *testing.T) {
 		2006: "truncated", 2007: "truncated", 2008: "truncated", 2009: "truncated", 2010: "truncated",
 		2011: "malformed", 2012: "malformed", 2013: "cap", 2014: "truncated", 2015: "decoded", 2016: "decoded",
 	}
-	exp := parsertest.LoadFixture(t, "testdata", "telegram-hostile").Expect
+	// pendingOracle: until plan 4I4c Task 6 maps reply_markup, the oracle's data_undecided names it and Go's does not
+	exp := pendingOracle(parsertest.LoadFixture(t, "testdata", "telegram-hostile").Expect)
 	oracle := map[int64]map[string]any{}
 	for _, r := range exp.Records {
 		raw, _ := r.Payload["raw"].(map[string]any)

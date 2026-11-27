@@ -51,6 +51,18 @@ coordinator rules):
   - raw.replies_data (the replies shape) is stated when the cell decoded whole.
   - the text-flag names: media.<key>, <list>.type of a size entry, post_author, summary_from_language,
     restriction_reason.<key>, factcheck.<key>, entities.<key>, reactions.emoticon.
+Choices this oracle states where plan 4I4c's "Raw shapes" contract leaves the detail (Tasks 6 and 7 follow them, or the
+coordinator rules):
+  - a button's row and column and a poll answer's index are 0-based, in wire order across rows.
+  - a button whose class has a type object (TL_keyboardButton, TL_keyboardInlineButton, TL_keyboardInlineButton_legacy)
+    takes its type's label as kind; any other button its class label, "default" when that is empty (PL5).
+  - quiz and a request-peer type's bool fields are stated as read (true or false); a flag-only true only when set.
+  - an admin-rights object read with no right set is "" (read, empty), never absent.
+  - peer_types and countries_iso2 state their _total beside the kept entries and no _truncated (the contract's keys);
+    an element of countries_iso2 over 64 bytes makes countries_iso2_state too-long with no list (the total stays).
+  - an option of a results entry and of a flattened voter follows the answer's option rule (hex, else too-long).
+  - poll_answers is stated only with raw.poll, poll_results_options and poll_voters only with raw.poll_results (a cut
+    object states none of its lists); a stop exactly at the markup object states it as a stop at media is stated.
 Every value here is fictional (fixture.invalid, 1555 numbers, invented names).
 """
 import base64
@@ -94,8 +106,12 @@ MAX_SEEN_NOTE = 1000
 MAX_TINY = 64  # plan 4I4b "Raw shapes": emoticons, a size type, video_codec, language, country, summary_from_language
 MAX_SIZES, MAX_LABELS, MAX_FILE_NAMES = 16, 32, 8
 MAX_REACTIONS, MAX_TOP_REACTORS, MAX_REPLIERS, MAX_RESTRICTIONS, MAX_ENTITIES = 64, 16, 16, 16, 64
+# plan 4I4c "Raw shapes": the caps of the reply markup and poll lists; an option is hex up to MAX_OPTION bytes (Q9)
+MAX_BUTTONS, MAX_PEER_TYPES, MAX_ANSWERS, MAX_POLL_VOTERS, MAX_RECENT_VOTERS, MAX_COUNTRIES = 64, 8, 32, 64, 16, 64
+MAX_OPTION = 64
 
 MESSAGE_MAPPED = ("out", "id", "from_id", "peer_id", "fwd_from", "via_bot_id", "reply_to", "date", "message", "media",
+                  "reply_markup",  # plan 4I4c "Raw shapes" (D12): right after media
                   "action", "views", "edit_date", "grouped_id", "ttl_period",
                   # plan 4I4b "Raw shapes": the tail, in this order after ttl_period
                   "forwards", "post_author", "replies", "reactions", "restriction_reason", "quick_reply_shortcut_id", "effect",
@@ -1334,6 +1350,8 @@ def map_media(b, media, attachments, raw):
             if b.val(W + "game_outcome.seed") is not None:
                 g["seed_len"] = len(b.val(W + "game_outcome.seed"))  # the seed itself never (D11)
             media["game_outcome"] = g
+    elif cls.startswith("TL_messageMediaPoll"):
+        map_poll(b, raw)  # plan 4I4c: raw.media keeps type poll and its constructor; the poll keys sit at the top
 
 
 def coordinate(b, m, key, path, lim):
@@ -1403,7 +1421,8 @@ def all_repliers(b, p):
 def map_tail(b, raw):
     """The tail of a message blob (plan "Raw shapes" Tail): raw only, never a record field or a participant. An object
     or list is stated when read whole; a stop at or inside it is <key>_state partial (P3); one never reached is
-    nothing here (data_undecided names it)."""
+    nothing here (data_undecided names it). Plan 4I4c: the reply markup first (it lies after media on the wire)."""
+    map_markup(b, raw)
     fw = b.val("forwards")
     if fw is not None:  # B10: the column-mapped forwards stays raw.forwards
         raw["blob_forwards"] = fw
@@ -1534,10 +1553,312 @@ def map_tail(b, raw):
             x["user"] = "user:%d" % uid["value"]
         elif uid is not None and uid["kind"] == "object":
             # final-review ruling F2: an InputUser object read in place of an id is stated by its class label (ruling
-            # C4: input_user_label), never as a user
-            x["user_class"] = input_user_label(uid["cls"]) or uid["cls"]
+            # C4: input_user_label)
+            mention_user(b, x, e + ".user_id", uid)
         return x
     put_list(b, raw, "entities", "entities", MAX_ENTITIES, entity)
+
+
+def mention_user(b, x, p, e):
+    """The InputUser e read at p in a mention (plan 4I4c "Raw shapes" Mentions, design 9.4, rulings Q6, C4): user_class
+    its label; user the user:<id> of its own user_id for the user and from_message classes (the id as stored, T4); for
+    from_message also user_from_msg_id and the address of its InputPeer by the peer's own id field, or that peer's
+    label in user_from_peer_class (self, empty, a from-message peer: its inner peer is never followed);
+    user_access_hash_present when an access_hash was read anywhere inside p (never its value, R7). self and empty give
+    no user (F2: the owner's id is never looked up)."""
+    label = input_user_label(e["cls"])
+    x["user_class"] = label or e["cls"]
+    if label in ("user", "from_message") and b.val(p + ".user_id") is not None:
+        x["user"] = "user:%d" % b.val(p + ".user_id")
+    if label == "from_message":
+        if b.val(p + ".msg_id") is not None:
+            x["user_from_msg_id"] = b.val(p + ".msg_id")
+        pcls = b.obj_cls(p + ".peer")
+        if pcls is not None:
+            plabel = class_label(pcls, "TL_inputPeer")
+            field = {"user": "user_id", "chat": "chat_id", "channel": "channel_id"}.get(plabel)
+            if field is not None and b.val(p + ".peer." + field) is not None:
+                x["user_from_peer"] = "%s:%d" % (plabel, b.val(p + ".peer." + field))
+            else:
+                x["user_from_peer_class"] = plabel or pcls
+    if any(f["path"].startswith(p + ".") and f["path"].endswith("access_hash") for f in b.res["fields"]):
+        x["user_access_hash_present"] = True
+
+
+MARKUP_KINDS = (("TL_replyKeyboardMarkup", "keyboard"), ("TL_replyInlineMarkup", "inline"),
+                ("TL_replyKeyboardForceReply", "force_reply"), ("TL_replyKeyboardHide", "hide"))
+PEER_TYPE_FLAGS = ("creator", "bot_participant", "has_username", "forum", "bot", "premium", "bot_managed")
+
+
+def markup_kind(cls):
+    for prefix, kind in MARKUP_KINDS:
+        if cls is not None and cls.startswith(prefix):
+            return kind
+    return None
+
+
+def map_markup(b, raw):
+    """raw.reply_markup (level 3) and raw.reply_markup_buttons (top, plan 4I4c "Raw shapes", design 9.1, 9.2): stated
+    when the markup was read whole; a stop at the markup object itself states it as raw.media states a stop at media
+    (its constructor and, when the table knows the class, kind; or the stop's state); a stop inside it is
+    reply_markup_state partial and no button."""
+    P = "reply_markup"
+    if whole(b, P):
+        m = {"constructor": hx(b.obj_id(P))}
+        kind = markup_kind(b.obj_cls(P))
+        if kind:
+            m["kind"] = kind
+        for f in ("resize", "single_use", "selective", "is_persistent", "force_reply"):
+            if b.flag(P + "." + f):
+                m[f] = True
+        if b.val(P + ".placeholder") is not None:
+            clean_into(m, raw, "placeholder", "reply_markup.placeholder", b.val(P + ".placeholder"), MAX_NAME)
+        rows = vec_len(b, P + ".rows")
+        if rows is not None:
+            m["rows_total"] = rows
+            buttons, total = [], 0
+            for i in range(rows):
+                rp = "%s.rows[%d]" % (P, i)
+                for j in range(vec_len(b, rp + ".buttons") or 0):
+                    if len(buttons) < MAX_BUTTONS:
+                        buttons.append(button_entry(b, raw, rp, "%s.buttons[%d]" % (rp, j), i, j))
+                    total += 1
+            # P12: the list's total sits in the markup object, as the 4I4b reactions' totals do
+            m["buttons_total"] = total
+            if total > MAX_BUTTONS:
+                m["buttons_truncated"] = True
+            if buttons:
+                raw["reply_markup_buttons"] = buttons
+        raw["reply_markup"] = m
+    elif b.stop_at(P):
+        st = b.stop_at(P)
+        known = O.table().get((st["type"], st["id"])) if st["id"] is not None else None
+        if st["kind"] in ("unknown-constructor", "opaque"):
+            m = {"constructor": hx(st["id"])}
+        else:
+            m = {"state": st["kind"]}
+            if known is not None:
+                m["constructor"] = hx(st["id"])
+        if known is not None and markup_kind(known.cls):
+            m["kind"] = markup_kind(known.cls)
+        raw["reply_markup"] = m
+    elif inside(b, P):
+        raw["reply_markup_state"] = "partial"
+
+
+def button_entry(b, raw, rowp, p, i, j):
+    """One scalar-only entry of raw.reply_markup_buttons: the button at p, row i, column j (both 0-based, wire order).
+    kind is the label of its type object when its class has one (TL_keyboardButton, TL_keyboardInlineButton and
+    TL_keyboardInlineButton_legacy), else its class label, "default" for a plain TL_keyboardButton_layer* (PL5). A
+    field is read on the button, in its type object or in the mType. holder (buttonPath)."""
+    e = b.f[p]
+    x = {"row": i, "column": j, "constructor": hx(e["id"])}
+    tcls = b.obj_cls(p + ".type")
+    if tcls is not None:
+        x["kind"] = class_label(tcls, "TL_buttonType") or class_label(tcls, "TL_inlineButtonType")
+    else:
+        x["kind"] = class_label(e["cls"], "TL_keyboardButton") or "default"
+
+    def at(name):
+        for q in (p + "." + name, p + ".type." + name, p + ".mType." + name):
+            if b.has(q):
+                return q
+        return None
+    for k, lim in (("text", MAX_NAME), ("fwd_text", MAX_NAME), ("query", MAX_NAME), ("url", MAX_SHORT), ("copy_text", MAX_SHORT)):
+        q = at(k)
+        if q is not None:
+            clean_into(x, raw, k, "reply_markup_buttons." + k, b.val(q), lim)
+    for k in ("same_peer", "requires_password"):  # flag-only trues
+        q = at(k)
+        if q is not None and b.flag(q):
+            x[k] = True
+    q = at("peer_types")
+    if q is not None:
+        n = vec_len(b, q)
+        labels = [class_label(b.obj_cls("%s[%d]" % (q, t)), "TL_inlineQueryPeerType") for t in range(min(n, MAX_PEER_TYPES))]
+        if labels:
+            x["peer_types"] = ",".join(labels)  # a list would be level 5 (B1); a label never holds a comma
+        x["peer_types_total"] = n
+    for k in ("button_id", "max_quantity", "quiz"):
+        q = at(k)
+        if q is not None:
+            x[k] = b.val(q)
+    q = at("data")
+    if q is not None:  # D8, ruling Q8: bot callback data is its length and SHA-256 only
+        x["data_len"], x["data_sha256"] = len(b.val(q)), sha(b.val(q))
+    q = at("user_id")
+    if q is not None:  # an address, never a participant
+        x["user"] = "user:%d" % b.val(q)
+    q = at("peer_type")
+    if q is not None and b.obj_cls(q) is not None:
+        x["peer_type"] = class_label(b.obj_cls(q), "TL_requestPeerType")
+        for f in PEER_TYPE_FLAGS:  # a flag-only true set, or a bool as read
+            if b.has(q + "." + f):
+                x["peer_type_" + f] = b.val(q + "." + f)
+        for k in ("suggested_name", "suggested_username"):
+            if b.val(q + "." + k) is not None:
+                clean_into(x, raw, k, "reply_markup_buttons." + k, b.val(q + "." + k), MAX_NAME)
+        for k in ("user_admin_rights", "bot_admin_rights"):
+            row = b.obj_row(q + "." + k)
+            if row is not None:  # the set rights by name in bit order ("" when the object sets none)
+                trues = sorted((it for it in row.items if it.kind is None), key=lambda it: (it.word, it.bit))
+                x[k] = ",".join(it.name for it in trues if b.flag(q + "." + k + "." + it.name))
+    s = p + ".style"
+    if b.obj_cls(s) is not None:
+        for f, key in (("bg_primary", "style_primary"), ("bg_danger", "style_danger"), ("bg_success", "style_success")):
+            if b.flag(s + "." + f):
+                x[key] = True
+        if b.val(s + ".icon") is not None:
+            x["style_icon"] = b.val(s + ".icon")
+    if e["type"] == "TL_keyboard.KeyboardButton" and b.obj_cls(rowp) == "TL_keyboardInlineButtonRow_layer228":
+        # ruling C3: a fact about the A-HEAD app only (it does not show this button); the writer's app is unknown
+        x["ahead_app_drops"] = True
+    return x
+
+
+def option_into(m, v):
+    """A poll option (D9, ruling Q9): lowercase hex up to MAX_OPTION bytes ("" for zero bytes, an exact value), else
+    option_state too-long with its length and SHA-256."""
+    v = bytes(v)
+    if len(v) <= MAX_OPTION:
+        m["option"] = v.hex()
+    else:
+        m["option_state"], m["option_len"], m["option_sha256"] = "too-long", len(v), sha(v)
+
+
+def map_poll(b, raw):
+    """raw.poll (3), raw.poll_answers (top), raw.poll_results (3), raw.poll_results_options and raw.poll_voters (top)
+    of a poll media wrapper (plan 4I4c "Raw shapes" Polls, design 9.3): raw only, never Body or a participant. An object
+    is stated when read whole, its lists with it; a stop at or inside it is <key>_state partial and none of its lists
+    (4I4b P3). No unit is invented for a date or period (D10); attached media by label and constructor only (D11)."""
+    P, R = "media.poll", "media.results"
+    if whole(b, P):
+        o = {"constructor": hx(b.obj_id(P))}
+        if b.val(P + ".id") is not None:
+            o["id"] = b.val(P + ".id")
+        for f in ("closed", "public_voters", "multiple_choice", "quiz", "open_answers", "revoting_disabled", "shuffle_answers",
+                  "hide_results_until_close", "creator", "subscribers_only"):
+            if b.flag(P + "." + f):
+                o[f] = True
+        if b.val(P + ".question.text") is not None:  # question.text in every class (T1a: a name difference)
+            clean_into(o, raw, "question", "poll.question", b.val(P + ".question.text"), MAX_SHORT)
+        if vec_len(b, P + ".question.entities") is not None:
+            o["question_entities_total"] = vec_len(b, P + ".question.entities")
+        for k in ("close_period", "close_date"):
+            if b.val(P + "." + k) is not None:
+                o[k], o[k + "_unit"] = b.val(P + "." + k), "unestablished"
+        q = P + ".countries_iso2"
+        n = vec_len(b, q)
+        if n is not None:
+            o["countries_iso2_total"] = n
+            cl = [C.clean(bytes(b.val("%s[%d]" % (q, i))), 1 << 30) for i in range(n)]
+            if any(len(c.text.encode("utf-8")) > MAX_TINY for c in cl):
+                o["countries_iso2_state"] = "too-long"  # an identifier is never cut: no list
+            else:
+                if any(c.flags for c in cl[:MAX_COUNTRIES]):
+                    mark(raw, "poll.countries_iso2")
+                if cl:
+                    o["countries_iso2"] = [c.text for c in cl[:MAX_COUNTRIES]]
+        if b.val(P + ".hash") is not None:
+            o["hash"] = b.val(P + ".hash")
+        q = P + ".answers"
+        n = vec_len(b, q)
+        if n is not None:
+            o["answers_total"] = n
+            if n > MAX_ANSWERS:
+                o["answers_truncated"] = True
+            answers = [poll_answer(b, raw, "%s[%d]" % (q, i), i) for i in range(min(n, MAX_ANSWERS))]
+            if answers:
+                raw["poll_answers"] = answers
+        a = "media.attached_media"
+        if b.obj_cls(a) is not None:
+            o["attached_media_type"], o["attached_media_constructor"] = media_type(b.obj_cls(a)), hx(b.obj_id(a))
+        raw["poll"] = o
+    elif inside(b, P):
+        raw["poll_state"] = "partial"
+    if whole(b, R):
+        o = {"constructor": hx(b.obj_id(R))}
+        for f in ("min", "has_unread_votes", "can_view_stats"):
+            if b.flag(R + "." + f):
+                o[f] = True
+        if b.val(R + ".total_voters") is not None:
+            o["total_voters"] = b.val(R + ".total_voters")
+        if b.val(R + ".solution") is not None:
+            clean_into(o, raw, "solution", "poll_results.solution", b.val(R + ".solution"), MAX_SHORT)
+        if vec_len(b, R + ".solution_entities") is not None:
+            o["solution_entities_total"] = vec_len(b, R + ".solution_entities")
+        if b.obj_cls(R + ".solution_media") is not None:
+            o["solution_media_type"] = media_type(b.obj_cls(R + ".solution_media"))
+            o["solution_media_constructor"] = hx(b.obj_id(R + ".solution_media"))
+        q = R + ".recent_voters"
+        n = vec_len(b, q)
+        if n is not None:  # a vec<idNN@user> voter is user:<id> as stored (T4)
+            addrs = [x for x in (address(b, "%s[%d]" % (q, i)) for i in range(min(n, MAX_RECENT_VOTERS))) if x]
+            if addrs:
+                o["recent_voters"] = addrs
+            o["recent_voters_total"] = n
+            if n > MAX_RECENT_VOTERS:
+                o["recent_voters_truncated"] = True
+        q = R + ".results"
+        n = vec_len(b, q)
+        if n is not None:
+            o["results_total"] = n
+            if n > MAX_ANSWERS:
+                o["results_truncated"] = True
+            options, voters, vtotal = [], [], 0
+            for i in range(n):
+                e = "%s[%d]" % (q, i)
+                if i < MAX_ANSWERS:
+                    x = {}
+                    if b.has(e + ".option"):
+                        option_into(x, b.val(e + ".option"))
+                    for f in ("chosen", "correct"):  # the stored flags of the device's account, never anyone's vote
+                        if b.flag(e + "." + f):
+                            x[f] = True
+                    if b.val(e + ".voters") is not None:
+                        x["voters"] = b.val(e + ".voters")
+                    if vec_len(b, e + ".recent_voters") is not None:
+                        x["recent_voters_total"] = vec_len(b, e + ".recent_voters")
+                    options.append(x)
+                for j in range(vec_len(b, e + ".recent_voters") or 0):
+                    if len(voters) < MAX_POLL_VOTERS:  # flattened in wire order (B1: a list of lists would be too deep)
+                        v = {}
+                        if b.has(e + ".option"):
+                            option_into(v, b.val(e + ".option"))
+                        peer = address(b, "%s.recent_voters[%d]" % (e, j))
+                        if peer:
+                            v["peer"] = peer
+                        voters.append(v)
+                    vtotal += 1
+            o["option_voters_total"] = vtotal
+            if vtotal > MAX_POLL_VOTERS:
+                o["option_voters_truncated"] = True
+            if options:
+                raw["poll_results_options"] = options
+            if voters:
+                raw["poll_voters"] = voters
+        raw["poll_results"] = o
+    elif inside(b, R):
+        raw["poll_results_state"] = "partial"
+
+
+def poll_answer(b, raw, a, i):
+    """One scalar-only entry of raw.poll_answers: the PollAnswer at a, index i (0-based, wire order)."""
+    x = {"index": i, "constructor": hx(b.obj_id(a))}
+    if b.val(a + ".text.text") is not None:
+        clean_into(x, raw, "text", "poll_answers.text", b.val(a + ".text.text"), MAX_NAME)
+    if vec_len(b, a + ".text.entities") is not None:
+        x["entities_total"] = vec_len(b, a + ".text.entities")
+    if b.has(a + ".option"):
+        option_into(x, b.val(a + ".option"))
+    if b.obj_cls(a + ".media") is not None:
+        x["media_type"], x["media_constructor"] = media_type(b.obj_cls(a + ".media")), hx(b.obj_id(a + ".media"))
+    added = address(b, a + ".added_by")
+    if added:  # an address, never a participant
+        x["added_by"] = added
+    if b.val(a + ".date") is not None:
+        x["date"], x["date_unit"] = b.val(a + ".date"), "unestablished"
+    return x
 
 
 def trailer(raw, b, cls):
@@ -2157,7 +2478,144 @@ def core_messages():
     R[59] = row(59, -11, S77, enc({"_": "TL_message_secret_layer72", "out": True, "id": -11, "ttl": 0, "from_id": SELF, "peer_id": pu(ANN),
                                    "date": D + 59, "message": "", "media": enc_document([{"_raw": u32le(0x0BAD0006)}]), "entities": []}), out=1)
     stage_a_messages(R)
+    stage_b_messages(R)
     return R
+
+
+def cb(n, k):
+    """k bytes of bot callback data: SYNTHETIC-CALLBACK-<n>- repeated (D8, ruling Q8: only its length and SHA-256 are
+    ever shown)."""
+    unit = ("SYNTHETIC-CALLBACK-%02d-" % n).encode("ascii")
+    return (unit * (k // len(unit) + 1))[:k]
+
+
+STAGE_B_SECRETS = range(4401, 4500)  # plan 4I4c: every new access_hash is secret_i64(n) for n here, unused before
+
+
+def kb(cls, text, **kw):
+    """A button of class cls with its text."""
+    return dict({"_": cls, "text": text}, **kw)
+
+
+def r81_markup():
+    rights = lambda *names: dict({"_": "TL_chatAdminRights"}, **{n: True for n in names})
+    btn = lambda text, typ: kb("TL_keyboardButton", text, type=typ)
+    return {"_": "TL_replyKeyboardMarkup", "resize": True, "single_use": True, "is_persistent": True, "placeholder": "Pick one", "rows": [
+        {"_": "KeyboardButtonRow", "buttons": [btn("Yes", {"_": "TL_buttonTypeDefault"}), btn("Call me", {"_": "TL_buttonTypeRequestPhone"}),
+                                               btn("Where", {"_": "TL_buttonTypeRequestGeoLocation"})]},
+        {"_": "KeyboardButtonRow", "buttons": [
+            btn("Quiz", {"_": "TL_buttonTypeRequestPoll", "quiz": True}),
+            kb("TL_keyboardButton", "App", style={"_": "KeyboardButtonStyle", "bg_primary": True, "icon": 5000000005},
+               type={"_": "TL_buttonTypeSimpleWebView", "url": "fixture.invalid/app"})]},
+        {"_": "KeyboardButtonRow", "buttons": [btn("Pick chat", {
+            "_": "TL_buttonTypeRequestPeer", "button_id": 7, "max_quantity": 1, "peer_type": {
+                "_": "TL_requestPeerTypeChat", "creator": True, "user_admin_rights": rights("change_info", "ban_users"),
+                "bot_admin_rights": rights("post_messages")}})]}]}
+
+
+def r83_value():
+    """R83: an inline keyboard of two 0x19420af6 rows (legacy typed buttons, then layer-228 buttons)."""
+    markup = {"_": "TL_replyInlineMarkup", "rows": [
+        {"_": "TL_keyboardInlineButtonRow", "buttons": [
+            kb("TL_keyboardInlineButton_legacy", "Open", type={"_": "TL_inlineButtonTypeUrl", "url": "fixture.invalid/o"}),
+            kb("TL_keyboardInlineButton_legacy", "Press", type={"_": "TL_inlineButtonTypeCallback", "requires_password": True, "data": cb(1, 16)})]},
+        {"_": "TL_keyboardInlineButtonRow", "buttons": [
+            kb("TL_keyboardButtonSwitchInline_layer228", "Share", **{"mType.same_peer": True, "mType.query": "q", "mType.peer_types": [
+                {"_": "TL_inlineQueryPeerTypePM"}, {"_": "TL_inlineQueryPeerTypeChat"}, {"_": "TL_inlineQueryPeerTypeBroadcast"}]}),
+            kb("TL_keyboardButtonCopy_layer228", "Copy", **{"mType.copy_text": "CODE-1"}),
+            kb("TL_keyboardButtonUserProfile_layer228", "Profile", **{"mType.user_id": 1000009})]}]}
+    return tlmsg(183, 83, "Inline", frm=pu(ANN), reply_markup=markup)
+
+
+def r88_value():
+    """R88: a quiz poll with an attached geo, two answers (one with media and an author) and results with voters."""
+    geo = lambda h: {"_": "TL_messageMediaGeo", "geo": {"_": "TL_geoPoint", "_long": 2.35, "lat": 48.85, "access_hash": h}}
+    twe = lambda text, ents=(): {"_": "TL_textWithEntities", "text": text, "entities": list(ents)}
+    poll = {"_": "TL_poll", "id": 8000001, "quiz": True, "public_voters": True, "creator": True,
+            "question": twe("Capital?", [{"_": "TL_messageEntityBold", "offset": 0, "length": 7}]),
+            "answers": [{"_": "TL_pollAnswer", "text": twe("Paris"), "option": b"\x00"},
+                        {"_": "TL_pollAnswer", "text": twe("Rome"), "option": b"\x01", "media": geo(secret_i64(4418)), "added_by": pu(1000009), "date": D + 5}],
+            "close_period": 600, "close_date": D + 600, "countries_iso2": ["FR", "IT"], "hash": 77}
+    results = {"_": "TL_pollResults", "has_unread_votes": True, "results": [
+        {"_": "TL_pollAnswerVoters", "chosen": True, "correct": True, "option": b"\x00", "voters": 3, "recent_voters": [pu(ANN), pu(1000009)]},
+        {"_": "TL_pollAnswerVoters", "option": b"\x01", "voters": 1, "recent_voters": [pch(3000001)]}],
+        "total_voters": 4, "recent_voters": [pu(ANN)], "solution": "Because", "solution_entities": []}
+    return tlmsg(188, 88, "", frm=pu(ANN), media={"_": "TL_messageMediaPoll", "poll": poll, "results": results, "attached_media": geo(secret_i64(4417))})
+
+
+def stage_b_messages(R):
+    """R81-R96 of the plan 4I4c "Fixture scenario" (telegram-v181; mid = 100 + rowid)."""
+    def m(rid, text, **kw):
+        R[rid] = row(rid, 100 + rid, ANN, enc(tlmsg(100 + rid, rid, text, frm=pu(ANN), **kw)))
+    m(81, "Keyboard", reply_markup=r81_markup(), edit_date=D + 60, entities=[{"_": "TL_messageEntityBold", "offset": 0, "length": 3}])
+    m(82, "Old keyboard", reply_markup={"_": "TL_replyKeyboardMarkup_layer129", "rows": [{"_": "KeyboardButtonRow", "buttons": [
+        kb("TL_keyboardButton_layer223", "Old"), kb("TL_keyboardButtonRequestPhone_layer223", "Phone")]}]})
+    R[83] = row(83, 183, ANN, enc(r83_value()))
+    m(84, "Ahead row", reply_markup={"_": "TL_replyInlineMarkup", "rows": [{"_": "TL_keyboardInlineButtonRow_layer228", "buttons": [
+        kb("TL_keyboardButtonUrl_layer228", "Site", **{"mType.url": "fixture.invalid/s"}),
+        kb("TL_keyboardButtonCallback_layer228", "Go", **{"mType.data": cb(2, 8)}),
+        kb("TL_keyboardButton_layer228", "Plain")]}]})
+    m(85, "Older inline", reply_markup={"_": "TL_replyInlineMarkup_layer228", "rows": [{"_": "TL_keyboardInlineButtonRow_layer228", "buttons": [
+        kb("TL_keyboardButtonUrl_layer223", "Link", **{"mType.url": "fixture.invalid/l"}),
+        kb("TL_keyboardButtonCallback_layer117", "Old", **{"mType.data": cb(3, 4)}),
+        kb("TL_keyboardButtonGame_layer223", "Play")]}]})
+    m(86, "Force", reply_markup={"_": "TL_replyKeyboardForceReply", "single_use": True, "placeholder": "Reply here"})
+    m(87, "Hide", reply_markup={"_": "TL_replyKeyboardHide", "selective": True}, edit_date=D + 70)
+    R[88] = row(88, 188, ANN, enc(r88_value()))
+    twe = lambda text: {"_": "TL_textWithEntities", "text": text, "entities": []}
+    old_answer = lambda text, opt: {"_": "TL_pollAnswer_layer178", "text.text": text, "option": opt}
+    poll_media = lambda poll, results: {"_": "TL_messageMediaPoll", "poll": poll, "results": results}
+    m(89, "", media=poll_media(
+        {"_": "TL_poll_layer223", "id": 8000002, "multiple_choice": True, "question": twe("Pick"), "close_date": D + 900,
+         "answers": [{"_": "TL_pollAnswer_layer223", "text": twe(t), "option": bytes([i])} for i, t in enumerate(("A", "B", "C"))]},
+        {"_": "TL_pollResults_layer223", "results": [{"_": "TL_pollAnswerVoters_layer223", "option": b"\x00", "voters": 2}], "total_voters": 2}))
+    m(90, "", media=poll_media(
+        {"_": "TL_poll_layer111", "id": 8000003, "question.text": "Old?", "answers": [old_answer("Yes", b"\x00")]},
+        {"_": "TL_pollResults_layer111", "total_voters": 2, "recent_voters": [ANN, 1000009]}))
+    m(91, "", media=poll_media(
+        {"_": "TL_poll_layer178", "id": 8000004, "question.text": "Older?", "answers": [old_answer("No", b"\x01")], "close_period": 60},
+        {"_": "TL_pollResults_layer158", "total_voters": 1, "recent_voters": [1000009]}))
+    m(92, "", media=poll_media(
+        {"_": "TL_poll_toDelete", "id": 8000005, "quiz": True, "question.text": "Gone?", "answers": [old_answer("Maybe", b"\x02")]},
+        {"_": "TL_pollResults_layer131", "total_voters": 1, "recent_voters": [ANN], "solution": "Since", "solution_entities": []}))
+    m(93, "", media=poll_media(
+        {"_": "TL_poll_layer224", "id": 8000006, "closed": True, "question": twe("Late?"), "hash": 78,
+         "answers": [{"_": "TL_pollAnswer", "text": twe("Yes"), "option": b"\x03"}]},
+        {"_": "TL_pollResults_layer108", "results": [{"_": "TL_pollAnswerVoters", "option": b"\x03", "voters": 1, "recent_voters": []}],
+         "total_voters": 1}))
+    m(94, "", media={"_": "TL_messageMediaPoll_layer223", "poll": {
+        "_": "TL_poll", "id": 8000007, "question": twe("Short?"), "answers": [{"_": "TL_pollAnswer", "text": twe("Ok"), "option": b""}], "hash": 79},
+        "results": {"_": "TL_pollResults", "total_voters": 0}})
+    mention = lambda i, user: {"_": "TL_inputMessageEntityMentionName", "offset": i, "length": 1, "user_id": user}
+    m(95, "Mentions", entities=[
+        mention(0, {"_": "TL_inputUser", "user_id": 1000009, "access_hash": secret_i64(4401)}),
+        mention(1, {"_": "TL_inputUser_layer132", "user_id": 1000010, "access_hash": secret_i64(4402)}),
+        mention(2, {"_": "TL_inputUserFromMessage", "peer": {"_": "TL_inputPeerUser", "user_id": ANN, "access_hash": secret_i64(4403)},
+                    "msg_id": 55, "user_id": 1000011}),
+        mention(3, {"_": "TL_inputUserFromMessage_layer132", "peer": {"_": "TL_inputPeerChannel", "channel_id": 3000001, "access_hash": secret_i64(4404)},
+                    "msg_id": 56, "user_id": 1000012}),
+        mention(4, {"_": "TL_inputUserSelf"}), mention(5, {"_": "TL_inputUserEmpty"})])
+    self_peer = {"_": "TL_inputPeerSelf"}
+    peers = [{"_": "TL_inputPeerChat_layer131", "chat_id": 2000001},
+             {"_": "TL_inputPeerUserFromMessage_layer131", "peer": self_peer, "msg_id": 1, "user_id": ANN},
+             {"_": "TL_inputPeerChannel_layer131", "channel_id": 3000001, "access_hash": secret_i64(4405)},
+             {"_": "TL_inputPeerChannel", "channel_id": 3000002, "access_hash": secret_i64(4406)},
+             {"_": "TL_inputPeerChat", "chat_id": 2000002},
+             {"_": "TL_inputPeerUser_layer131", "user_id": BOT, "access_hash": secret_i64(4407)},
+             self_peer, {"_": "TL_inputPeerEmpty"},
+             {"_": "TL_inputPeerChannelFromMessage_layer131", "peer": self_peer, "msg_id": 2, "channel_id": 3000001},
+             {"_": "TL_inputPeerUserFromMessage", "peer": {"_": "TL_inputPeerUser", "user_id": 1000009, "access_hash": secret_i64(4408)},
+              "msg_id": 3, "user_id": 1000009},
+             {"_": "TL_inputPeerChannelFromMessage", "peer": {"_": "TL_inputPeerEmpty"}, "msg_id": 4, "channel_id": 3000002},
+             {"_": "TL_inputPeerUser", "user_id": 1000004, "access_hash": secret_i64(4409)}]
+    m(96, "Mentions by message", entities=[mention(i, {"_": "TL_inputUserFromMessage", "peer": pr, "msg_id": 60 + i, "user_id": 1000020 + i})
+                                           for i, pr in enumerate(peers)])
+    # every new access_hash is a secret_i64 of STAGE_B_SECRETS named once in this file (so the key-material test,
+    # which derives its targets from these literals, searches each), and no other row uses that range
+    src = open(os.path.abspath(__file__), encoding="utf-8").read()
+    used = [int(n) for n in re.findall(r"secret_i64\((\d+)\)", src)]
+    stage_b = [n for n in used if n in STAGE_B_SECRETS]
+    assert len(stage_b) == len(set(stage_b)) == 11, stage_b
 
 
 def user_rows():
@@ -2393,6 +2851,50 @@ def seen_ids(blobs, typ):
 # layers rows follow every 4I4b one, so no 4I4b row changes its rowid.
 STAGE_B_FULL = (("InputUser", 0xF21158C6), ("InputUser", 0xD8292816), ("InputUser", 0x1DA448E2),
                 ("InputUser", 0x2D117597), ("MessageMedia", 0x4BD6E798))
+# The number of full rows of STAGE_A_TYPES in the plan 4I4b table: every full row of those types beyond them must be in
+# STAGE_B_FULL (layers_rows asserts it), so a later plan that makes another 4I4b-type row full fails here instead of
+# shifting the 4I4b layers rowids (Task 4 review).
+STAGE_A_FULL_4I4B = 164
+
+# The types plan 4I4c adds (design 7): every full row of these is read by some committed cell (TestTelegramFixtures-
+# ReadEveryStageAFullRow); the layers rows from 2101 embed the ones the scenario does not read.
+STAGE_B_TYPES = ("ReplyMarkup", "TL_keyboard.KeyboardButtonRow", "TL_keyboard.KeyboardInlineButtonRow", "TL_keyboard.KeyboardButton",
+                 "TL_keyboard.KeyboardInlineButton", "TL_keyboard.KeyboardButtonStyle", "TL_keyboard.ButtonType",
+                 "TL_keyboard.InlineButtonType", "RequestPeerType", "TL_chatAdminRights", "InlineQueryPeerType", "Poll", "PollAnswer",
+                 "PollResults", "PollAnswerVoters", "InputPeer")
+
+
+def embed_b(r, rid):
+    """A message whose blob reads the full Stage B row r (plan 4I4c "Fixture scenario"): r with its mandatory fields, in
+    the smallest container its type allows."""
+    v = mandatory(r, r.typ, rid, "", True)
+    msg = lambda **kw: tlmsg(rid, rid, "row " + r.cls, frm=pu(ANN), **kw)
+    keyboard = lambda button: filled("TL_replyKeyboardMarkup", rid, rows=[{"_": "KeyboardButtonRow", "buttons": [button]}])
+    inline = lambda button: filled("TL_replyInlineMarkup", rid, rows=[{"_": "TL_keyboardInlineButtonRow", "buttons": [button]}])
+    poll = lambda **kw: msg(media=filled("TL_messageMediaPoll", rid, **kw))
+    by_type = {
+        "ReplyMarkup": lambda: msg(reply_markup=v),
+        "TL_keyboard.KeyboardButtonRow": lambda: msg(reply_markup=filled("TL_replyKeyboardMarkup", rid, rows=[v])),
+        "TL_keyboard.KeyboardInlineButtonRow": lambda: msg(reply_markup=filled("TL_replyInlineMarkup", rid, rows=[v])),
+        # each button family in the row whose union reads it first (rows read the other family second, ruling T2a)
+        "TL_keyboard.KeyboardButton": lambda: msg(reply_markup=inline(v)),
+        "TL_keyboard.KeyboardInlineButton": lambda: msg(reply_markup=keyboard(v)),
+        "TL_keyboard.KeyboardButtonStyle": lambda: msg(reply_markup=inline(filled("TL_keyboardButton_layer228", rid, style=v))),
+        "TL_keyboard.ButtonType": lambda: msg(reply_markup=inline(filled("TL_keyboardButton", rid, type=v))),
+        "TL_keyboard.InlineButtonType": lambda: msg(reply_markup=keyboard(filled("TL_keyboardInlineButton", rid, type=v))),
+        "RequestPeerType": lambda: msg(reply_markup=inline(filled("TL_keyboardButton", rid, type=filled("TL_buttonTypeRequestPeer", rid, peer_type=v)))),
+        "TL_chatAdminRights": lambda: msg(reply_markup=inline(filled("TL_keyboardButton", rid, type=filled(
+            "TL_buttonTypeRequestPeer", rid, peer_type=filled("TL_requestPeerTypeChat", rid, user_admin_rights=v))))),
+        "InlineQueryPeerType": lambda: msg(reply_markup=keyboard(filled("TL_keyboardInlineButton", rid, type=filled(
+            "TL_inlineButtonTypeSwitchInline", rid, peer_types=[v])))),
+        "Poll": lambda: poll(poll=v),
+        "PollAnswer": lambda: poll(poll=filled("TL_poll", rid, answers=[v])),
+        "PollResults": lambda: poll(results=v),
+        "PollAnswerVoters": lambda: poll(results=filled("TL_pollResults", rid, results=[v])),
+        "InputPeer": lambda: msg(entities=[{"_": "TL_inputMessageEntityMentionName", "offset": 0, "length": 1,
+                                            "user_id": filled("TL_inputUserFromMessage", rid, peer=v)}]),
+    }
+    return by_type[r.typ]()
 
 
 def layers_rows():
@@ -2432,15 +2934,29 @@ def layers_rows():
     allow["reason"] = {"_": "TL_phoneCallDiscardReasonAllowGroupCall", "encrypted_key": secret("4i4-layers", 8)}
     rows.append(row(1601, 1601, ANN, enc(service(1601, 1601, allow, frm=pu(ANN)))))
     # plan 4I4b P10: one row per full row of the 4I4b types the scenario rows (and the media rows above) do not read
-    scenario = [r["data"] for r in list(core_messages().values()) + list(pre84_rows().values()) + list(v84_rows().values()) + rows
+    # the 4I4b scenario (R1-R80): plan 4I4c's rows R81 on read some of these types, but their layers rows keep their rowids
+    core = [r for k, r in core_messages().items() if k <= 80]
+    scenario = [r["data"] for r in core + list(pre84_rows().values()) + list(v84_rows().values()) + rows
                 if isinstance(r.get("data"), (bytes, bytearray))]
     seen = seen_ids(scenario, "Message")
-    todo = [r for r in ordered if r.typ in STAGE_A_TYPES and r.body == "full" and (r.typ, r.cid) not in seen]
+    full_a = [r for r in ordered if r.typ in STAGE_A_TYPES and r.body == "full"]
+    extra = len([r for r in full_a if (r.typ, r.cid) not in STAGE_B_FULL]) - STAGE_A_FULL_4I4B
+    assert extra == 0, "%d full rows of 4I4b types outside the 4I4b set are not listed in STAGE_B_FULL" % extra
+    todo = [r for r in full_a if (r.typ, r.cid) not in seen]
     todo = [r for r in todo if (r.typ, r.cid) not in STAGE_B_FULL] + [r for r in todo if (r.typ, r.cid) in STAGE_B_FULL]
     for i, r in enumerate(todo):
         rid = 1701 + i
         rows.append(row(rid, rid, ANN, enc(embed(r, rid))))
     assert 1701 + len(todo) <= 2001
+    # plan 4I4c: one row per full row of the Stage B types that no v181 scenario row nor an earlier layers row reads
+    scenario = [r["data"] for r in list(core_messages().values()) + list(pre84_rows().values()) + list(v84_rows().values()) + rows
+                if isinstance(r.get("data"), (bytes, bytearray))]
+    seen = seen_ids(scenario, "Message")
+    todo = [r for r in ordered if r.typ in STAGE_B_TYPES and r.body == "full" and (r.typ, r.cid) not in seen]
+    for i, r in enumerate(todo):
+        rid = 2101 + i
+        rows.append(row(rid, rid, ANN, enc(embed_b(r, rid))))
+    assert 2101 + len(todo) < 2401, len(todo)
     for i, r in enumerate([r for r in ordered if r.typ == "User"]):
         uid = 5000001 + i
         v = mandatory(r, "User", uid, "")
@@ -2460,7 +2976,7 @@ NAN_BITS = struct.pack(">Q", 0x7FF8000000000001)
 
 
 def hostile_rows():
-    """H1-H12 of the plan; rowids from 2001; plan 4I4b's from 2401. Returns (rows, [(rowid, column) that hold NaN])."""
+    """H1-H12 of the plan; rowids from 2001; plan 4I4b's from 2401; plan 4I4c's from 2901. Returns (rows, [(rowid, column) that hold NaN])."""
     out = []
     base = enc(tlmsg(2000, 0, "Hello Ann here", frm=pu(ANN)))
     rid = [2000]
@@ -2499,6 +3015,7 @@ def hostile_rows():
     for field in (secret("4i4-dockey", 32), secret("4i4-dociv", 32)):
         h(doc[:doc.index(field) + len(E.SYNTHETIC_PREFIX) + 6], uid=S77, out=1, read_state=0)
     out.extend(stage_a_hostile_rows())
+    out.extend(stage_b_hostile_rows())
     return out, frozenset({(nan_row["rowid"], "uid")})
 
 
@@ -2556,6 +3073,46 @@ def stage_a_hostile_rows():
         rid = 2801 + i
         rows.append(row(rid, rid, ANN, enc(tlmsg(rid, rid, "hostile %d" % rid, frm=pu(ANN), **kw))))
     assert rows[-1]["rowid"] == 2814
+    return rows
+
+
+def stage_b_hostile_rows():
+    """H2901-H2912 (plan 4I4c "Fixture scenario"), H3001... (R83 cut at every deep boundary) and H3301... (R88 likewise)."""
+    VEC = lambda n: u32le(E.VECTOR_ID) + struct.pack("<i", n)
+    twe = lambda text: {"_": "TL_textWithEntities", "text": text, "entities": []}
+    poll = lambda **kw: dict({"_": "TL_poll", "id": 8100000, "question": twe("H?"), "answers": [], "hash": 1}, **kw)
+    results = lambda **kw: dict({"_": "TL_pollResults"}, **kw)
+    poll_media = lambda p=None, r=None: {"_": "TL_messageMediaPoll", "poll": p or poll(), "results": r or results()}
+    inline = lambda *buttons: {"_": "TL_replyInlineMarkup", "rows": [{"_": "TL_keyboardInlineButtonRow_layer228", "buttons": list(buttons)}]}
+    answer = lambda i, opt=None: {"_": "TL_pollAnswer", "text": twe("a%d" % i), "option": bytes([i % 256]) if opt is None else opt}
+    voters = lambda opt, peers: {"_": "TL_pollAnswerVoters", "option": opt, "voters": len(peers), "recent_voters": peers}
+    values = [
+        dict(reply_markup=inline({"_raw": u32le(0x0BADB0B0)})),  # 2901: a union ID of neither button type
+        dict(media=poll_media(r={"_": "TL_pollResults_layer111", "recent_voters": {"_raw": VEC(10001)}})),  # 2902: over MaxVector
+        dict(media=poll_media(p=poll(countries_iso2={"_raw": VEC(1000)}))),  # 2903: a string vector past the end
+        dict(media=poll_media(r={"_": "TL_pollResults_layer158", "recent_voters": {"_raw": VEC(1000) + struct.pack("<q", ANN)}})),  # 2904
+        # 2905: an inline button in an older reply keyboard is read through the union (ruling T2a), never stopped
+        dict(reply_markup={"_": "TL_replyKeyboardMarkup_layer129", "rows": [{"_": "KeyboardButtonRow", "buttons": [
+            kb("TL_keyboardButtonUrl_layer223", "Inline here", **{"mType.url": "fixture.invalid/n"})]}]}),
+        dict(reply_markup={"_": "TL_replyKeyboardMarkup", "rows": [  # 2906: 65 buttons in 5 rows of 13
+            {"_": "KeyboardButtonRow", "buttons": [kb("TL_keyboardButton_layer223", "b%d" % (r * 13 + c)) for c in range(13)]} for r in range(5)]}),
+        dict(media=poll_media(p=poll(answers=[answer(i) for i in range(33)]))),  # 2907: 33 answers
+        dict(reply_markup=inline({"_raw": u32le(0xD02E7FD4)})),  # 2908: a client-to-server input class (design 10: opaque)
+        dict(media=poll_media(p=poll(answers=[answer(0, b"\x07" * 65)]))),  # 2909: a 65-byte option
+        dict(reply_markup=inline(kb("TL_keyboardButtonSwitchInline_layer228", "Nine", **{"mType.query": "", "mType.peer_types": [
+            {"_": c} for c in ("TL_inlineQueryPeerTypePM", "TL_inlineQueryPeerTypeBotPM", "TL_inlineQueryPeerTypeChat", "TL_inlineQueryPeerTypeMegagroup",
+                               "TL_inlineQueryPeerTypeBroadcast", "TL_inlineQueryPeerTypeSameBotPM", "TL_inlineQueryPeerTypePM",
+                               "TL_inlineQueryPeerTypeChat", "TL_inlineQueryPeerTypeBroadcast")]}))),  # 2910: 9 peer types
+        dict(media=poll_media(r=results(recent_voters=[pu(1000100 + i) for i in range(17)]))),  # 2911: 17 recent voters
+        dict(media=poll_media(r=results(results=[voters(b"\x00", [pu(1000100 + i) for i in range(40)]),
+                                                 voters(b"\x01", [pu(1000200 + i) for i in range(25)])]))),  # 2912: 65 option voters
+    ]
+    rows = [row(2901 + i, 2901 + i, ANN, enc(tlmsg(2901 + i, 2901 + i, "hostile %d" % (2901 + i), frm=pu(ANN), **kw))) for i, kw in enumerate(values)]
+    assert rows[-1]["rowid"] == 2912
+    rows += cuts(3001, r83_value())
+    assert rows[-1]["rowid"] < 3301, rows[-1]["rowid"]
+    rows += cuts(3301, r88_value())
+    assert rows[-1]["rowid"] < 3601, rows[-1]["rowid"]
     return rows
 
 

@@ -1,10 +1,13 @@
 package androidtelegram_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -138,9 +141,9 @@ func oracleRecords(t *testing.T, variant string) map[string]map[int64]rec {
 func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	all := oracleRecords(t, "telegram-v181")
 	v2 := all["messages_v2"]
-	// F1: R1-R59 without R52, which lies only in an uncommitted WAL frame; plan 4I4b's R60-R80
-	if len(v2) != 79 {
-		t.Fatalf("%d messages_v2 records, want 79 (R1-R80 without the uncommitted R52)", len(v2))
+	// F1: R1-R59 without R52, which lies only in an uncommitted WAL frame; plan 4I4b's R60-R80; plan 4I4c's R81-R96
+	if len(v2) != 95 {
+		t.Fatalf("%d messages_v2 records, want 95 (R1-R96 without the uncommitted R52)", len(v2))
 	}
 	if _, has := v2[52]; has {
 		t.Error("R52 lies only in an uncommitted WAL frame and is not live")
@@ -339,6 +342,7 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 		media(79)["cached_page_class"] == "TL_page_layer110" && strings.Contains(","+fmt.Sprint(msg(79).raw["data_undecided"])+",", ",edit_date,") && !r79Edited)
 	want("R80", media(80)["key_present"] == true && media(80)["iv_present"] == true && entry(atts(msg(80)), 0)["name"] == "secret.pdf" &&
 		entry(list(msg(80), "media_thumbs"), 0)["location_class"] == "TL_fileEncryptedLocation" && msg(80).raw["secret_chat"] == true)
+	stageBFacts(t, want, msg)
 	n := 0
 	for _, tb := range all {
 		for _, r := range tb {
@@ -464,6 +468,234 @@ func TestAndroidTelegramOracleStatesTheSpecRules(t *testing.T) {
 	want("H2812", num(h12["recent_repliers_total"]) == "17" && h12["recent_repliers_truncated"] == true && len(strs(h12["recent_repliers"])) == 16)
 	want("H2813", num(hm(2813)["attributes_total"]) == "33" && hm(2813)["attributes_truncated"] == true && len(strs(hm(2813)["attributes"])) == 32)
 	want("H2814", hm(2814)["file_name_state"] == "conflict" && num(hm(2814)["file_names_total"]) == "9" && len(strs(hm(2814)["file_names"])) == 8)
+	stageBHostileFacts(want, h, hostile)
+}
+
+// stageBList is raw[k] of e as a list of objects (nil entries for anything else).
+func stageBList(e rec, k string) []map[string]any {
+	l, _ := e.raw[k].([]any)
+	out := make([]map[string]any, len(l))
+	for i, x := range l {
+		out[i], _ = x.(map[string]any)
+	}
+	return out
+}
+
+// field is key k of every entry, as text ("" when absent; numbers by their decimal text).
+func field(l []map[string]any, k string) []string {
+	out := []string{}
+	for _, m := range l {
+		switch v := m[k].(type) {
+		case string:
+			out = append(out, v)
+		case nil:
+			out = append(out, "")
+		case bool:
+			out = append(out, strconv.FormatBool(v))
+		default:
+			out = append(out, num(v))
+		}
+	}
+	return out
+}
+
+func strList(v any) []string {
+	l, _ := v.([]any)
+	out := []string{}
+	for _, x := range l {
+		s, _ := x.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+// stageBFacts: the literal facts of plan 4I4c's "Fixture scenario" rows R81-R96 on telegram-v181, one per row of its
+// "Facts" column, written from the plan's "Raw shapes" contract (design 9.1-9.4; rulings Q5, Q6, Q8, Q9, C3, C4, PL5,
+// P12, T2a) and never read back from the generator.
+func stageBFacts(t *testing.T, want func(string, bool), msg func(int64) rec) {
+	t.Helper()
+	markup := func(n int64) map[string]any { return msg(n).rawObj("reply_markup") }
+	buttons := func(n int64) []map[string]any { return stageBList(msg(n), "reply_markup_buttons") }
+	only := func(n int64) bool { // participants unchanged: the sender alone (no button user, voter or mentioned user)
+		parts, _ := msg(n).payload["participants"].([]any)
+		return len(parts) == 1 && msg(n).from() == "user:1000002"
+	}
+	// R81 (design 9.1, 9.2): a reply keyboard with every ButtonType, a style and a request-peer button with admin rights
+	b81 := buttons(81)
+	m81 := markup(81)
+	want("R81", m81["kind"] == "keyboard" && m81["constructor"] == "0x85dd99d1" && m81["resize"] == true && m81["single_use"] == true &&
+		m81["is_persistent"] == true && m81["selective"] == nil && m81["placeholder"] == "Pick one" && num(m81["rows_total"]) == "3" &&
+		num(m81["buttons_total"]) == "6" && m81["buttons_truncated"] == nil && msg(81).raw["data_state"] == "decoded" &&
+		reflect.DeepEqual(field(b81, "kind"), []string{"default", "request_phone", "request_geo_location", "request_poll", "simple_web_view", "request_peer"}) &&
+		reflect.DeepEqual(field(b81, "text"), []string{"Yes", "Call me", "Where", "Quiz", "App", "Pick chat"}) &&
+		reflect.DeepEqual(field(b81, "row"), []string{"0", "0", "0", "1", "1", "2"}) && reflect.DeepEqual(field(b81, "column"), []string{"0", "1", "2", "0", "1", "0"}) &&
+		b81[3]["quiz"] == true && b81[4]["url"] == "fixture.invalid/app" && b81[4]["style_primary"] == true && num(b81[4]["style_icon"]) == "5000000005" &&
+		num(b81[5]["button_id"]) == "7" && b81[5]["peer_type"] == "chat" && b81[5]["peer_type_creator"] == true &&
+		b81[5]["user_admin_rights"] == "change_info,ban_users" && b81[5]["bot_admin_rights"] == "post_messages" && num(b81[5]["max_quantity"]) == "1" &&
+		msg(81).r.Times["edited"] == "2023-11-14T22:14:20Z" && reflect.DeepEqual(stageBList(msg(81), "entities"), []map[string]any{
+		{"type": "bold", "offset": json.Number("0"), "length": json.Number("3")},
+	}) && msg(81).body() == "Keyboard" && only(81))
+	// R82 (PL5): plain TL_keyboardButton_layer* is default
+	want("R82", markup(82)["constructor"] == "0x3502758c" && markup(82)["kind"] == "keyboard" &&
+		reflect.DeepEqual(field(buttons(82), "kind"), []string{"default", "request_phone"}))
+	// R83 (Q8): callback data is its length and SHA-256 only; a profile button's user is an address, never a participant
+	b83, cbSum := buttons(83), sha256.Sum256([]byte("SYNTHETIC-CALLBA"))
+	_, data := b83[1]["data"]
+	want("R83", markup(83)["kind"] == "inline" && markup(83)["constructor"] == "0xb2b15770" && num(markup(83)["rows_total"]) == "2" &&
+		num(markup(83)["buttons_total"]) == "5" &&
+		reflect.DeepEqual(field(b83, "kind"), []string{"url", "callback", "switch_inline", "copy", "user_profile"}) &&
+		b83[0]["url"] == "fixture.invalid/o" && b83[1]["requires_password"] == true && num(b83[1]["data_len"]) == "16" &&
+		b83[1]["data_sha256"] == hex.EncodeToString(cbSum[:]) && !data && b83[2]["same_peer"] == true && b83[2]["query"] == "q" &&
+		b83[2]["peer_types"] == "pm,chat,broadcast" && num(b83[2]["peer_types_total"]) == "3" && num(b83[2]["row"]) == "1" &&
+		b83[3]["copy_text"] == "CODE-1" && b83[4]["user"] == "user:1000009" && only(83))
+	// R84 (C3): a KeyboardButton element of a TL_keyboardInlineButtonRow_layer228 row is one the A-HEAD app drops
+	b84 := buttons(84)
+	want("R84", reflect.DeepEqual(field(b84, "kind"), []string{"url", "callback", "default"}) && b84[0]["ahead_app_drops"] == nil &&
+		b84[1]["ahead_app_drops"] == nil && b84[2]["ahead_app_drops"] == true && num(b84[1]["data_len"]) == "8")
+	// R85 (Q5 held, T2a): the 5.14.0-era inline markup decodes whole
+	want("R85", msg(85).raw["data_state"] == "decoded" && markup(85)["constructor"] == "0x48a30254" && markup(85)["kind"] == "inline" &&
+		reflect.DeepEqual(field(buttons(85), "kind"), []string{"url", "callback", "game"}) && num(buttons(85)[1]["data_len"]) == "4")
+	_, r86Rows := markup(86)["rows_total"]
+	want("R86 R87", markup(86)["kind"] == "force_reply" && markup(86)["single_use"] == true && markup(86)["placeholder"] == "Reply here" && !r86Rows &&
+		markup(87)["kind"] == "hide" && markup(87)["selective"] == true && msg(87).r.Times["edited"] == "2023-11-14T22:14:30Z")
+	// R88 (design 9.3, D9, D10, D11): a poll is raw only, never Body; voters and answer authors are never participants
+	poll := func(n int64) map[string]any { return msg(n).rawObj("poll") }
+	results := func(n int64) map[string]any { return msg(n).rawObj("poll_results") }
+	p88, r88, a88 := poll(88), results(88), stageBList(msg(88), "poll_answers")
+	o88, v88 := stageBList(msg(88), "poll_results_options"), stageBList(msg(88), "poll_voters")
+	want("R88", msg(88).rawObj("media")["type"] == "poll" && msg(88).rawObj("media")["constructor"] == "0x773f4e66" && msg(88).str("kind") == "media" &&
+		p88["constructor"] == "0x966e2dbf" && num(p88["id"]) == "8000001" && p88["quiz"] == true && p88["public_voters"] == true && p88["creator"] == true &&
+		p88["multiple_choice"] == nil && p88["question"] == "Capital?" && num(p88["question_entities_total"]) == "1" && num(p88["close_period"]) == "600" &&
+		p88["close_period_unit"] == "unestablished" && num(p88["close_date"]) == "1700000600" && p88["close_date_unit"] == "unestablished" &&
+		reflect.DeepEqual(strList(p88["countries_iso2"]), []string{"FR", "IT"}) && num(p88["countries_iso2_total"]) == "2" && num(p88["hash"]) == "77" &&
+		num(p88["answers_total"]) == "2" && p88["attached_media_type"] == "geo" && p88["attached_media_constructor"] == "0x56e0d474" &&
+		reflect.DeepEqual(field(a88, "text"), []string{"Paris", "Rome"}) && reflect.DeepEqual(field(a88, "option"), []string{"00", "01"}) &&
+		reflect.DeepEqual(field(a88, "index"), []string{"0", "1"}) && a88[1]["media_type"] == "geo" && a88[1]["added_by"] == "user:1000009" &&
+		num(a88[1]["date"]) == "1700000005" && a88[1]["date_unit"] == "unestablished" && a88[0]["media_type"] == nil &&
+		r88["constructor"] == "0xba7bb15e" && r88["has_unread_votes"] == true && num(r88["total_voters"]) == "4" && num(r88["results_total"]) == "2" &&
+		r88["solution"] == "Because" && num(r88["solution_entities_total"]) == "0" && reflect.DeepEqual(strList(r88["recent_voters"]), []string{"user:1000002"}) &&
+		num(r88["recent_voters_total"]) == "1" && num(r88["option_voters_total"]) == "3" &&
+		reflect.DeepEqual(field(o88, "option"), []string{"00", "01"}) && reflect.DeepEqual(field(o88, "voters"), []string{"3", "1"}) &&
+		o88[0]["chosen"] == true && o88[0]["correct"] == true && o88[1]["chosen"] == nil && reflect.DeepEqual(field(o88, "recent_voters_total"), []string{"2", "1"}) &&
+		reflect.DeepEqual(field(v88, "option"), []string{"00", "00", "01"}) &&
+		reflect.DeepEqual(field(v88, "peer"), []string{"user:1000002", "user:1000009", "channel:3000001"}) && msg(88).body() == "" && only(88))
+	a89 := stageBList(msg(89), "poll_answers")
+	want("R89", poll(89)["constructor"] == "0x58747131" && poll(89)["multiple_choice"] == true && num(poll(89)["answers_total"]) == "3" &&
+		num(poll(89)["close_date"]) == "1700000900" && reflect.DeepEqual(field(a89, "text"), []string{"A", "B", "C"}) &&
+		reflect.DeepEqual(field(a89, "option"), []string{"00", "01", "02"}) && results(89)["constructor"] == "0x7adf2420" &&
+		num(results(89)["results_total"]) == "1" && num(results(89)["total_voters"]) == "2" &&
+		reflect.DeepEqual(field(stageBList(msg(89), "poll_results_options"), "voters"), []string{"2"}))
+	// R90-R93 (T1a, T4): the old classes read question.text and text.text; id-vector voters are user:<id> as stored
+	want("R90-R93", poll(90)["constructor"] == "0xd5529d06" && poll(90)["question"] == "Old?" &&
+		reflect.DeepEqual(field(stageBList(msg(90), "poll_answers"), "text"), []string{"Yes"}) &&
+		reflect.DeepEqual(field(stageBList(msg(90), "poll_answers"), "constructor"), []string{"0x6ca9c2e9"}) &&
+		results(90)["constructor"] == "0xc87024a2" && reflect.DeepEqual(strList(results(90)["recent_voters"]), []string{"user:1000002", "user:1000009"}) &&
+		poll(91)["constructor"] == "0x86e18161" && num(poll(91)["close_period"]) == "60" && results(91)["constructor"] == "0xdcb82ea3" &&
+		reflect.DeepEqual(strList(results(91)["recent_voters"]), []string{"user:1000009"}) &&
+		poll(92)["constructor"] == "0xaf746786" && poll(92)["quiz"] == true && results(92)["constructor"] == "0xbadcc1a3" &&
+		reflect.DeepEqual(strList(results(92)["recent_voters"]), []string{"user:1000002"}) && results(92)["solution"] == "Since" &&
+		poll(93)["constructor"] == "0xb8425be9" && poll(93)["closed"] == true && num(poll(93)["hash"]) == "78" &&
+		results(93)["constructor"] == "0x5755785a" && num(results(93)["results_total"]) == "1" && num(results(93)["option_voters_total"]) == "0")
+	// R94 (Review Focus 5): TL_messageMediaPoll_layer223 decodes whole; an empty option is "", an exact value
+	a94 := stageBList(msg(94), "poll_answers")
+	_, opt := a94[0]["option"]
+	want("R94", msg(94).raw["data_state"] == "decoded" && msg(94).rawObj("media")["constructor"] == "0x4bd6e798" &&
+		msg(94).rawObj("media")["type"] == "poll" && poll(94)["constructor"] == "0x966e2dbf" && opt && a94[0]["option"] == "" && results(94) != nil)
+	// R95 (Q6, C4, R7): the mentioned user of each InputUser class; self and empty give none; never an access hash
+	e95 := stageBList(msg(95), "entities")
+	r95, _ := json.Marshal(msg(95).payload)
+	want("R95", reflect.DeepEqual(field(e95, "user_class"), []string{"user", "user", "from_message", "from_message", "self", "empty"}) &&
+		reflect.DeepEqual(field(e95, "user"), []string{"user:1000009", "user:1000010", "user:1000011", "user:1000012", "", ""}) &&
+		e95[2]["user_from_peer"] == "user:1000002" && num(e95[2]["user_from_msg_id"]) == "55" &&
+		e95[3]["user_from_peer"] == "channel:3000001" && num(e95[3]["user_from_msg_id"]) == "56" &&
+		reflect.DeepEqual(field(e95, "user_access_hash_present"), []string{"true", "true", "true", "true", "", ""}) &&
+		!strings.Contains(string(r95), strconv.FormatUint(secretI64Base+4401, 10)) && only(95))
+	// R96: the peer of a from-message InputUser by its own id field, else its class label (its inner peer never followed)
+	e96 := stageBList(msg(96), "entities")
+	want("R96", len(e96) == 12 &&
+		reflect.DeepEqual(field(e96, "user_from_peer"), []string{
+			"chat:2000001", "", "channel:3000001", "channel:3000002", "chat:2000002",
+			"user:1000003", "", "", "", "", "", "user:1000004",
+		}) &&
+		reflect.DeepEqual(field(e96, "user_from_peer_class"), []string{
+			"", "user_from_message", "", "", "", "", "self", "empty",
+			"channel_from_message", "user_from_message", "channel_from_message", "",
+		}) &&
+		e96[0]["user"] == "user:1000020" && e96[11]["user"] == "user:1000031" && only(96))
+}
+
+// stageBHostileFacts: plan 4I4c's H2901-H2912 (one fact per row of the plan's hostile row; H2905 by ruling T2a: an
+// inline button in an older reply keyboard is read through the union, never stopped) and the cut rows H3001...
+// (R83) and H3301... (R88): each truncated, no list or object of a field the cut lies in or before.
+func stageBHostileFacts(want func(string, bool), h func(int64) rec, hostile map[int64]rec) {
+	markup := func(n int64) map[string]any { return h(n).rawObj("reply_markup") }
+	list := func(n int64, k string) []map[string]any { return stageBList(h(n), k) }
+	want("H2901", h(2901).raw["data_stop_kind"] == "unknown-constructor" && h(2901).raw["data_stop_path"] == "reply_markup.rows[0].buttons[0]" &&
+		h(2901).raw["data_stop_id"] == "0x0badb0b0" && h(2901).raw["reply_markup_state"] == "partial" && markup(2901) == nil &&
+		h(2901).raw["reply_markup_buttons"] == nil)
+	want("H2902", h(2902).raw["data_state"] == "cap" && h(2902).raw["data_stop_path"] == "media.results.recent_voters" &&
+		h(2902).raw["poll_results_state"] == "partial" && h(2902).rawObj("poll_results") == nil && h(2902).rawObj("poll") != nil)
+	want("H2903", h(2903).raw["data_state"] == "truncated" && h(2903).raw["data_stop_path"] == "media.poll.countries_iso2" &&
+		h(2903).raw["poll_state"] == "partial" && h(2903).rawObj("poll") == nil)
+	want("H2904", h(2904).raw["data_state"] == "truncated" && h(2904).raw["data_stop_path"] == "media.results.recent_voters" &&
+		h(2904).raw["poll_results_state"] == "partial")
+	want("H2905", h(2905).raw["data_state"] == "decoded" && markup(2905)["kind"] == "keyboard" &&
+		reflect.DeepEqual(field(list(2905, "reply_markup_buttons"), "kind"), []string{"url"}) &&
+		reflect.DeepEqual(field(list(2905, "reply_markup_buttons"), "constructor"), []string{"0x258aff05"}))
+	want("H2906", len(list(2906, "reply_markup_buttons")) == 64 && num(markup(2906)["buttons_total"]) == "65" && markup(2906)["buttons_truncated"] == true)
+	want("H2907", len(list(2907, "poll_answers")) == 32 && num(h(2907).rawObj("poll")["answers_total"]) == "33" && h(2907).rawObj("poll")["answers_truncated"] == true)
+	want("H2908", h(2908).raw["data_stop_kind"] == "opaque" && h(2908).raw["data_stop_id"] == "0xd02e7fd4" && h(2908).raw["reply_markup_state"] == "partial")
+	a09 := list(2909, "poll_answers")
+	want("H2909", len(a09) == 1 && a09[0]["option_state"] == "too-long" && num(a09[0]["option_len"]) == "65" && a09[0]["option"] == nil && a09[0]["option_sha256"] != nil)
+	b10 := list(2910, "reply_markup_buttons")
+	want("H2910", len(b10) == 1 && b10[0]["peer_types"] == "pm,bot_pm,chat,megagroup,broadcast,same_bot_pm,pm,chat" && num(b10[0]["peer_types_total"]) == "9")
+	r11 := h(2911).rawObj("poll_results")
+	want("H2911", len(strList(r11["recent_voters"])) == 16 && num(r11["recent_voters_total"]) == "17" && r11["recent_voters_truncated"] == true)
+	want("H2912", len(list(2912, "poll_voters")) == 64 && num(h(2912).rawObj("poll_results")["option_voters_total"]) == "65" &&
+		h(2912).rawObj("poll_results")["option_voters_truncated"] == true)
+	cut := func(lo, hi int64, check func(int64, rec, string)) int {
+		n := 0
+		for rowid := lo; rowid < hi; rowid++ {
+			e, ok := hostile[rowid]
+			if !ok {
+				continue
+			}
+			n++
+			stop, _ := e.raw["data_stop_path"].(string)
+			want(fmt.Sprintf("H%d truncated", rowid), e.raw["data_state"] == "truncated")
+			check(rowid, e, stop)
+		}
+		return n
+	}
+	under := func(stop, p string) bool { return strings.HasPrefix(stop, p+".") || strings.HasPrefix(stop, p+"[") }
+	n83 := cut(3001, 3301, func(rowid int64, e rec, stop string) {
+		tag := fmt.Sprintf("H%d (stop %q)", rowid, stop)
+		want(tag+": no button of a cut markup", e.raw["reply_markup_buttons"] == nil)
+		switch {
+		case under(stop, "reply_markup"):
+			want(tag+": partial", e.raw["reply_markup_state"] == "partial" && e.raw["reply_markup"] == nil)
+		case stop == "reply_markup":
+			want(tag+": the stop's state", e.rawObj("reply_markup")["state"] == "truncated")
+		default:
+			want(tag+": no markup key before the markup", e.raw["reply_markup"] == nil && e.raw["reply_markup_state"] == nil)
+		}
+	})
+	n88 := cut(3301, 3601, func(rowid int64, e rec, stop string) {
+		tag := fmt.Sprintf("H%d (stop %q)", rowid, stop)
+		switch {
+		case stop == "media.poll" || under(stop, "media.poll"):
+			want(tag+": poll partial", e.raw["poll_state"] == "partial" && e.raw["poll"] == nil && e.raw["poll_answers"] == nil &&
+				e.raw["poll_results"] == nil && e.raw["poll_voters"] == nil)
+		case stop == "media.results" || under(stop, "media.results"):
+			want(tag+": results partial", e.raw["poll"] != nil && e.raw["poll_results_state"] == "partial" && e.raw["poll_results"] == nil &&
+				e.raw["poll_results_options"] == nil && e.raw["poll_voters"] == nil)
+		case strings.HasPrefix(stop, "media.attached_media"):
+			want(tag+": poll and results read whole", e.raw["poll"] != nil && e.raw["poll_results"] != nil)
+		default:
+			want(tag+": no poll key before the poll", e.raw["poll"] == nil && e.raw["poll_state"] == nil && e.raw["poll_results"] == nil)
+		}
+	})
+	want("H3001 H3301 rows", n83 > 20 && n88 > 40)
 }
 
 // photoFieldOrder is TL_photo's fields in wire order (constructors.tsv, TLRPC.java:33327@A-HEAD), then the media

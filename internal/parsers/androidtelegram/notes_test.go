@@ -18,7 +18,7 @@ func TestAndroidTelegramNotesStateTheStore(t *testing.T) {
 			"database_version": "181", "account": "0", "database_user": "0", "generation": "messages_v2",
 			// the census counts the live view: R1-R59 less R52, whose WAL frame is uncommitted. Ruling F1 gave 55 on
 			// R1-R56; R57-R59 (F33, F22) add three; plan 4I4b's R60-R80 add 21.
-			"rows.messages_v2": "79",
+			"rows.messages_v2": "95",
 			"rows.users":       "10", "rows.enc_chats": "2", "rows.chats": "5", "rows.contacts": "3", "rows.users_data": "1",
 			"rows.dialogs": "0", "rows.media_v4": "0", "rows.messages_topics": "0", "rows.scheduled_messages_v2": "0",
 			"rows.user_contacts_v7": "0",

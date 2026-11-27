@@ -81,6 +81,17 @@ func stageATypes() []string {
 	}
 }
 
+// stageBTypes are the types plan 4I4c adds (design 7, rulings PL5, T2a): reply markup and its buttons, polls and the
+// InputPeer closure of InputUser. Their full rows, with the 4I4b-type rows 4I4c made full (four InputUser classes and
+// TL_messageMediaPoll_layer223, among stageATypes), are rows the fixtures must read.
+func stageBTypes() []string {
+	return []string{
+		"ReplyMarkup", "TL_keyboard.KeyboardButtonRow", "TL_keyboard.KeyboardInlineButtonRow", "TL_keyboard.KeyboardButton",
+		"TL_keyboard.KeyboardInlineButton", "TL_keyboard.KeyboardButtonStyle", "TL_keyboard.ButtonType", "TL_keyboard.InlineButtonType",
+		"RequestPeerType", "TL_chatAdminRights", "InlineQueryPeerType", "Poll", "PollAnswer", "PollResults", "PollAnswerVoters", "InputPeer",
+	}
+}
+
 // tlCells are the TL cells of a committed fixture database (its main file; a WAL frame is not committed to it), each
 // with the type it is decoded as: messages and messages_v2 data and replydata as Message, replies_data as
 // MessageReplies, users and chats data as User and Chat. A table or column the variant lacks gives nothing.
@@ -123,13 +134,15 @@ func tlCells(t *testing.T, db []byte) map[string][][]byte {
 	return out
 }
 
-// Plan 4I4b P10 (design 10, first bullet): the committed fixtures read every full row of the 4I4b types at least once.
-// The union of SeenConstructors over every TL cell of every variant's database (messages and messages_v2 data,
-// replydata and replies_data, users and chats data) holds every full row of stageATypes: the 33 full MessageMedia (32 in plan 4I4b; 0x4bd6e798 is full since 4I4c),
-// every full Photo, Document and WebPage row, every full MessageAction row and every full row of the new types. A miss
-// is listed by type, ID and class. An object counts only when read whole (the decode's stop neither at nor inside it,
-// Task 4 review M1). Plan 4I4c (PL4): Poll is full, so TL_messageMediaPoll, exempt under 4I4b R1, is read whole too
-// and no row is exempt.
+// Plan 4I4b P10 (design 10, first bullet), extended by plan 4I4c (design 12, first bullet): the committed fixtures read
+// every full row of the 4I4b and the 4I4c types at least once, per (type, ID) (W1: 0x77608b83 is a row of two types,
+// each counted). The union of SeenConstructors over every TL cell of every variant's database (messages and
+// messages_v2 data, replydata and replies_data, users and chats data) holds every full row of stageATypes and
+// stageBTypes: the 33 full MessageMedia (32 in plan 4I4b; 0x4bd6e798 is full since 4I4c), every full Photo, Document
+// and WebPage row, every full MessageAction row, every full row of the 4I4b types and every full reply markup, button,
+// poll and InputPeer row. A miss is listed by type, ID and class. An object counts only when read whole (the decode's
+// stop neither at nor inside it, Task 4 review M1). No row is exempt: Poll is full since plan 4I4c (PL4), so
+// TL_messageMediaPoll, exempt under 4I4b R1, is read whole.
 func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
 	seen := map[tl.Key]bool{}
 	for _, v := range variants {
@@ -144,7 +157,7 @@ func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
 	var missing []string
 	media, actions := 0, 0
 	for k, c := range androidtelegram.Table() {
-		if c.Body != tl.BodyFull || !slices.Contains(stageATypes(), c.Type) {
+		if c.Body != tl.BodyFull || !slices.Contains(stageATypes(), c.Type) && !slices.Contains(stageBTypes(), c.Type) {
 			continue
 		}
 		switch c.Type {
@@ -162,6 +175,6 @@ func TestTelegramFixturesReadEveryStageAFullRow(t *testing.T) {
 		t.Errorf("%d full MessageMedia and %d full MessageAction rows, want the 33 and 13 of the emitted table (rulings T1d, PL4)", media, actions)
 	}
 	if len(missing) > 0 {
-		t.Errorf("%d full 4I4b rows no committed fixture reads:\n%s", len(missing), strings.Join(missing, "\n"))
+		t.Errorf("%d full 4I4b or 4I4c rows no committed fixture reads:\n%s", len(missing), strings.Join(missing, "\n"))
 	}
 }

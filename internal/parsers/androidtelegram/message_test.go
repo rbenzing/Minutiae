@@ -27,8 +27,9 @@ func hostileStopRows() []int64 {
 func TestTelegramUndecodableBlobStillYieldsRecord(t *testing.T) {
 	res := parseFixture(t, "telegram-hostile")
 	exp := parsertest.LoadFixture(t, "testdata", "telegram-hostile").Expect
-	// 26 rows of plan 4I4, then plan 4I4b's 68 cuts of R76 (H2401-H2468), 51 of R60 (H2601-H2651) and H2801-H2814
-	if len(res.Records) != len(exp.Records) || res.Notes["rows.messages_v2"] != "159" || len(res.Records) != 159 {
+	// 26 rows of plan 4I4, then plan 4I4b's 68 cuts of R76 (H2401-H2468), 51 of R60 (H2601-H2651) and H2801-H2814, then
+	// plan 4I4c's H2901-H2912, 44 cuts of R83 (H3001-H3044) and 80 of R88 (H3301-H3380)
+	if len(res.Records) != len(exp.Records) || res.Notes["rows.messages_v2"] != "295" || len(res.Records) != 295 {
 		t.Errorf("%d records, the engine counts %s rows (oracle %d)", len(res.Records), res.Notes["rows.messages_v2"], len(exp.Records))
 	}
 	rows := byRow(res.Records)
@@ -181,8 +182,9 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 			t.Errorf("%s: data_undecided %q, want %q", key, got, strings.Join(want, ","))
 		}
 	}
-	if n != 129 {
-		t.Errorf("%d truncated rows, want 129 (H2: nine cuts and the string past the end; plan 4I4b: 68 deep cuts of R76, 51 of R60)", n)
+	if n != 255 {
+		t.Errorf("%d truncated rows, want 255 (H2: nine cuts and the string past the end; plan 4I4b: 68 deep cuts of R76, 51 of R60; "+
+			"plan 4I4c: H2903, H2904, 44 deep cuts of R83, 80 of R88)", n)
 	}
 	// review M3: a head spread over several fields (TL_messageForwarded_old's fwd_from.from_id, fwd_from.date) ends
 	// with its last field, and the stop's own head is never listed as after it
@@ -404,14 +406,15 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 			got = append(got, w.Locator+": "+w.Reason)
 		}
 	}
-	// plan 4I4b Task 4: the 119 cut rows (truncated), H2802 (cap) and H2806, H2807 (partial) join the 4I4 rows
-	want := "sqlite:table=messages_v2: telegram-blob-undecoded: messages_v2.data: 138 records (partial:4,unknown-constructor:1,truncated:129,malformed:2,cap:2)"
+	// plan 4I4b Task 4: the 119 cut rows (truncated), H2802 (cap) and H2806, H2807 (partial) join the 4I4 rows; plan 4I4c
+	// Task 5: the 124 cut rows of R83 and R88 and H2903, H2904 (truncated), H2902 (cap), H2901 and H2908 (partial)
+	want := "sqlite:table=messages_v2: telegram-blob-undecoded: messages_v2.data: 267 records (partial:6,unknown-constructor:1,truncated:255,malformed:2,cap:3)"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("warnings %q, want one %q", got, want)
 	}
 	notes := map[string]string{
-		"blob_states":       "messages_v2.data=decoded:20,partial:4,unknown-constructor:1,truncated:129,malformed:2,cap:2",
-		"constructors_seen": "0x7600b9d3:151,0x555555f9:2,0x0badf00d:1,0x22eb6aba:1",
+		"blob_states":       "messages_v2.data=decoded:27,partial:6,unknown-constructor:1,truncated:255,malformed:2,cap:3",
+		"constructors_seen": "0x7600b9d3:285,0x555555f9:2,0x0badf00d:1,0x22eb6aba:1",
 	}
 	for k, v := range notes {
 		if res.Notes[k] != v {
@@ -425,7 +428,8 @@ func TestTelegramBlobUndecodedIsOneCountedWarningPerColumn(t *testing.T) {
 	}
 	// plan 4I4b: R29's Dice is full and well-formed, so it decodes (49 decoded and 7 partial before); R60-R80 add 20
 	// decoded rows and R79 (partial). replies_data is a counted column too (P6, D13): R63 and R64 decode, R55 stops at an unknown constructor.
-	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:70,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;messages_v2.replies_data=decoded:2,unknown-constructor:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" ||
+	// Plan 4I4c: R81-R96 add 16 decoded rows.
+	if got := v181.Notes["blob_states"]; got != "messages_v2.data=decoded:86,partial:7,unknown-constructor:1,null:1;messages_v2.replydata=decoded:1;messages_v2.replies_data=decoded:2,unknown-constructor:1;users.data=decoded:1,decoded-prefix:8,unknown-constructor:1" ||
 		got != exp.Notes["blob_states"] {
 		t.Errorf("telegram-v181: blob_states %q (the oracle: %q)", got, exp.Notes["blob_states"])
 	}

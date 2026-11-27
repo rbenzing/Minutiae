@@ -1607,7 +1607,8 @@ GO_SCALAR_NAMES = {"i32", "i64", "dbl", "bool", "bytes", "str", "secret", "#"}
 
 def go_vector(row_id, name, inner, gate):
     """The tl.Field literal of a vector field `name:vec<inner>` (plan 4I4c W2, W3, ruling C6): `vec<i32>`/`vec<i64>` a
-    bare int vector, `vec<id32@C>`/`vec<id64@C>` one whose elements are ids of class C, `vec<str>` a bare string vector,
+    boxed vector of bare ints/longs, `vec<id32@C>`/`vec<id64@C>` one whose elements are ids of class C, `vec<str>` a
+    boxed vector of bare strings,
     `vec<A|B>` a union of two object types (read by A when A holds the ID, else by B), `vec<T>` a vector of boxed T.
     Any other vector kind (`vec<bytes>`, a union of three, a scalar in a union, an unknown id class) stops the run:
     the walker has no reader for it."""
