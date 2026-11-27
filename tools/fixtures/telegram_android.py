@@ -58,7 +58,8 @@ coordinator rules):
     takes its type's label as kind; any other button its class label, "default" when that is empty (PL5).
   - quiz and a request-peer type's bool fields are stated as read (true or false); a flag-only true only when set.
   - an admin-rights object read with no right set is "" (read, empty), never absent.
-  - peer_types and countries_iso2 state their _total beside the kept entries and no _truncated (the contract's keys);
+  - peer_types states its _total and, only when cut, peer_types_truncated (T5r1); countries_iso2 states its _total and no
+    _truncated until plan 4I4c Task 7 (T5r1);
     an element of countries_iso2 over 64 bytes makes countries_iso2_state too-long with no list (the total stays).
   - an option of a results entry and of a flattened voter follows the answer's option rule (hex, else too-long).
   - poll_answers is stated only with raw.poll, poll_results_options and poll_voters only with raw.poll_results (a cut
@@ -1679,6 +1680,8 @@ def button_entry(b, raw, rowp, p, i, j):
         if labels:
             x["peer_types"] = ",".join(labels)  # a list would be level 5 (B1); a label never holds a comma
         x["peer_types_total"] = n
+        if n > MAX_PEER_TYPES:
+            x["peer_types_truncated"] = True  # T5r1: every capped list states its cut
     for k in ("button_id", "max_quantity", "quiz"):
         q = at(k)
         if q is not None:

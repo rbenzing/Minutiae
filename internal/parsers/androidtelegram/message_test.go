@@ -129,6 +129,7 @@ func TestTelegramNoFieldAfterStop(t *testing.T) {
 		"effect": {"effect"}, "factcheck": {"factcheck", "factcheck_state"}, "report_delivery_until_date": {"report_delivery_until_date"},
 		"paid_message_stars": {"paid_message_stars"}, "suggested_post": {"suggested_post", "suggested_post_state"},
 		"schedule_repeat_period": {"schedule_repeat_period"}, "summary_from_language": {"summary_from_language"}, "entities": {"entities", "entities_total"},
+		"reply_markup": {"reply_markup_buttons"}, // the markup and its _state state the cut itself, never a value read
 	}
 	noFieldAfterStopTail4I4b(t)
 	mapped := androidtelegram.MappedFields()

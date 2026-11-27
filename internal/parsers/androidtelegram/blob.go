@@ -43,7 +43,7 @@ func undecodedState(s string) bool {
 // mutable package state (P5, as encChatsColumns).
 func mappedFields() []string {
 	return []string{
-		"out", "id", "from_id", "peer_id", "fwd_from", "via_bot_id", "reply_to", "date", "message", "media", "action",
+		"out", "id", "from_id", "peer_id", "fwd_from", "via_bot_id", "reply_to", "date", "message", "media", "reply_markup", "action",
 		"views", "edit_date", "grouped_id", "ttl_period",
 		"forwards", "post_author", "replies", "reactions", "restriction_reason", "quick_reply_shortcut_id", "effect", "factcheck",
 		"report_delivery_until_date", "paid_message_stars", "suggested_post", "schedule_repeat_period", "summary_from_language",

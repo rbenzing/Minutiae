@@ -107,8 +107,9 @@ func keyInt64s(t *testing.T) (required, searched map[string]uint64) {
 			required["i64:"+m[1]] = secretI64Base + n
 		}
 	}
-	// 1..4000 covers every rowid-numbered credential: the generator asserts 1701 + len(todo) <= 2001 (layers_rows, so a
-	// layers rowid is at most 2000) and its secret_i64 arguments at layers rows stay <= 2000 (final-review item 4)
+	// 1..4000 covers every rowid-numbered credential: the generator asserts 1701 + len(todo) <= 2001 (layers_rows, rowids
+	// at most 2000) and the Stage B layers rows from 2101 are asserted < 2401 (plan 4I4c Task 5, rows 2101-2139), so no
+	// layers rowid reaches 2401, and its secret_i64 arguments at layers rows stay below it (final-review item 4)
 	for n := uint64(1); n <= 4000; n++ {
 		if _, ok := required["i64:"+strconv.FormatUint(n, 10)]; !ok {
 			searched["i64:"+strconv.FormatUint(n, 10)] = secretI64Base + n

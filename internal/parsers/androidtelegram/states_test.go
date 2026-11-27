@@ -299,6 +299,7 @@ func TestTelegramStateVocabularyIsPinned(t *testing.T) {
 	contactStates(t)
 	mediaStates(t)
 	tailVocabulary4I4b(t)
+	markupVocabulary(t)
 }
 
 // callStates are Task 11's keys (spec 8.7, Q5; the plan's "Calls" vocabulary): the outcome per reason and direction,

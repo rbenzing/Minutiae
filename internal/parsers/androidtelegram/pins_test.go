@@ -7,7 +7,7 @@ package androidtelegram_test
 var fixturePins = map[string]string{
 	"telegram-both.db":              "0ace29cb15c7c11bc69fd5272af7a1fe4c7d546481b0c727e600397ed63ef7cf",
 	"telegram-deleted.db":           "3c3685e2c5561d7358a0ccca6dbfd88291ce8c9e511f921bac14ad909fc555af",
-	"telegram-deleted.wal":          "0f5412ed1032b06baee3dc8fb090b8b17dbfd1ffefda7783c09804a1584944e1",
+	"telegram-deleted.wal":          "57f6ed6f68a1d821ea4b777356fba2375cf63ba4a321292f302a32a1fab13fc7",
 	"telegram-hostile.db":           "f499b764120a4834e9bf974927726041c4f5852d4016114d0ecd0951b0527ae8",
 	"telegram-layers.db":            "dc635636cee7840b0d7d4a1e26f6e31d3b997738e6a2d423769f3a0042e4d399",
 	"telegram-nomessages.db":        "15969aca2129d996aa94cccaae585a51dc26566d4c69dd6e353b781f4ed7f495",
@@ -15,7 +15,7 @@ var fixturePins = map[string]string{
 	"telegram-otherversion.db":      "7fc06aaa267d6d023be97deda88e42ccadcd8cdb8c6507fcca6bd47f963187e4",
 	"telegram-v159.db":              "219e8dfd6254c60cc41fa7af04a28eb8d2f426a48e264eabf7892120ffaaaf65",
 	"telegram-v181.db":              "2ecf9f86def006ff82b9876a5ad8f988e163f5006578d4b40919a53318eecba3",
-	"telegram-v181.wal":             "cd22ada744b5f99823ac3cfc95240b32ec69d97c76325d0c6ee5fea768a548e1",
+	"telegram-v181.wal":             "1d30f243cd9b88433f418894c45f3b99d18f8463d8c963ec953770c8cab5289b",
 	"telegram-v64.db":               "21002b68aa1a7c193d7ba8e5e2dcb2bdc30e2eeecf79d3e8486805941afac629",
 	"telegram-v84-upgraded-v181.db": "0c478d1601be9efdc3644f5696e01809948773717fca8864b4af18c7c1eaca1d",
 	"telegram-v84.db":               "3fddf1178f2af04a7c1731174be75fb6c1dcb396e96cb8dd0f17d42c5cccd2c0",

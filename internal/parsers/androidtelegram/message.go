@@ -529,6 +529,7 @@ func mapMessage(m parse.MapContext, row parse.Row, e *env, tab tl.Table, table s
 		times = editTime(raw, v)
 		peerRaw(v, raw)
 		fwdRaw(v, raw)
+		markupRaw(v, raw)
 		r.repliers = tailRaw(v, raw)
 		atts = mediaSummary(v, tab, top, raw)
 		readTrailer(b, v, top, raw)

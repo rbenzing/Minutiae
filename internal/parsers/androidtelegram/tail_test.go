@@ -409,6 +409,7 @@ func noFieldAfterStopTail4I4b(t *testing.T) {
 	}
 	m := tlMessage{flags: 1<<20 | 1<<22, id: 1, from: idAnn, peer: idSelf, date: baseDate, text: "x", markup: le32(idUnknownMarkup)}
 	raw, _ := androidtelegram.DecodeBlob(m.bytes(), androidtelegram.TypeMessage, parse.NewBudget(1<<20).View())
+	// an unknown ID is stated as raw.reply_markup {constructor}, so it is not undecided; the fields after it are
 	if raw["data_stop_path"] != "reply_markup" || raw["data_undecided"] != "reactions,restriction_reason" {
 		t.Errorf("a stop at reply_markup: data_stop_path %v, data_undecided %v; want reactions,restriction_reason", raw["data_stop_path"], raw["data_undecided"])
 	}

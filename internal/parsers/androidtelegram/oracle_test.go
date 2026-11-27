@@ -35,10 +35,8 @@ func TestAndroidTelegramMatchesOracle(t *testing.T) {
 }
 
 // pendingOracle is exp without the keys of the plan 4I4c mapping the Go parser does not state yet (plan 4I4c Task 5:
-// the oracle restates the Stage B "Raw shapes" before Tasks 6 and 7 map them). It never drops a variant, a record or
-// any other key. Markup part (Task 6 deletes it): raw.reply_markup, reply_markup_state, reply_markup_buttons, the
-// text-flag names reply_markup.* and reply_markup_buttons.*, and reply_markup in data_undecided (the key removed when
-// it empties). Poll and mention part (Task 7 deletes it and the function): raw.poll, poll_answers, poll_results,
+// the oracle restates the Stage B "Raw shapes" before Task 7 maps them; Task 6 mapped the reply markup). It never drops a variant, a record or
+// any other key. Poll and mention part (Task 7 deletes it and the function): raw.poll, poll_answers, poll_results,
 // poll_results_options, poll_voters with their _state, _len, _sha256, _unit, _total and _truncated siblings, the
 // text-flag names poll.*, poll_answers.* and poll_results.*, and in each raw.entities[i] user (when user_class is set),
 // user_from_msg_id, user_from_peer, user_from_peer_class and user_access_hash_present.
@@ -55,23 +53,19 @@ func pendingOracle(exp parsertest.Expect) parsertest.Expect {
 		raw = maps.Clone(raw)
 		payload["raw"] = raw
 		out.Records[i].Payload = payload
-		for _, k := range []string{"reply_markup", "reply_markup_state", "reply_markup_buttons"} {
-			delete(raw, k)
-		}
 		for _, base := range []string{"poll", "poll_answers", "poll_results", "poll_results_options", "poll_voters"} {
 			for _, suffix := range []string{"", "_state", "_len", "_sha256", "_unit", "_total", "_truncated"} {
 				delete(raw, base+suffix)
 			}
 		}
 		pruneList(raw, "text_flags", func(name string) bool {
-			for _, p := range []string{"reply_markup.", "reply_markup_buttons.", "poll.", "poll_answers.", "poll_results."} {
+			for _, p := range []string{"poll.", "poll_answers.", "poll_results."} {
 				if strings.HasPrefix(name, p) {
 					return true
 				}
 			}
 			return false
 		})
-		pruneList(raw, "data_undecided", func(name string) bool { return name == "reply_markup" })
 		if ents, ok := raw["entities"].([]any); ok {
 			pruned := make([]any, len(ents))
 			for j, e := range ents {

@@ -94,7 +94,7 @@ func TestAndroidTelegramMetaIsValid(t *testing.T) {
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "android.telegram" || m.Version != "1.2.1" || len(m.Claims) != 3 { // the claims: TestClaimsEqualClaimableTables (Task 14)
+	if m.Name != "android.telegram" || m.Version != "1.2.2" || len(m.Claims) != 3 { // the claims: TestClaimsEqualClaimableTables (Task 14)
 		t.Errorf("meta %+v", m)
 	}
 	var emits []string

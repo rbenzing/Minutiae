@@ -122,6 +122,7 @@ func TestTelegramCapsAreCountedNeverSilent(t *testing.T) {
 	}
 	mediaCaps4I4b(t)
 	tailCaps4I4b(t)
+	markupCaps4I4c(t)
 }
 
 // imsOf is a contact's ims entries.
