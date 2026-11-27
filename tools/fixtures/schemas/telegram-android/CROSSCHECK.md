@@ -3510,7 +3510,7 @@ The same six Stage B rows, read a second time by the Task 3 builder, a different
 (21f7d109da6ab3506c9e9577f98c6a38771ab335) from `tgnet/tl/TL_keyboard.java` (SHA-256
 a026f2b766ea4ca29c9abee0a4010773d4c7f38b848939b17eeee1068388b6bc), `tgnet/TLRPC.java` (SHA-256
 37a1b1ee83d1f84352f90ac65e8d2176a863678f60c902010c3e1c0b1beea86b) and `tgnet/VectorLegacy.java` (SHA-256
-ddb561e3fd975d74306f718f94e00f11be984e1fe87d0252cf08edcfcaefac30), fetched into scratch and deleted after. Each body
+ddb561e3fd975d74306f718f94e00f11be984e1fe87d0252cf08edcfcaefac30), fetched into scratch and deleted after. The second reader saw the facts script's spelling of the `KeyboardButtonRow` (0x77608b83) union (`telegram_tl_facts.py`, the grammar comment) before writing its reading; its reading and order cite `TL_keyboard.java:813-826` directly and agree. Each body
 was written from the class's `readParams` and the element reader it names before `constructors.tsv`, this file or the
 recon were opened, then compared token for token with the row's `fields`. All six agree in what is read (IDs, field
 order, flag bits, wire types, and each union's order). Reading notes: the union order is the order of the element
